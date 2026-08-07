@@ -21,6 +21,7 @@ demo = [
   "pydantic>=2.10",
   "python-multipart>=0.0.17",
   "pyyaml>=6.0",
+  "psycopg[binary]>=3.2",
 ]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 

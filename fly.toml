@@ -6,8 +6,12 @@ primary_region = "iad"
 
 [env]
   SIMULACRA_AUTH_REQUIRED = "1"
-  SIMULACRA_SANDBOX = "worktree"
+  SIMULACRA_SANDBOX = "machine"
+  SIMULACRA_MACHINE_PROVIDER = "local"
   SIMULACRA_DEFAULT_TENANT = "default"
+  # Set SIMULACRA_DATABASE_URL via `fly secrets set`
+  # Set SIMULACRA_SIEM_WEBHOOK / SIMULACRA_SIEM_TOKEN via secrets for SIEM forward
+  # For Fly ephemeral workers: FLY_API_TOKEN + SIMULACRA_FLY_APP + SIMULACRA_MACHINE_PROVIDER=fly
 
 [http_service]
   internal_port = 8000

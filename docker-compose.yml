@@ -1,4 +1,20 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: simulacra
+      POSTGRES_PASSWORD: simulacra
+      POSTGRES_DB: simulacra
+    ports:
+      - "5432:5432"
+    volumes:
+      - simulacra-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simulacra -d simulacra"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build: .
     ports:
@@ -6,12 +22,23 @@ services:
     environment:
       SIMULACRA_AUTH_REQUIRED: "1"
       SIMULACRA_USE_PRIME: "0"
-      SIMULACRA_SANDBOX: "worktree"
+      SIMULACRA_SANDBOX: "machine"
+      SIMULACRA_MACHINE_PROVIDER: "local"
+      SIMULACRA_MACHINE_GVISOR: "1"
       SIMULACRA_BOOTSTRAP_EMAIL: "admin@localhost"
       SIMULACRA_BOOTSTRAP_PASSWORD: "simulacra-admin-change-me"
+      SIMULACRA_DATABASE_URL: "postgresql://simulacra:simulacra@db:5432/simulacra"
+      # Optional SIEM webhook (NDJSON / CEF / Splunk HEC)
+      # SIMULACRA_SIEM_WEBHOOK: "https://siem.example/ingest"
+      # SIMULACRA_SIEM_FORMAT: "json"
+      # SIMULACRA_SIEM_TOKEN: ""
     volumes:
       - simulacra-data:/app/data
       - simulacra-runs:/app/runs
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
       interval: 10s
@@ -21,3 +48,4 @@ services:
 volumes:
   simulacra-data:
   simulacra-runs:
+  simulacra-pg:

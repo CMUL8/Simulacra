@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,7 @@ from simulacra.demo.duckdb_engine import query
 from simulacra.demo.enterprise_audit import list_audit
 from simulacra.demo.events import list_events, subscribe, unsubscribe
 from simulacra.demo.governance import governance_overview
+from simulacra.demo.db import health as db_health, migrate
 from simulacra.demo.identity import (
 	AuthContext,
 	add_membership,
@@ -51,6 +52,7 @@ from simulacra.demo.pipeline import (
 )
 from simulacra.demo.runs import create_project, list_projects, load_state, project_dir, save_state
 from simulacra.demo.sandbox import sandbox_status
+from simulacra.demo.siem import download_filename, export_bundle, siem_status
 from simulacra.demo.tenants import (
 	admin_overview,
 	create_tenant,
@@ -66,7 +68,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("simulacra.api")
 
-app = FastAPI(title="Simulacra API", version="0.6.0")
+app = FastAPI(title="Simulacra API", version="0.7.0")
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
@@ -78,6 +80,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup() -> None:
+	migrate()
 	info = ensure_bootstrap()
 	log.info("bootstrap %s auth_required=%s", info, auth_required())
 
@@ -154,7 +157,9 @@ def health() -> dict[str, Any]:
 		"prime": "enabled" if prime_enabled() else "off",
 		"sandbox": sb.get("active"),
 		"auth_required": auth_required(),
-		"version": "0.6.0",
+		"identity": db_health(),
+		"siem": siem_status(),
+		"version": "0.7.0",
 	}
 
 
@@ -265,7 +270,46 @@ def get_platform_audit(
 	limit: int = 100,
 ) -> dict:
 	tid = None if ctx.user.is_platform_admin else ctx.tenant_id
-	return {"events": list_audit(tenant_id=tid, limit=limit)}
+	return {"events": list_audit(tenant_id=tid, limit=limit), "siem": siem_status()}
+
+
+@app.get("/admin/audit/export")
+def export_platform_audit(
+	ctx: Annotated[AuthContext, Depends(require_perm("tenant:manage"))],
+	format: str = "json",
+	limit: int = 500,
+	flush: bool = False,
+):
+	tid = None if ctx.user.is_platform_admin else ctx.tenant_id
+	events = list_audit(tenant_id=tid, limit=limit)
+	bundle = export_bundle(events, fmt=format, flush=flush)
+	return Response(
+		content=bundle["body"],
+		media_type=bundle["content_type"],
+		headers={
+			"Content-Disposition": f'attachment; filename="{download_filename(format)}"',
+			"X-Simulacra-Audit-Count": str(bundle["count"]),
+			"X-Simulacra-SIEM-Flushed": str(bundle.get("flushed", 0)),
+		},
+	)
+
+
+@app.post("/admin/audit/siem/flush")
+def flush_siem(
+	request: Request,
+	ctx: Annotated[AuthContext, Depends(require_perm("tenant:manage"))],
+	limit: int = 100,
+) -> dict:
+	tid = None if ctx.user.is_platform_admin else ctx.tenant_id
+	events = list_audit(tenant_id=tid, limit=limit)
+	bundle = export_bundle(events, flush=True)
+	audit_request(request, ctx, "siem.flush", count=bundle["count"], flushed=bundle.get("flushed", 0))
+	return {
+		"count": bundle["count"],
+		"flushed": bundle.get("flushed", 0),
+		"siem": siem_status(),
+		"format": bundle["format"],
+	}
 
 
 @app.get("/tenants")

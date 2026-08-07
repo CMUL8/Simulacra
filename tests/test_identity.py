@@ -20,6 +20,8 @@ def _isolated_data(tmp_path, monkeypatch):
 	monkeypatch.setenv("SIMULACRA_BOOTSTRAP_EMAIL", "admin@test.local")
 	monkeypatch.setenv("SIMULACRA_BOOTSTRAP_PASSWORD", "test-password-123")
 	monkeypatch.setenv("SIMULACRA_DEFAULT_TENANT", "default")
+	monkeypatch.delenv("SIMULACRA_DATABASE_URL", raising=False)
+	monkeypatch.delenv("DATABASE_URL", raising=False)
 	import simulacra.demo.identity as identity
 	import simulacra.demo.tenants as tenants_mod
 	import simulacra.demo.paths as paths

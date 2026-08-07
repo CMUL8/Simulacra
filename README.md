@@ -55,6 +55,8 @@ Stack: FastAPI (`apps/api`) · Simulacra console (`apps/console`) · generated a
 
 **Multi-tenant / enterprise:** workspaces, RBAC (owner/admin/member/viewer), API keys, project quotas, sandbox policy, and audit trails. See Admin in the console. Deploy with `docker compose up --build` or Fly (`fly.toml`).
 
+Postgres identity: set `SIMULACRA_DATABASE_URL` (compose includes Postgres). Sandbox: `SIMULACRA_SANDBOX=gvisor|machine|docker|worktree`. SIEM: `GET /admin/audit/export?format=cef|json|hec` and optional `SIMULACRA_SIEM_WEBHOOK`.
+
 ## Status
 
 Early. Spec and roadmap are in `docs/`. A thin Python RPC helper under `simulacra/` exists from exploration; the product path is **Prime-pure + Simulacra control plane**, not a second agent framework.

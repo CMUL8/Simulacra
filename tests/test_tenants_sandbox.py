@@ -17,5 +17,5 @@ def test_create_tenant_with_policy():
 
 def test_sandbox_auto_resolves():
 	status = sandbox_status()
-	assert status["active"] in ("docker", "worktree")
+	assert status["active"] in ("docker", "worktree", "gvisor", "machine")
 	assert resolve_mode("auto") == status["active"]

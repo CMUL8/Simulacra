@@ -152,16 +152,16 @@ One **read-only** warehouse path with secrets outside the model.
 - Tenancy: workspaces, `X-Tenant-Id`, memberships, RBAC (owner/admin/member/viewer)
 - Isolation: projects scoped by tenant; quotas (`max_projects`, concurrent jobs)
 - Audit: platform + per-tenant JSONL; project audit zip export
-- Sandbox: docker or worktree jail; admin console for tenants/members/keys
-- Deploy shape: `Dockerfile`, `fly.toml`, `docker-compose.yml`
+- Sandbox: docker / gVisor (`runsc`) / ephemeral machines (local `--rm` or Fly Machines) / worktree jail
+- Identity store: JSON local **or** Postgres (`SIMULACRA_DATABASE_URL`)
+- SIEM: CEF / NDJSON / Splunk HEC export + webhook forward (`SIMULACRA_SIEM_WEBHOOK`)
+- Deploy shape: `Dockerfile`, `fly.toml`, `docker-compose.yml` (includes Postgres)
 
 **Still open:**
 - SSO / OIDC  
-- Postgres-backed identity (replace local JSON stores)  
-- Container/gVisor default + ephemeral job machines  
 - PII classifiers / redaction policies  
 - Budgeting (map to Prime goal/autonomy budgets + $ caps)  
-- SIEM export of audit packs
+- Managed gVisor fleet on every region by default
 
 ---
 

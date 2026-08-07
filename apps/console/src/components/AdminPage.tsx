@@ -7,6 +7,7 @@ import {
   fetchPlatformAudit,
   fetchSandbox,
   getTenantId,
+  getToken,
   inviteMember,
   listApiKeys,
   listMembers,
@@ -22,6 +23,24 @@ import {
 } from "../api";
 
 type Props = { onBack: () => void };
+
+async function downloadAudit(format: string) {
+  const token = getToken();
+  const res = await fetch(`/api/admin/audit/export?format=${encodeURIComponent(format)}&limit=1000`, {
+    headers: {
+      Authorization: token ? `Bearer ${token}` : "",
+      "X-Tenant-Id": getTenantId(),
+    },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `simulacra-audit.${format === "cef" ? "cef" : "ndjson"}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export function AdminPage({ onBack }: Props) {
   const [admin, setAdmin] = useState<AdminOverview | null>(null);
@@ -358,7 +377,18 @@ export function AdminPage({ onBack }: Props) {
       </section>
 
       <section className="admin-section">
-        <h2>Audit trail</h2>
+        <h2>Audit trail / SIEM</h2>
+        <div className="admin-create" style={{ marginBottom: 12 }}>
+          <button type="button" className="ghost-btn" disabled={busy} onClick={() => downloadAudit("json").catch((e) => setError(String(e.message || e)))}>
+            Export NDJSON
+          </button>
+          <button type="button" className="ghost-btn" disabled={busy} onClick={() => downloadAudit("cef").catch((e) => setError(String(e.message || e)))}>
+            Export CEF
+          </button>
+          <button type="button" className="ghost-btn" disabled={busy} onClick={() => downloadAudit("hec").catch((e) => setError(String(e.message || e)))}>
+            Export Splunk HEC
+          </button>
+        </div>
         <div className="admin-card" style={{ maxHeight: 240, overflow: "auto" }}>
           {audit.length === 0 && <p className="admin-note">No events yet.</p>}
           {audit.map((e, i) => (

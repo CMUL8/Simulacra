@@ -88,7 +88,25 @@ def _save_store(store: dict[str, Any]) -> None:
 	TENANTS_PATH.write_text(json.dumps(store, indent=2))
 
 
+def _ensure_default_pg() -> None:
+	from .db import migrate
+	from .pg_store import pg_list_tenants, pg_upsert_tenant
+
+	migrate()
+	existing = pg_list_tenants()
+	if not any(t["id"] == default_tenant_id() for t in existing):
+		t = Tenant(id=default_tenant_id(), name="Default", notes="Built-in tenant")
+		pg_upsert_tenant(t.to_dict())
+
+
 def list_tenants() -> list[Tenant]:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_list_tenants
+
+		_ensure_default_pg()
+		return [Tenant.from_dict(t) for t in pg_list_tenants()]
 	store = _ensure_store()
 	return [Tenant.from_dict(t) for t in store.get("tenants", [])]
 
@@ -101,17 +119,44 @@ def get_tenant(tenant_id: str) -> Tenant:
 
 
 def create_tenant(name: str, *, policy: dict[str, Any] | None = None, notes: str = "") -> Tenant:
-	store = _ensure_store()
 	tid = f"ten_{uuid.uuid4().hex[:10]}"
 	tenant = Tenant(id=tid, name=name.strip() or tid, notes=notes)
 	if policy:
 		tenant.policy = Tenant.from_dict({**tenant.to_dict(), "policy": policy}).policy
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_upsert_tenant
+
+		_ensure_default_pg()
+		pg_upsert_tenant(tenant.to_dict())
+		return tenant
+	store = _ensure_store()
 	store.setdefault("tenants", []).append(tenant.to_dict())
 	_save_store(store)
 	return tenant
 
 
 def update_tenant(tenant_id: str, *, name: str | None = None, status: str | None = None, policy: dict[str, Any] | None = None, notes: str | None = None) -> Tenant:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_update_tenant
+
+		_ensure_default_pg()
+		patch: dict[str, Any] = {}
+		if name is not None:
+			patch["name"] = name
+		if status is not None:
+			patch["status"] = status
+		if notes is not None:
+			patch["notes"] = notes
+		if policy is not None:
+			patch["policy"] = policy
+		raw = pg_update_tenant(tenant_id, patch)
+		if raw is None:
+			raise KeyError(f"Unknown tenant: {tenant_id}")
+		return Tenant.from_dict(raw)
 	store = _ensure_store()
 	found = None
 	for i, raw in enumerate(store.get("tenants", [])):

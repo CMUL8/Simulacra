@@ -141,10 +141,25 @@ def _sessions() -> dict[str, Any]:
 
 
 def list_users() -> list[User]:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_list_users
+
+		return [User(**u) for u in pg_list_users()]
 	return [User(**u) for u in _users().get("users", [])]
 
 
 def get_user(user_id: str) -> User:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_get_user
+
+		raw = pg_get_user(user_id)
+		if not raw:
+			raise KeyError(user_id)
+		return User(**raw)
 	for u in list_users():
 		if u.id == user_id:
 			return u
@@ -153,6 +168,13 @@ def get_user(user_id: str) -> User:
 
 def get_user_by_email(email: str) -> User | None:
 	email = email.strip().lower()
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_get_user_by_email
+
+		raw = pg_get_user_by_email(email)
+		return User(**raw) if raw else None
 	for u in list_users():
 		if u.email.lower() == email:
 			return u
@@ -176,6 +198,13 @@ def create_user(
 		password_hash=_hash_password(password),
 		is_platform_admin=is_platform_admin,
 	)
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_insert_user
+
+		pg_insert_user(asdict(user))
+		return user
 	store = _users()
 	store["users"].append(asdict(user))
 	_save(USERS_PATH, store)
@@ -185,6 +214,14 @@ def create_user(
 def add_membership(tenant_id: str, user_id: str, role: Role = "member") -> Membership:
 	get_tenant(tenant_id)
 	get_user(user_id)
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_upsert_membership
+
+		m = Membership(tenant_id=tenant_id, user_id=user_id, role=role)
+		pg_upsert_membership(asdict(m))
+		return m
 	store = _memberships()
 	for raw in store["memberships"]:
 		if raw["tenant_id"] == tenant_id and raw["user_id"] == user_id:
@@ -198,6 +235,12 @@ def add_membership(tenant_id: str, user_id: str, role: Role = "member") -> Membe
 
 
 def list_memberships(*, tenant_id: str | None = None, user_id: str | None = None) -> list[Membership]:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_list_memberships
+
+		return [Membership(**m) for m in pg_list_memberships(tenant_id=tenant_id, user_id=user_id)]
 	out: list[Membership] = []
 	for raw in _memberships().get("memberships", []):
 		if tenant_id and raw["tenant_id"] != tenant_id:
@@ -215,6 +258,13 @@ def get_membership(tenant_id: str, user_id: str) -> Membership | None:
 
 
 def remove_membership(tenant_id: str, user_id: str) -> None:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_delete_membership
+
+		pg_delete_membership(tenant_id, user_id)
+		return
 	store = _memberships()
 	store["memberships"] = [
 		m
@@ -239,6 +289,13 @@ def create_api_key(user_id: str, *, name: str = "default", tenant_id: str | None
 		"last_used_at": None,
 		"revoked": False,
 	}
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_insert_api_key
+
+		pg_insert_api_key(meta)
+		return raw, meta
 	store = _keys()
 	store["keys"].append(meta)
 	_save(KEYS_PATH, store)
@@ -246,6 +303,13 @@ def create_api_key(user_id: str, *, name: str = "default", tenant_id: str | None
 
 
 def revoke_api_key(key_id: str, user_id: str | None = None) -> None:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_revoke_api_key
+
+		pg_revoke_api_key(key_id, user_id)
+		return
 	store = _keys()
 	for k in store["keys"]:
 		if k["id"] == key_id and (user_id is None or k["user_id"] == user_id):
@@ -254,6 +318,12 @@ def revoke_api_key(key_id: str, user_id: str | None = None) -> None:
 
 
 def list_api_keys(user_id: str) -> list[dict[str, Any]]:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_list_api_keys
+
+		return pg_list_api_keys(user_id)
 	out = []
 	for k in _keys().get("keys", []):
 		if k["user_id"] == user_id:
@@ -264,16 +334,21 @@ def list_api_keys(user_id: str) -> list[dict[str, Any]]:
 def create_session(user_id: str, *, ttl_hours: int = 72) -> str:
 	token = f"sst_{secrets.token_urlsafe(32)}"
 	exp = _now() + timedelta(hours=ttl_hours)
+	row = {
+		"token_hash": _hash_token(token),
+		"user_id": user_id,
+		"expires_at": exp.isoformat(),
+		"created_at": _now().isoformat(),
+	}
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_insert_session
+
+		pg_insert_session(row)
+		return token
 	store = _sessions()
-	store["sessions"].append(
-		{
-			"token_hash": _hash_token(token),
-			"user_id": user_id,
-			"expires_at": exp.isoformat(),
-			"created_at": _now().isoformat(),
-		}
-	)
-	# prune expired
+	store["sessions"].append(row)
 	store["sessions"] = [
 		s for s in store["sessions"] if datetime.fromisoformat(s["expires_at"]) > _now()
 	]
@@ -286,6 +361,21 @@ def _user_from_token(token: str) -> tuple[User, str] | None:
 	if not token:
 		return None
 	th = _hash_token(token)
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_find_api_key_by_hash, pg_find_session, pg_touch_api_key
+
+		if token.startswith("ska_"):
+			k = pg_find_api_key_by_hash(th)
+			if not k:
+				return None
+			pg_touch_api_key(k["id"])
+			return get_user(k["user_id"]), "api_key"
+		s = pg_find_session(th)
+		if not s:
+			return None
+		return get_user(s["user_id"]), "session"
 
 	if token.startswith("ska_"):
 		store = _keys()
@@ -366,10 +456,13 @@ def _bootstrap_dev_context(tenant_header: str | None) -> AuthContext:
 
 def ensure_bootstrap() -> dict[str, Any]:
 	"""Create default tenant + platform admin on first boot."""
+	from .db import migrate, using_postgres
+
+	migrate()
 	list_tenants()  # ensure default tenant
 	email = os.environ.get("SIMULACRA_BOOTSTRAP_EMAIL", "admin@localhost").strip().lower()
 	password = os.environ.get("SIMULACRA_BOOTSTRAP_PASSWORD", "simulacra-admin-change-me")
-	info: dict[str, Any] = {"bootstrapped": False}
+	info: dict[str, Any] = {"bootstrapped": False, "identity_backend": "postgres" if using_postgres() else "json"}
 	user = get_user_by_email(email)
 	if user is None:
 		user = create_user(email, password, name="Platform Admin", is_platform_admin=True)
@@ -382,14 +475,20 @@ def ensure_bootstrap() -> dict[str, Any]:
 			"key_id": meta["id"],
 			"created_at": _now().isoformat(),
 			"warning": "Change SIMULACRA_BOOTSTRAP_PASSWORD and rotate API key for production",
+			"identity_backend": info["identity_backend"],
 		}
 		DATA_DIR.mkdir(parents=True, exist_ok=True)
 		(DATA_DIR / "bootstrap.json").write_text(json.dumps(boot, indent=2))
-		info = {"bootstrapped": True, "email": email, "api_key_prefix": raw_key[:10]}
+		info = {
+			"bootstrapped": True,
+			"email": email,
+			"api_key_prefix": raw_key[:10],
+			"identity_backend": info["identity_backend"],
+		}
 	else:
 		if not get_membership(default_tenant_id(), user.id):
 			add_membership(default_tenant_id(), user.id, "owner")
-		info = {"bootstrapped": False, "email": email}
+		info = {"bootstrapped": False, "email": email, "identity_backend": info["identity_backend"]}
 	return info
 
 

@@ -1,9 +1,11 @@
 """Execution sandbox for Prime / build work.
 
 Modes (SIMULACRA_SANDBOX or tenant policy):
-  - docker: run commands in a disposable container (network none, bind-mount run dir)
+  - docker: disposable container (network none, bind-mount run dir)
+  - gvisor: docker with --runtime=runsc (falls back to docker/worktree)
+  - machine: ephemeral job machine (local docker --rm or Fly Machines)
   - worktree: hardened local jail (scrubbed env, cwd jail, optional macOS sandbox-exec)
-  - auto: docker if daemon available else worktree
+  - auto: gvisor if available else docker if available else worktree
 """
 
 from __future__ import annotations
@@ -16,9 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .machines import gvisor_available, machines_status, run_ephemeral
+
 log = logging.getLogger("simulacra.sandbox")
 
 DOCKER_IMAGE = os.environ.get("SIMULACRA_SANDBOX_IMAGE", "python:3.12-slim")
+GVISOR_RUNTIME = os.environ.get("SIMULACRA_GVISOR_RUNTIME", "runsc")
 
 
 @dataclass
@@ -29,6 +34,7 @@ class SandboxResult:
 	returncode: int | None = None
 	stdout: str = ""
 	stderr: str = ""
+	machine_id: str | None = None
 
 
 def docker_available() -> bool:
@@ -49,7 +55,24 @@ def docker_available() -> bool:
 def resolve_mode(requested: str | None = None) -> str:
 	mode = (requested or os.environ.get("SIMULACRA_SANDBOX") or "auto").lower()
 	if mode == "auto":
+		if gvisor_available():
+			return "gvisor"
 		return "docker" if docker_available() else "worktree"
+	if mode == "gvisor":
+		if gvisor_available():
+			return "gvisor"
+		if docker_available():
+			log.warning("gVisor unavailable — falling back to docker")
+			return "docker"
+		log.warning("gVisor/docker unavailable — falling back to worktree")
+		return "worktree"
+	if mode == "machine":
+		if docker_available() or (
+			os.environ.get("FLY_API_TOKEN") and os.environ.get("SIMULACRA_FLY_APP")
+		):
+			return "machine"
+		log.warning("ephemeral machines unavailable — falling back to worktree")
+		return "worktree"
 	if mode == "docker" and not docker_available():
 		log.warning("docker requested but unavailable — falling back to worktree")
 		return "worktree"
@@ -58,17 +81,23 @@ def resolve_mode(requested: str | None = None) -> str:
 
 def sandbox_status() -> dict[str, Any]:
 	mode = resolve_mode()
+	ms = machines_status()
+	trust = {
+		"gvisor": "gVisor (runsc) kernel isolation via ephemeral container",
+		"machine": "ephemeral job machine (auto-destroy after command)",
+		"docker": "container isolation",
+		"worktree": "worktree jail + scrubbed env (not a full security boundary)",
+	}.get(mode, "unknown")
 	return {
 		"requested": os.environ.get("SIMULACRA_SANDBOX", "auto"),
 		"active": mode,
 		"docker_available": docker_available(),
-		"image": DOCKER_IMAGE if mode == "docker" else None,
+		"gvisor_available": ms["gvisor_available"],
+		"gvisor_runtime": ms["gvisor_runtime"],
+		"machines": ms,
+		"image": DOCKER_IMAGE if mode in ("docker", "gvisor", "machine") else None,
 		"network": "deny",
-		"trust_model": (
-			"container isolation"
-			if mode == "docker"
-			else "worktree jail + scrubbed env (not a full security boundary)"
-		),
+		"trust_model": trust,
 	}
 
 
@@ -131,9 +160,44 @@ def run_sandboxed(
 	cwd = cwd.resolve()
 	cwd.mkdir(parents=True, exist_ok=True)
 
+	if active in ("machine", "gvisor"):
+		return _run_machine_or_gvisor(
+			argv, cwd=cwd, timeout=timeout, network=network, active=active
+		)
 	if active == "docker":
 		return _run_docker(argv, cwd=cwd, timeout=timeout, network=network)
 	return _run_worktree(argv, cwd=cwd, timeout=timeout)
+
+
+def _run_machine_or_gvisor(
+	argv: list[str],
+	*,
+	cwd: Path,
+	timeout: float,
+	network: str,
+	active: str,
+) -> SandboxResult:
+	use_gvisor = active == "gvisor" or (
+		active == "machine" and os.environ.get("SIMULACRA_MACHINE_GVISOR", "1") in ("1", "true", "yes")
+	)
+	# Prefer ephemeral machine path for both gvisor and machine modes
+	result = run_ephemeral(
+		argv,
+		cwd=cwd,
+		timeout=timeout,
+		network=network,
+		use_gvisor=use_gvisor,
+		env=_scrubbed_env(),
+	)
+	return SandboxResult(
+		mode=active,
+		ok=result.ok,
+		returncode=result.returncode,
+		stdout=result.stdout,
+		stderr=result.stderr,
+		detail=result.detail,
+		machine_id=result.machine_id or None,
+	)
 
 
 def _run_docker(
@@ -233,7 +297,6 @@ def prepare_project_sandbox(project_id: str, *, tenant_sandbox: str | None = Non
 	import json
 
 	(audit / "sandbox.json").write_text(json.dumps(status, indent=2))
-	# Ensure jail dirs exist
 	for sub in ("work", "outputs", "app", "inputs"):
 		(root / sub).mkdir(parents=True, exist_ok=True)
 	return status
