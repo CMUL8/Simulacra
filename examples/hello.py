@@ -12,12 +12,17 @@ if str(ROOT) not in sys.path:
 	sys.path.insert(0, str(ROOT))
 
 from simulacra import Agent
+from simulacra.env import load_dotenv
+from simulacra.demo.prime_hook import prime_kwargs
+
+load_dotenv()
 
 
 async def main() -> None:
 	prompt = " ".join(sys.argv[1:]) or "Reply with exactly: ok"
-	async with Agent(cwd=ROOT, no_session=True) as agent:
-		text = await agent.ask(prompt)
+	async with Agent(cwd=ROOT, no_session=True, **prime_kwargs()) as agent:
+		result = await agent.run(prompt)
+		text = result.text
 		print(text or "(empty)")
 
 

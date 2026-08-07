@@ -1,0 +1,51 @@
+{
+  "assessment_id": "VR-2026-Q1-0142",
+  "assessor": "Third Party Risk Team",
+  "findings": [
+    {
+      "vendor": "Cobalt Security",
+      "theme": "pen test remediation",
+      "risk_level": "high",
+      "risk_score": 91,
+      "evidence": "Critical findings unresolved past SLA in latest pen test report",
+      "region": "US",
+      "owner": "Security"
+    },
+    {
+      "vendor": "Cobalt Security",
+      "theme": "access control",
+      "risk_level": "high",
+      "risk_score": 87,
+      "evidence": "Privileged access reviews overdue for 14 admin accounts",
+      "region": "US",
+      "owner": "Security"
+    },
+    {
+      "vendor": "Ironclad Legal",
+      "theme": "contract terms",
+      "risk_level": "medium",
+      "risk_score": 54,
+      "evidence": "Liability cap below company standard in MSA template",
+      "region": "Global",
+      "owner": "Legal"
+    },
+    {
+      "vendor": "Quantum Hosting",
+      "theme": "uptime SLA",
+      "risk_level": "medium",
+      "risk_score": 49,
+      "evidence": "Three unplanned outages in trailing 90 days",
+      "region": "US",
+      "owner": "IT"
+    },
+    {
+      "vendor": "Pinnacle AI",
+      "theme": "model risk",
+      "risk_level": "high",
+      "risk_score": 84,
+      "evidence": "No documented model validation for customer-facing recommendations",
+      "region": "US",
+      "owner": "Risk"
+    }
+  ]
+}

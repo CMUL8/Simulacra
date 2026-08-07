@@ -1,0 +1,11 @@
+vendor,theme,risk_level,risk_score,evidence,region,owner
+Summit Retail,payment delays,medium,58,Invoices overdue 45+ days in two regions,EMEA,Finance
+Vertex Health,privacy review,high,88,PHI handling without updated BAA on file,US,Legal
+Lumen Cloud,cost optimization,low,22,Stable spend within forecast band,Global,Procurement
+Apex Freight,carrier compliance,high,79,DOT audit findings unresolved for 3 carriers,US,Ops
+NovaHR,payroll data,medium,52,Incomplete SOC2 Type II report on file,US,HR
+Sterling Bank API,transaction monitoring,high,86,AML alert false-negative rate above threshold,UK,Compliance
+Pacific Telco,SLA breach,medium,61,99.2% uptime vs 99.9% contracted APAC,APAC,IT
+GreenGrid Energy,ESG reporting,low,28,Carbon disclosure aligned with framework,EU,Sustainability
+Meridian Software,license audit,medium,55,15% unlicensed seat overage in enterprise tier,US,IT
+Cascade Logistics,insurance gap,high,82,Cargo insurance certificate expired Q1,US,Legal

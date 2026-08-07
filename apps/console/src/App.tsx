@@ -1,0 +1,408 @@
+import { Building2, Shield } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  DEFAULT_DESIGN_BRIEF,
+  approveProject,
+  cancelProjectJob,
+  createProject,
+  deployProject,
+  getProject,
+  listFixtureFiles,
+  listProjectFiles,
+  listProjects,
+  rollbackProject,
+  sendChat,
+  sendPlanChat,
+  type DataRoomFile,
+  type DesignBrief,
+  type Project,
+  type Snapshot,
+} from "./api";
+import { AdminPage } from "./components/AdminPage";
+import { AgentShell } from "./components/AgentShell";
+import { GovernancePage } from "./components/GovernancePage";
+import { Landing } from "./components/Landing";
+import { PreviewDrawer } from "./components/PreviewDrawer";
+import { Sidebar } from "./components/Sidebar";
+import { StatusBar } from "./components/StatusBar";
+import { useEventStream } from "./hooks/useEventStream";
+
+type AppMode = "landing" | "plan" | "workspace" | "governance" | "admin";
+
+function jobRunning(snap: Snapshot | null): boolean {
+  const status = snap?.job?.status ?? snap?.project.job?.status;
+  return status === "running" || status === "settling" || snap?.project.phase === "build";
+}
+
+export default function App() {
+  const [mode, setMode] = useState<AppMode>("landing");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [fixtureFiles, setFixtureFiles] = useState<DataRoomFile[]>([]);
+  const [projectFiles, setProjectFiles] = useState<DataRoomFile[]>([]);
+  const [goal, setGoal] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [designBrief, setDesignBrief] = useState<DesignBrief>(DEFAULT_DESIGN_BRIEF);
+  const [dataAttached, setDataAttached] = useState(true);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [apiOk, setApiOk] = useState(true);
+  const [govReturn, setGovReturn] = useState<AppMode>("landing");
+  const pollRef = useRef<number | null>(null);
+
+  const projectId = snapshot?.project.id ?? null;
+  const { events: traces } = useEventStream(projectId);
+  const running = busy || jobRunning(snapshot);
+
+  const refreshProjects = useCallback(async () => {
+    try {
+      setProjects(await listProjects());
+      setApiOk(true);
+    } catch {
+      setApiOk(false);
+    }
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current != null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const pollUntilIdle = useCallback(
+    (id: string) => {
+      stopPolling();
+      pollRef.current = window.setInterval(async () => {
+        try {
+          const snap = await getProject(id);
+          setSnapshot(snap);
+          const status = snap.job?.status ?? snap.project.job?.status ?? "idle";
+          if (status === "idle" || status === "failed" || status === "cancelled" || snap.project.phase === "ready") {
+            stopPolling();
+            setBusy(false);
+            if (snap.project.phase === "ready") {
+              setMode("workspace");
+              setPreviewOpen(true);
+            }
+            await refreshProjects();
+          }
+        } catch {
+          /* keep polling briefly */
+        }
+      }, 1500);
+    },
+    [refreshProjects, stopPolling],
+  );
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  useEffect(() => {
+    refreshProjects();
+    listFixtureFiles().then(setFixtureFiles).catch(() => setFixtureFiles([]));
+  }, [refreshProjects]);
+
+  useEffect(() => {
+    const id = snapshot?.project.id;
+    if (!id) {
+      setProjectFiles(fixtureFiles);
+      return;
+    }
+    listProjectFiles(id).then(setProjectFiles).catch(() => setProjectFiles(fixtureFiles));
+  }, [snapshot?.project.id, fixtureFiles]);
+
+  // When SSE says done, refresh snapshot
+  useEffect(() => {
+    const last = traces[traces.length - 1];
+    if (!last || !projectId) return;
+    if (last.type === "done" || (last.type === "error" && last.status === "fail")) {
+      getProject(projectId)
+        .then((snap) => {
+          setSnapshot(snap);
+          if (snap.project.phase === "ready") {
+            setMode("workspace");
+            setBusy(false);
+            stopPolling();
+          }
+        })
+        .catch(() => undefined);
+    }
+  }, [traces, projectId, stopPolling]);
+
+  function buildPrompt(): string {
+    const parts: string[] = [];
+    if (goal.trim()) parts.push(`Goal: ${goal.trim()}`);
+    if (prompt.trim()) parts.push(prompt.trim());
+    return parts.join("\n\n");
+  }
+
+  async function loadProject(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const snap = await getProject(id);
+      setSnapshot(snap);
+      if (snap.project.design_brief) setDesignBrief(snap.project.design_brief);
+      setMode(snap.project.phase === "plan" ? "plan" : "workspace");
+      setPreviewOpen(false);
+      setInput("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load project");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleStartPlanning() {
+    if (!dataAttached) {
+      setError("Attach a data room before planning.");
+      return;
+    }
+    const text = buildPrompt();
+    if (text.length < 3) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      const brief = {
+        ...designBrief,
+        product_name: designBrief.product_name || prompt.slice(0, 60),
+        one_liner: designBrief.one_liner || prompt.slice(0, 120),
+      };
+      const snap = await createProject(text, goal, brief);
+      setSnapshot(snap);
+      setMode("plan");
+      setInput("");
+      setSidebarOpen(false);
+      await refreshProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start plan");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePlanSend() {
+    const text = input.trim();
+    if (!snapshot || !text) return;
+    setBusy(true);
+    setError(null);
+    setInput("");
+    try {
+      const snap = await sendPlanChat(snapshot.project.id, text);
+      setSnapshot(snap);
+      await refreshProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Plan chat failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleApprove() {
+    if (!snapshot) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const snap = await approveProject(snapshot.project.id);
+      setSnapshot(snap);
+      setMode("workspace");
+      pollUntilIdle(snapshot.project.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Build failed");
+      setBusy(false);
+    }
+  }
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!snapshot || !text) return;
+    setBusy(true);
+    setError(null);
+    setInput("");
+    try {
+      const snap = await sendChat(snapshot.project.id, text);
+      setSnapshot(snap);
+      if (snap.job_id || snap.job?.status === "running" || snap.project.job?.status === "running") {
+        pollUntilIdle(snapshot.project.id);
+      } else {
+        setBusy(false);
+        await refreshProjects();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Send failed");
+      setBusy(false);
+    }
+  }
+
+  async function handleCancel() {
+    if (!snapshot) return;
+    try {
+      const snap = await cancelProjectJob(snapshot.project.id);
+      setSnapshot(snap);
+      stopPolling();
+      setBusy(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Stop failed");
+    }
+  }
+
+  async function handleRollback() {
+    if (!snapshot) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const snap = await rollbackProject(snapshot.project.id);
+      setSnapshot(snap);
+      await refreshProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rollback failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeploy() {
+    if (!snapshot) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const snap = await deployProject(snapshot.project.id);
+      setSnapshot(snap);
+      await refreshProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Deploy failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleNew() {
+    stopPolling();
+    setSnapshot(null);
+    setMode("landing");
+    setGoal("");
+    setPrompt("");
+    setDesignBrief(DEFAULT_DESIGN_BRIEF);
+    setDataAttached(true);
+    setInput("");
+    setError(null);
+    setPreviewOpen(false);
+    setSidebarOpen(false);
+    setBusy(false);
+  }
+
+  function openGovernance(from: AppMode = mode) {
+    setGovReturn(from);
+    setMode("governance");
+  }
+
+  if (mode === "governance") {
+    return <GovernancePage onBack={() => setMode(govReturn)} />;
+  }
+
+  if (mode === "admin") {
+    return <AdminPage onBack={() => setMode(govReturn)} />;
+  }
+
+  if (mode === "landing") {
+    return (
+      <>
+        <div className="landing-fabs">
+          <button type="button" className="gov-fab" onClick={() => openGovernance("landing")}>
+            <Shield size={14} />
+            Governance
+          </button>
+          <button
+            type="button"
+            className="gov-fab"
+            onClick={() => {
+              setGovReturn("landing");
+              setMode("admin");
+            }}
+          >
+            <Building2 size={14} />
+            Admin
+          </button>
+        </div>
+        <Landing
+          goal={goal}
+          prompt={prompt}
+          busy={busy}
+          files={fixtureFiles}
+          dataAttached={dataAttached}
+          error={error}
+          designBrief={designBrief}
+          onGoal={setGoal}
+          onPrompt={setPrompt}
+          onDesignBrief={setDesignBrief}
+          onToggleData={() => setDataAttached((v) => !v)}
+          onBuild={handleStartPlanning}
+          onDismissError={() => setError(null)}
+        />
+      </>
+    );
+  }
+
+  if (!snapshot) return null;
+
+  const agentVariant = mode === "plan" ? "plan" : "workspace";
+
+  return (
+    <div className="shell agent-layout">
+      {sidebarOpen && (
+        <Sidebar
+          projects={projects}
+          activeId={snapshot.project.id}
+          files={projectFiles}
+          focus="projects"
+          collapsed={false}
+          onNew={handleNew}
+          onSelect={loadProject}
+          onToggle={() => setSidebarOpen(false)}
+        />
+      )}
+
+      <div className="agent-main">
+        <AgentShell
+          variant={agentVariant}
+          snapshot={snapshot}
+          files={projectFiles}
+          input={input}
+          busy={running}
+          error={error}
+          traces={traces}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onInput={setInput}
+          onSend={mode === "plan" ? handlePlanSend : handleSend}
+          onApprove={mode === "plan" ? handleApprove : undefined}
+          onCancel={running ? handleCancel : undefined}
+          onOpenPreview={() => setPreviewOpen(true)}
+          onGovernance={() => openGovernance(mode)}
+          onRollback={mode === "workspace" ? handleRollback : undefined}
+          onDismissError={() => setError(null)}
+        />
+        <StatusBar project={snapshot.project} apiOk={apiOk} />
+      </div>
+
+      <PreviewDrawer
+        open={previewOpen}
+        snapshot={snapshot}
+        onClose={() => setPreviewOpen(false)}
+        onRefresh={() => loadProject(snapshot.project.id)}
+      />
+
+      {snapshot.project.gates_status === "pass" && !snapshot.project.deployed && previewOpen && (
+        <div className="deploy-float">
+          <button type="button" className="deploy-btn" disabled={running} onClick={handleDeploy}>
+            Approve deploy
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

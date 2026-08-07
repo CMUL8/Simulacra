@@ -1,0 +1,50 @@
+# Example Simulacra run config (Phase A — data room)
+
+run:
+  id: null # assigned by `simulacra init`
+  task: >
+    Extract vendor names, risk themes, and cited dates from the data room.
+    Emit one row per vendor finding.
+
+sources:
+  - type: folder
+    path: inputs/data-room
+
+policy:
+  allow_network: false
+  write_roots:
+    - outputs
+    - work
+  read_roots:
+    - inputs
+
+outputs:
+  primary_table: outputs/table.parquet
+  summary: outputs/summary.md
+  manifest: outputs/manifest.json
+
+gates:
+  - manifest_present
+  - schema_match
+  - no_path_escape
+  - name: row_count_bounds
+    min: 1
+    max: 100000
+
+schema:
+  - name: vendor
+    type: string
+  - name: theme
+    type: string
+  - name: evidence
+    type: string
+  - name: date
+    type: string
+
+prime:
+  # pure Prime Agent — Simulacra only sets cwd + skills + env
+  mode: interactive # interactive | print | rpc | json
+  skills:
+    - skills/simulacra
+  autonomous: false
+  goal: false

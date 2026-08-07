@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "simulacra"
 version = "0.1.0"
-description = "Python wrapper around Prime Agent for programmatic and multi-agent workflows"
+description = "Simulacra — governed vibe coding for internal data apps (Prime Agent control plane)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -13,6 +13,15 @@ authors = [{ name = "Simulacra" }]
 dependencies = []
 
 [project.optional-dependencies]
+demo = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "duckdb>=1.1",
+  "pyarrow>=18.0",
+  "pydantic>=2.10",
+  "python-multipart>=0.0.17",
+  "pyyaml>=6.0",
+]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [project.scripts]

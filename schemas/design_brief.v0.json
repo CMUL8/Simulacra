@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://simulacra.dev/schemas/design_brief.v0.json",
+  "title": "SimulacraDesignBrief",
+  "type": "object",
+  "required": ["aesthetic", "information_architecture", "copy_tone"],
+  "properties": {
+    "product_name": { "type": "string" },
+    "one_liner": { "type": "string" },
+    "audience": { "type": "string" },
+    "aesthetic": {
+      "type": "object",
+      "required": ["direction", "density", "color_mode", "chrome"],
+      "properties": {
+        "direction": {
+          "type": "string",
+          "enum": ["editorial", "utilitarian", "dense-ops", "soft-minimal", "branded-custom"]
+        },
+        "density": { "type": "string", "enum": ["comfortable", "compact", "dense"] },
+        "color_mode": { "type": "string", "enum": ["light", "dark", "system"] },
+        "palette": {
+          "type": "object",
+          "properties": {
+            "background": { "type": "string" },
+            "surface": { "type": "string" },
+            "text": { "type": "string" },
+            "accent": { "type": "string" },
+            "danger": { "type": "string" }
+          }
+        },
+        "typography": {
+          "type": "object",
+          "properties": {
+            "display": { "type": "string" },
+            "body": { "type": "string" }
+          }
+        },
+        "shape": { "type": "string", "enum": ["sharp", "soft"] },
+        "chrome": {
+          "type": "string",
+          "enum": ["no-cards", "cards-ok-for-interaction-only"]
+        },
+        "motion": { "type": "string", "enum": ["none", "subtle", "expressive"] }
+      }
+    },
+    "information_architecture": {
+      "type": "object",
+      "properties": {
+        "primary_view": { "type": "string" },
+        "must_have": { "type": "array", "items": { "type": "string" } },
+        "must_not": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "copy_tone": { "type": "string", "enum": ["precise", "plain", "executive"] },
+    "references": { "type": "array", "items": { "type": "string" } },
+    "user_notes": { "type": "string" }
+  },
+  "additionalProperties": true
+}

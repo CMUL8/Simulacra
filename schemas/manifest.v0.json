@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://simulacra.dev/schemas/manifest.v0.json",
+  "title": "SimulacraRunManifest",
+  "type": "object",
+  "required": [
+    "simulacra_version",
+    "run_id",
+    "created_at",
+    "task",
+    "sources",
+    "artifacts",
+    "gates",
+    "prime"
+  ],
+  "properties": {
+    "simulacra_version": { "type": "string" },
+    "run_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "task": { "type": "string", "minLength": 1 },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "uri"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["folder", "table", "warehouse", "uri"]
+          },
+          "uri": { "type": "string" },
+          "content_hash": { "type": "string" }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "kind"],
+        "properties": {
+          "path": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["table", "summary", "report", "app", "other"]
+          },
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" }
+              }
+            }
+          },
+          "row_count": { "type": "integer", "minimum": 0 },
+          "content_hash": { "type": "string" }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["pass", "fail", "pending"] },
+        "results": { "type": "array" }
+      }
+    },
+    "prime": {
+      "type": "object",
+      "properties": {
+        "session_id": { "type": ["string", "null"] },
+        "model": { "type": "string" },
+        "session_path": { "type": "string" },
+        "source": {
+          "type": "string",
+          "enum": ["prime", "heuristic", "error", "pending", "none", "timeout", "cancelled"]
+        },
+        "status": { "type": "string" },
+        "steps": { "type": "integer" },
+        "duration_ms": { "type": "integer" },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "design_brief": { "type": ["object", "null"] },
+    "app": {
+      "type": ["object", "null"],
+      "properties": {
+        "template": { "type": "string" },
+        "path": { "type": "string" },
+        "deploy_url": { "type": "string" }
+      }
+    }
+  },
+  "additionalProperties": true
+}

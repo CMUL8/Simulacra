@@ -15,5 +15,15 @@ build/
 *.jsonl
 .prime/
 
+runs/
+apps/**/node_modules/
+templates/**/node_modules/
+apps/console/dist/
+templates/internal-app/dist/
+
 # Upstream clone — keep local for development; do not vendor in this repo
 prime-agent/
+
+# Local tenant registry (created at runtime)
+tenants/
+
