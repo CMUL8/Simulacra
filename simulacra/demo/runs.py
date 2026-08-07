@@ -161,11 +161,11 @@ def create_project(
 	design_brief: dict[str, Any] | None = None,
 	tenant_id: str | None = None,
 ) -> ProjectState:
-	from .tenants import assert_tenant_active
+	from .tenants import assert_tenant_active, assert_under_project_quota
 
 	ensure_runs_dir()
 	tid = tenant_id or default_tenant_id()
-	assert_tenant_active(tid)
+	assert_under_project_quota(tid)
 
 	project_id = f"proj_{uuid.uuid4().hex[:12]}"
 	root = project_dir(project_id)

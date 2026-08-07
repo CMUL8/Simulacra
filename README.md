@@ -45,11 +45,15 @@ chmod +x scripts/demo.sh
 
 Open **http://127.0.0.1:5173**
 
+Sign in with bootstrap `admin@localhost` / `simulacra-admin-change-me` (or create a workspace). Auth is on by default (`SIMULACRA_AUTH_REQUIRED=1`).
+
 1. Describe your app → **Build app**
 2. Chat to refine (“add search”, “group by vendor”, “rename to …”)
 3. **Approve & deploy** when gates pass
 
 Stack: FastAPI (`apps/api`) · Simulacra console (`apps/console`) · generated app (`templates/internal-app` → `runs/<id>/app`).
+
+**Multi-tenant / enterprise:** workspaces, RBAC (owner/admin/member/viewer), API keys, project quotas, sandbox policy, and audit trails. See Admin in the console. Deploy with `docker compose up --build` or Fly (`fly.toml`).
 
 ## Status
 

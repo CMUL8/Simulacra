@@ -1,0 +1,23 @@
+# fly.toml app configuration file generated for Simulacra
+app = "cmul8-simulacra"
+primary_region = "iad"
+
+[build]
+
+[env]
+  SIMULACRA_AUTH_REQUIRED = "1"
+  SIMULACRA_SANDBOX = "worktree"
+  SIMULACRA_DEFAULT_TENANT = "default"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2

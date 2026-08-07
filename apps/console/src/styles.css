@@ -1543,6 +1543,90 @@ body {
   z-index: 50;
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+.user-chip {
+  font-size: 11px;
+  color: var(--text-dim);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tenant-select {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  padding: 24px;
+}
+.login-card {
+  width: min(400px, 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  padding: 28px 24px;
+}
+.login-card h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+.login-sub {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 0 18px;
+}
+.login-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.login-tabs button {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  padding: 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.login-tabs button.active {
+  background: var(--bg-3);
+  color: var(--text-bright);
+}
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.login-card input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.login-hint {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
 }
 .admin-page {
   min-height: 100vh;
@@ -1614,6 +1698,10 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  cursor: pointer;
+}
+.tenant-row.selected {
+  border-color: var(--accent, #3d8b6e);
 }
 .admin-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 .admin-row-actions { display: flex; align-items: center; gap: 8px; }

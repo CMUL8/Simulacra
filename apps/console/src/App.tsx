@@ -4,24 +4,32 @@ import {
   DEFAULT_DESIGN_BRIEF,
   approveProject,
   cancelProjectJob,
+  clearAuth,
   createProject,
   deployProject,
+  fetchMe,
   getProject,
+  getTenantId,
+  getToken,
   listFixtureFiles,
   listProjectFiles,
   listProjects,
   rollbackProject,
   sendChat,
   sendPlanChat,
+  setTenantId,
+  type AuthUser,
   type DataRoomFile,
   type DesignBrief,
   type Project,
   type Snapshot,
+  type Tenant,
 } from "./api";
 import { AdminPage } from "./components/AdminPage";
 import { AgentShell } from "./components/AgentShell";
 import { GovernancePage } from "./components/GovernancePage";
 import { Landing } from "./components/Landing";
+import { LoginPage } from "./components/LoginPage";
 import { PreviewDrawer } from "./components/PreviewDrawer";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -35,6 +43,9 @@ function jobRunning(snap: Snapshot | null): boolean {
 }
 
 export default function App() {
+  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
   const [mode, setMode] = useState<AppMode>("landing");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -56,6 +67,25 @@ export default function App() {
   const projectId = snapshot?.project.id ?? null;
   const { events: traces } = useEventStream(projectId);
   const running = busy || jobRunning(snapshot);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      setAuthed(false);
+      return;
+    }
+    fetchMe()
+      .then((me) => {
+        setUser(me.user);
+        setTenants(me.tenants || []);
+        if (me.tenant_id) setTenantId(me.tenant_id);
+        setAuthed(true);
+      })
+      .catch(() => {
+        clearAuth();
+        setAuthed(false);
+      });
+  }, []);
 
   const refreshProjects = useCallback(async () => {
     try {
@@ -101,9 +131,10 @@ export default function App() {
   useEffect(() => () => stopPolling(), [stopPolling]);
 
   useEffect(() => {
+    if (!authed) return;
     refreshProjects();
     listFixtureFiles().then(setFixtureFiles).catch(() => setFixtureFiles([]));
-  }, [refreshProjects]);
+  }, [refreshProjects, authed]);
 
   useEffect(() => {
     const id = snapshot?.project.id;
@@ -131,6 +162,26 @@ export default function App() {
         .catch(() => undefined);
     }
   }, [traces, projectId, stopPolling]);
+
+  if (authed === null) {
+    return (
+      <div className="login-page">
+        <div className="login-card">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!authed) {
+    return (
+      <LoginPage
+        onAuthed={(session) => {
+          setUser(session.user);
+          setTenants(session.tenants || []);
+          setAuthed(true);
+        }}
+      />
+    );
+  }
 
   function buildPrompt(): string {
     const parts: string[] = [];
@@ -312,6 +363,23 @@ export default function App() {
     return (
       <>
         <div className="landing-fabs">
+          {tenants.length > 1 && (
+            <select
+              className="tenant-select"
+              value={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id || "default"}
+              onChange={(e) => {
+                setTenantId(e.target.value);
+                refreshProjects();
+              }}
+            >
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="user-chip">{user?.email}</span>
           <button type="button" className="gov-fab" onClick={() => openGovernance("landing")}>
             <Shield size={14} />
             Governance
@@ -326,6 +394,17 @@ export default function App() {
           >
             <Building2 size={14} />
             Admin
+          </button>
+          <button
+            type="button"
+            className="gov-fab"
+            onClick={() => {
+              clearAuth();
+              setAuthed(false);
+              setUser(null);
+            }}
+          >
+            Sign out
           </button>
         </div>
         <Landing

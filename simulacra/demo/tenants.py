@@ -20,9 +20,13 @@ class TenantPolicy:
 	sandbox: str = "auto"  # auto | docker | worktree
 	network: str = "deny"  # deny | allowlist
 	max_concurrent_jobs: int = 2
+	max_projects: int = 50
+	max_jobs_per_day: int = 100
 	allowed_models: list[str] = field(default_factory=lambda: ["anthropic/claude-3-haiku"])
 	retention_days: int = 30
 	require_approve: bool = True
+	sso_enforced: bool = False
+
 
 
 @dataclass
@@ -49,9 +53,12 @@ class Tenant:
 				sandbox=pol.get("sandbox", "auto"),
 				network=pol.get("network", "deny"),
 				max_concurrent_jobs=int(pol.get("max_concurrent_jobs", 2)),
+				max_projects=int(pol.get("max_projects", 50)),
+				max_jobs_per_day=int(pol.get("max_jobs_per_day", 100)),
 				allowed_models=list(pol.get("allowed_models") or ["anthropic/claude-3-haiku"]),
 				retention_days=int(pol.get("retention_days", 30)),
 				require_approve=bool(pol.get("require_approve", True)),
+				sso_enforced=bool(pol.get("sso_enforced", False)),
 			),
 			notes=data.get("notes", ""),
 		)
@@ -133,11 +140,25 @@ def assert_tenant_active(tenant_id: str) -> Tenant:
 	return tenant
 
 
-def admin_overview() -> dict[str, Any]:
+def assert_under_project_quota(tenant_id: str) -> Tenant:
+	from .runs import list_projects
+
+	tenant = assert_tenant_active(tenant_id)
+	count = len(list_projects(tenant_id=tenant_id))
+	if count >= tenant.policy.max_projects:
+		raise PermissionError(
+			f"Tenant project quota exceeded ({count}/{tenant.policy.max_projects})"
+		)
+	return tenant
+
+
+def admin_overview(*, for_tenant_id: str | None = None) -> dict[str, Any]:
 	from .runs import list_projects
 
 	tenants = list_tenants()
-	projects = list_projects()
+	if for_tenant_id and for_tenant_id != "*":
+		tenants = [t for t in tenants if t.id == for_tenant_id]
+	projects = list_projects() if not for_tenant_id or for_tenant_id == "*" else list_projects(tenant_id=for_tenant_id)
 	by_tenant: dict[str, int] = {}
 	for p in projects:
 		tid = getattr(p, "tenant_id", None) or default_tenant_id()

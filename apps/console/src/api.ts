@@ -37,9 +37,12 @@ export type TenantPolicy = {
   sandbox?: string;
   network?: string;
   max_concurrent_jobs?: number;
+  max_projects?: number;
+  max_jobs_per_day?: number;
   allowed_models?: string[];
   retention_days?: number;
   require_approve?: boolean;
+  sso_enforced?: boolean;
 };
 
 export type Tenant = {
@@ -163,6 +166,23 @@ export type GovernanceOverview = {
 };
 
 const TENANT_KEY = "simulacra_tenant_id";
+const TOKEN_KEY = "simulacra_token";
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  name: string;
+  is_platform_admin?: boolean;
+  status?: string;
+};
+
+export type AuthSession = {
+  token: string;
+  token_type: string;
+  user: AuthUser;
+  tenants: Tenant[];
+  tenant_id: string;
+};
 
 export function getTenantId(): string {
   return localStorage.getItem(TENANT_KEY) || "default";
@@ -172,12 +192,27 @@ export function setTenantId(id: string) {
   localStorage.setItem(TENANT_KEY, id);
 }
 
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string | null) {
+  if (!token) localStorage.removeItem(TOKEN_KEY);
+  else localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-Tenant-Id": getTenantId(),
     ...((init?.headers as Record<string, string>) || {}),
   };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API}${path}`, {
     ...init,
     headers,
@@ -187,6 +222,40 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(text || res.statusText);
   }
   return res.json();
+}
+
+export async function login(email: string, password: string): Promise<AuthSession> {
+  const data = await json<AuthSession>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  setToken(data.token);
+  if (data.tenant_id) setTenantId(data.tenant_id);
+  return data;
+}
+
+export async function register(
+  email: string,
+  password: string,
+  name = "",
+  tenantName?: string,
+): Promise<AuthSession> {
+  const data = await json<AuthSession>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name, tenant_name: tenantName }),
+  });
+  setToken(data.token);
+  if (data.tenant_id) setTenantId(data.tenant_id);
+  return data;
+}
+
+export async function fetchMe(): Promise<{
+  user: AuthUser;
+  tenant_id: string;
+  role: string;
+  tenants: Tenant[];
+}> {
+  return json("/auth/me");
 }
 
 export async function listProjects(): Promise<Project[]> {
@@ -242,6 +311,59 @@ export async function updateTenant(
     body: JSON.stringify(patch),
   });
   return data.tenant;
+}
+
+export type TenantMember = {
+  user: AuthUser;
+  role: string;
+  created_at?: string;
+};
+
+export async function listMembers(tenantId: string): Promise<TenantMember[]> {
+  const data = await json<{ members: TenantMember[] }>(`/tenants/${tenantId}/members`);
+  return data.members;
+}
+
+export async function inviteMember(
+  tenantId: string,
+  email: string,
+  role = "member",
+  password?: string,
+  name = "",
+): Promise<{ user: AuthUser; role: string; created: boolean }> {
+  return json(`/tenants/${tenantId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ email, role, password: password || null, name }),
+  });
+}
+
+export async function removeMember(tenantId: string, userId: string): Promise<void> {
+  await json(`/tenants/${tenantId}/members/${userId}`, { method: "DELETE" });
+}
+
+export type ApiKeyMeta = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at?: string;
+  revoked?: boolean;
+};
+
+export async function listApiKeys(): Promise<ApiKeyMeta[]> {
+  const data = await json<{ keys: ApiKeyMeta[] }>("/auth/api-keys");
+  return data.keys;
+}
+
+export async function createApiKey(name = "default"): Promise<{ api_key: string; key: ApiKeyMeta }> {
+  return json("/auth/api-keys", { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export async function revokeApiKey(keyId: string): Promise<void> {
+  await json(`/auth/api-keys/${keyId}`, { method: "DELETE" });
+}
+
+export async function fetchPlatformAudit(limit = 50): Promise<{ events: Record<string, unknown>[] }> {
+  return json(`/admin/audit?limit=${limit}`);
 }
 
 export async function createProject(
@@ -311,7 +433,9 @@ export async function listEvents(projectId: string): Promise<AgentEvent[]> {
 
 /** Subscribe to live SSE events. Returns unsubscribe function. */
 export function subscribeEvents(projectId: string, onEvent: (evt: AgentEvent) => void): () => void {
-  const source = new EventSource(`${API}/projects/${projectId}/events/stream`);
+  const token = getToken();
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  const source = new EventSource(`${API}/projects/${projectId}/events/stream${qs}`);
   source.onmessage = (msg) => {
     try {
       onEvent(JSON.parse(msg.data) as AgentEvent);

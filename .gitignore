@@ -27,3 +27,7 @@ prime-agent/
 # Local tenant registry (created at runtime)
 tenants/
 
+# Identity / audit / bootstrap secrets
+data/
+
+

@@ -145,14 +145,23 @@ One **read-only** warehouse path with secrets outside the model.
 
 ---
 
-## Phase E — Enterprise hardening (ongoing)
+## Phase E — Enterprise hardening (in progress)
 
+**Shipped (multi-user / multi-tenant baseline):**
+- Auth: register / login, sessions (`sst_`), API keys (`ska_`), bootstrap admin
+- Tenancy: workspaces, `X-Tenant-Id`, memberships, RBAC (owner/admin/member/viewer)
+- Isolation: projects scoped by tenant; quotas (`max_projects`, concurrent jobs)
+- Audit: platform + per-tenant JSONL; project audit zip export
+- Sandbox: docker or worktree jail; admin console for tenants/members/keys
+- Deploy shape: `Dockerfile`, `fly.toml`, `docker-compose.yml`
+
+**Still open:**
 - SSO / OIDC  
-- Single-tenant admin: policies, retention, allowlisted models  
-- Container/gVisor (or equivalent) sandbox default  
+- Postgres-backed identity (replace local JSON stores)  
+- Container/gVisor default + ephemeral job machines  
 - PII classifiers / redaction policies  
 - Budgeting (map to Prime goal/autonomy budgets + $ caps)  
-- SIEM export of audit packs  
+- SIEM export of audit packs
 
 ---
 
@@ -190,7 +199,7 @@ Avoid building a large web IDE before A/B work.
 | Agent runtime | **Reuse Prime** (binary or source launcher) |
 | Orchestration RPC | Optional thin Simulacra CLI; avoid rewriting RpcClient unless Python ops require it |
 | App host | Start process supervisor / simple k8s Deploy |
-| Auth | Defer; use network ACL + shared secret for alpha |
+| Auth | Sessions + API keys + RBAC (SSO later) |
 
 ---
 

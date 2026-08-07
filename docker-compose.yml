@@ -1,0 +1,23 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SIMULACRA_AUTH_REQUIRED: "1"
+      SIMULACRA_USE_PRIME: "0"
+      SIMULACRA_SANDBOX: "worktree"
+      SIMULACRA_BOOTSTRAP_EMAIL: "admin@localhost"
+      SIMULACRA_BOOTSTRAP_PASSWORD: "simulacra-admin-change-me"
+    volumes:
+      - simulacra-data:/app/data
+      - simulacra-runs:/app/runs
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  simulacra-data:
+  simulacra-runs:
