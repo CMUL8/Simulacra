@@ -26,7 +26,8 @@ type Props = { onBack: () => void };
 
 async function downloadAudit(format: string) {
   const token = getToken();
-  const res = await fetch(`/api/admin/audit/export?format=${encodeURIComponent(format)}&limit=1000`, {
+  const base = import.meta.env.VITE_API_BASE ?? (import.meta.env.PROD ? "" : "/api");
+  const res = await fetch(`${base}/admin/audit/export?format=${encodeURIComponent(format)}&limit=1000`, {
     headers: {
       Authorization: token ? `Bearer ${token}` : "",
       "X-Tenant-Id": getTenantId(),

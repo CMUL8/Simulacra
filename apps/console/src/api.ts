@@ -1,4 +1,4 @@
-const API = "/api";
+const API = import.meta.env.VITE_API_BASE ?? (import.meta.env.PROD ? "" : "/api");
 
 export type ChatMessage = { role: string; content: string; at?: string; source?: string | null };
 export type AppConfig = {
