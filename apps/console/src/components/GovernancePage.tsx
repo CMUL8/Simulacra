@@ -40,8 +40,10 @@ export function GovernancePage({ onBack, embedded = false }: Props) {
         </header>
       )}
 
-      <div className="integration-banner gov-banner">
-        <Shield size={20} />
+      <div className="policy-hero">
+        <div className="policy-hero-icon">
+          <ShieldCheck size={22} strokeWidth={1.75} />
+        </div>
         <div>
           <strong>{data?.policy.message ?? "Apps never access business systems directly."}</strong>
           <p>
@@ -51,104 +53,84 @@ export function GovernancePage({ onBack, embedded = false }: Props) {
         </div>
       </div>
 
-      {loading && <p className="gov-loading">Loading policy data…</p>}
+      {loading && <p className="gov-loading">Loading policy…</p>}
 
       {data && (
         <>
-          <div className="gov-stats">
-            <div className="gov-stat">
-              <span className="gov-stat-num">{data.summary.total_projects}</span>
+          <div className="policy-stats">
+            <div className="policy-stat">
+              <span className="policy-stat-num">{data.summary.total_projects}</span>
               <span>Projects</span>
             </div>
-            <div className="gov-stat pass">
-              <span className="gov-stat-num">{data.summary.gates_pass}</span>
+            <div className="policy-stat pass">
+              <span className="policy-stat-num">{data.summary.gates_pass}</span>
               <span>Gates passed</span>
             </div>
-            <div className="gov-stat fail">
-              <span className="gov-stat-num">{data.summary.gates_fail}</span>
+            <div className="policy-stat fail">
+              <span className="policy-stat-num">{data.summary.gates_fail}</span>
               <span>Gates failed</span>
             </div>
-            <div className="gov-stat">
-              <span className="gov-stat-num">{data.summary.deployed}</span>
-              <span>Deployed</span>
-            </div>
-            <div className="gov-stat">
-              <span className="gov-stat-num">{data.summary.in_plan}</span>
-              <span>In plan</span>
+            <div className="policy-stat">
+              <span className="policy-stat-num">{data.summary.deployed}</span>
+              <span>Live</span>
             </div>
           </div>
 
-          <div className="gov-layer-diagram">
-            <div className="layer-box user">Business teams</div>
-            <div className="layer-arrow">↓ prompts</div>
-            <div className="layer-box control">
-              <ShieldCheck size={16} />
-              Simulacra control layer
+          <div className="policy-flow">
+            <div className="policy-flow-step">Business teams</div>
+            <span className="policy-flow-arrow">prompts</span>
+            <div className="policy-flow-step accent">
+              <Shield size={14} />
+              Control layer
             </div>
-            <div className="layer-arrow">↓ governed reads</div>
-            <div className="layer-box data">Data room · APIs · MCP</div>
-            <div className="layer-note">No direct system access</div>
+            <span className="policy-flow-arrow">governed reads</span>
+            <div className="policy-flow-step">Data room · APIs</div>
           </div>
 
-          <table className="gov-table">
-            <thead>
-              <tr>
-                <th>App</th>
-                <th>Phase</th>
-                <th>Gates</th>
-                <th>Integration</th>
-                <th>Deployed</th>
-                <th>Checkpoints</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.projects.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <strong>{p.title}</strong>
-                    <span className="gov-id">{p.id}</span>
-                  </td>
-                  <td><span className={`phase-pill ${p.phase}`}>{p.phase}</span></td>
-                  <td>
-                    <span className={`gate-pill ${p.gates_status}`}>
-                      {p.gates_status === "pass" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                      {p.gates_status}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="integration-pill">
-                      <ShieldAlert size={12} />
-                      mediated
-                    </span>
-                  </td>
-                  <td>{p.deployed ? "✓ live" : "—"}</td>
-                  <td>{p.checkpoints}</td>
+          <div className="policy-table-wrap">
+            <table className="policy-table">
+              <thead>
+                <tr>
+                  <th>App</th>
+                  <th>Phase</th>
+                  <th>Gates</th>
+                  <th>Access</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {data.projects.some((p) => p.gates.length > 0) && (
-            <section className="gov-gates-detail">
-              <h2>Gate results</h2>
-              {data.projects
-                .filter((p) => p.gates.length > 0)
-                .map((p) => (
-                  <div key={p.id} className="gov-gate-block">
-                    <h3>{p.title}</h3>
-                    <ul>
-                      {p.gates.map((g) => (
-                        <li key={g.gate} className={g.passed ? "pass" : "fail"}>
-                          {g.passed ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                          <span>{g.gate}</span>
-                          <span className="gate-detail">{g.detail}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+              </thead>
+              <tbody>
+                {data.projects.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="policy-empty">
+                      No projects yet
+                    </td>
+                  </tr>
+                )}
+                {data.projects.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.title}</strong>
+                      <span className="gov-id">{p.id}</span>
+                    </td>
+                    <td>
+                      <span className={`phase-pill ${p.phase}`}>{p.phase}</span>
+                    </td>
+                    <td>
+                      <span className={`gate-pill ${p.gates_status}`}>
+                        {p.gates_status === "pass" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                        {p.gates_status}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="integration-pill">
+                        <ShieldAlert size={12} />
+                        mediated
+                      </span>
+                    </td>
+                  </tr>
                 ))}
-            </section>
-          )}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>

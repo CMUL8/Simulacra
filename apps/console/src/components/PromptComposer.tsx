@@ -6,6 +6,7 @@ type Props = {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
+  onCancel?: () => void;
   placeholder?: string;
   disabled?: boolean;
   busy?: boolean;
@@ -18,6 +19,7 @@ export function PromptComposer({
   value,
   onChange,
   onSubmit,
+  onCancel,
   placeholder = "Send follow-up",
   disabled,
   busy,
@@ -167,7 +169,14 @@ export function PromptComposer({
             <ChevronDown size={12} strokeWidth={2} />
           </span>
           {busy ? (
-            <button type="button" className="send-btn stop" disabled aria-label="Working">
+            <button
+              type="button"
+              className="send-btn stop"
+              onClick={() => onCancel?.()}
+              disabled={!onCancel}
+              title="Stop Prime"
+              aria-label="Stop Prime"
+            >
               <Square size={11} fill="currentColor" />
             </button>
           ) : (

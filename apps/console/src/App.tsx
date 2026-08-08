@@ -8,6 +8,7 @@ import {
   deployProject,
   fetchMe,
   getProject,
+  getProjectJob,
   getTenantId,
   getToken,
   listFixtureFiles,
@@ -36,9 +37,11 @@ import { useEventStream } from "./hooks/useEventStream";
 
 type AppMode = "landing" | "plan" | "workspace";
 
-function jobRunning(snap: Snapshot | null): boolean {
+function jobRunning(snap: Snapshot | null, live = true): boolean {
   const status = snap?.job?.status ?? snap?.project.job?.status;
-  return status === "running" || status === "settling" || snap?.project.phase === "build";
+  // After deploy/restart, state.job can linger as "running" with no live worker
+  if (!live && (status === "running" || status === "settling")) return false;
+  return status === "running" || status === "settling";
 }
 
 export default function App({
@@ -70,11 +73,21 @@ export default function App({
   const [apiOk, setApiOk] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileTab, setProfileTab] = useState<ProfileTab>("account");
+  const [jobLive, setJobLive] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const busyStartedAt = useRef<number | null>(null);
 
   const projectId = snapshot?.project.id ?? null;
   const { events: traces } = useEventStream(projectId);
-  const running = busy || jobRunning(snapshot);
+  const running = busy || jobRunning(snapshot, jobLive);
+
+  useEffect(() => {
+    if (running) {
+      if (busyStartedAt.current == null) busyStartedAt.current = Date.now();
+    } else {
+      busyStartedAt.current = null;
+    }
+  }, [running]);
 
   useEffect(() => {
     const token = getToken();
@@ -114,14 +127,26 @@ export default function App({
   const pollUntilIdle = useCallback(
     (id: string) => {
       stopPolling();
+      let ticks = 0;
       pollRef.current = window.setInterval(async () => {
+        ticks += 1;
         try {
-          const snap = await getProject(id);
+          const [snap, liveInfo] = await Promise.all([getProject(id), getProjectJob(id)]);
           setSnapshot(snap);
-          const status = snap.job?.status ?? snap.project.job?.status ?? "idle";
-          if (status === "idle" || status === "failed" || status === "cancelled" || snap.project.phase === "ready") {
+          setJobLive(Boolean(liveInfo.live));
+          const status = liveInfo.job?.status ?? snap.job?.status ?? snap.project.job?.status ?? "idle";
+          const liveRunning = liveInfo.live && (status === "running" || status === "settling");
+          const staleRunning = !liveInfo.live && (status === "running" || status === "settling");
+          const timedOut = ticks >= 80; // ~2 min at 1.5s
+          if (!liveRunning || staleRunning || timedOut || snap.project.phase === "ready") {
+            if (staleRunning || timedOut) {
+              // Clear ghost busy so UI unfreezes after restart / hung Prime
+              setBusy(false);
+              setJobLive(false);
+            } else {
+              setBusy(false);
+            }
             stopPolling();
-            setBusy(false);
             if (snap.project.phase === "ready") {
               setMode("workspace");
               setPreviewOpen(true);
@@ -288,9 +313,11 @@ export default function App({
       setSidebarOpen(false);
       await refreshProjects();
       if (snap.job?.status === "running" || snap.project.job?.status === "running") {
+        setJobLive(true);
         pollUntilIdle(snap.project.id);
       } else {
         setBusy(false);
+        setJobLive(false);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start plan");
@@ -316,14 +343,17 @@ export default function App({
       const snap = await sendPlanChat(snapshot.project.id, text);
       setSnapshot(snap);
       if (snap.job?.status === "running" || snap.project.job?.status === "running") {
+        setJobLive(true);
         pollUntilIdle(snapshot.project.id);
       } else {
         setBusy(false);
+        setJobLive(false);
         await refreshProjects();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Plan chat failed");
       setBusy(false);
+      setJobLive(false);
     }
   }
 
@@ -335,10 +365,12 @@ export default function App({
       const snap = await approveProject(snapshot.project.id);
       setSnapshot(snap);
       setMode("workspace");
+      setJobLive(true);
       pollUntilIdle(snapshot.project.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Build failed");
       setBusy(false);
+      setJobLive(false);
     }
   }
 
@@ -352,6 +384,7 @@ export default function App({
       const snap = await sendChat(snapshot.project.id, text);
       setSnapshot(snap);
       if (snap.job_id || snap.job?.status === "running" || snap.project.job?.status === "running") {
+        setJobLive(true);
         pollUntilIdle(snapshot.project.id);
       } else {
         setBusy(false);
@@ -370,6 +403,7 @@ export default function App({
       setSnapshot(snap);
       stopPolling();
       setBusy(false);
+      setJobLive(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Stop failed");
     }

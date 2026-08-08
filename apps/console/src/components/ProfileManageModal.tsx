@@ -61,7 +61,7 @@ export function ProfileManageModal({
 
   return (
     <div className="acct-backdrop" role="dialog" aria-modal="true" aria-label="Account">
-      <div className="acct-modal">
+      <div className={`acct-modal ${tab === "policy" || tab === "admin" ? "acct-modal-wide" : ""}`}>
         <aside className="acct-rail">
           <div className="acct-rail-head">
             <span className="acct-brand">

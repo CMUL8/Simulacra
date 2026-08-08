@@ -112,6 +112,10 @@ def run_plan_open(project_id: str) -> ProjectState:
 
 def init_plan(state: ProjectState) -> ProjectState:
 	"""Scan immediately, then fire Prime in a background job so the UI can show a loader."""
+	# Show the user ask in chat immediately (Cursor-style), then load while Prime answers
+	if not any(m.role == "user" for m in state.chat):
+		state.chat.append(ChatMessage(role="user", content=state.prompt, source="system"))
+		save_state(state)
 	state = explore_plan_scan(state)
 	pid = state.id
 

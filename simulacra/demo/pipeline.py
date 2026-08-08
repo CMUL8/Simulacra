@@ -391,7 +391,17 @@ def approve_deploy(project_id: str) -> ProjectState:
 
 
 def project_snapshot(project_id: str) -> dict:
+	from .jobs import get_job
+
 	state = load_state(project_id)
+	# Heal ghost "running" after process restart (in-memory job gone)
+	live = get_job(project_id)
+	job = dict(state.job or {})
+	if job.get("status") in ("running", "settling") and live is None:
+		job["status"] = "idle"
+		state.job = job
+		save_state(state)
+
 	parquet = project_dir(project_id) / "outputs" / "table.parquet"
 	if parquet.exists():
 		preview = default_preview_query(project_id)

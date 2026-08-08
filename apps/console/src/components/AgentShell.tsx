@@ -4,7 +4,6 @@ import {
   PanelLeft,
   PanelLeftClose,
   RotateCcw,
-  Square,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } from "../api";
@@ -50,7 +49,7 @@ function renderMarkdownLite(text: string) {
   });
 }
 
-function ThinkingLoader({ label }: { label: string }) {
+function ThinkingLoader({ label, onStop }: { label: string; onStop?: () => void }) {
   return (
     <div className="cursor-thinking" aria-live="polite" aria-busy="true">
       <span className="cursor-thinking-dots" aria-hidden>
@@ -59,6 +58,11 @@ function ThinkingLoader({ label }: { label: string }) {
         <i />
       </span>
       <span className="cursor-thinking-label">{label}</span>
+      {onStop && (
+        <button type="button" className="cursor-thinking-stop" onClick={onStop}>
+          Stop
+        </button>
+      )}
     </div>
   );
 }
@@ -88,7 +92,7 @@ export function AgentShell({
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
-  const waitingForOpen = isPlan && busy && project.chat.length === 0;
+  const waitingForOpen = isPlan && busy && !project.chat.some((m) => m.role === "assistant");
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -108,12 +112,6 @@ export function AgentShell({
           {project.deployed && <span className="deployed-pill">live</span>}
         </div>
         <div className="agent-topbar-right">
-          {busy && onCancel && (
-            <button type="button" className="stop-btn" onClick={onCancel} title="Stop Prime job">
-              <Square size={12} fill="currentColor" />
-              Stop
-            </button>
-          )}
           {!isPlan && hasPreview && (
             <button type="button" className="ghost-btn quiet" onClick={onOpenPreview}>
               <Globe size={14} />
@@ -165,7 +163,10 @@ export function AgentShell({
           )}
 
           {busy && (isPlan || traces.length === 0) && (
-            <ThinkingLoader label={waitingForOpen ? "Planning with Prime…" : "Thinking…"} />
+            <ThinkingLoader
+              label={waitingForOpen ? "Prime is planning…" : "Prime is thinking…"}
+              onStop={onCancel}
+            />
           )}
 
           <div ref={endRef} />
@@ -173,12 +174,13 @@ export function AgentShell({
 
         <div className="agent-composer-wrap">
           {isPlan && designBrief && onSaveDesignBrief && (
-            <DesignBriefForm value={designBrief} onSave={onSaveDesignBrief} disabled={busy} />
+            <DesignBriefForm value={designBrief} onSave={onSaveDesignBrief} disabled={false} />
           )}
           <PromptComposer
             value={input}
             onChange={onInput}
             onSubmit={onSend}
+            onCancel={onCancel}
             disabled={project.status === "failed"}
             busy={busy}
             files={files}
