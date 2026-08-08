@@ -294,9 +294,10 @@ export default function App({
 
   async function handleDesignBriefSave(next: DesignBrief) {
     setDesignBrief(next);
-    if (!snapshot) return;
+    if (!snapshot) throw new Error("No project");
     const snap = await patchDesignBrief(snapshot.project.id, next);
     setSnapshot(snap);
+    if (snap.project.design_brief) setDesignBrief(snap.project.design_brief);
   }
 
   async function handlePlanSend() {
@@ -444,7 +445,7 @@ export default function App({
           )}
           <button type="button" className="gov-fab" onClick={() => openGovernance("landing")}>
             <Shield size={14} />
-            Governance
+            Policy
           </button>
           <button
             type="button"

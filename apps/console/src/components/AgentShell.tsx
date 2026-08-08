@@ -5,7 +5,6 @@ import {
   PanelLeft,
   PanelLeftClose,
   RotateCcw,
-  Shield,
   Square,
   User,
 } from "lucide-react";
@@ -63,16 +62,9 @@ function renderMarkdownLite(text: string) {
 }
 
 function sourceChip(source?: string | null) {
-  if (!source || source === "system") return null;
-  const label =
-    source === "prime"
-      ? "Prime"
-      : source === "heuristic"
-        ? "Heuristic"
-        : source === "error"
-          ? "Fallback"
-          : source;
-  return <span className={`source-chip source-${source}`}>{label}</span>;
+  if (!source || source === "system" || source === "heuristic") return null;
+  if (source !== "prime") return null;
+  return <span className="source-chip source-prime">Prime</span>;
 }
 
 export function AgentShell({
@@ -100,7 +92,6 @@ export function AgentShell({
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
-  const primeSource = project.prime?.source;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -114,9 +105,6 @@ export function AgentShell({
             {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
           </button>
           <span className="product">Simu<em>lacra</em></span>
-          {isPlan && <span className="plan-badge">Planning</span>}
-          {primeSource && primeSource !== "none" && sourceChip(primeSource)}
-          <span className="sep">/</span>
           <span className="project-name">{project.app_config.title}</span>
           {project.deployed && <span className="deployed-pill">live</span>}
         </div>
@@ -128,7 +116,7 @@ export function AgentShell({
             </button>
           )}
           {!isPlan && hasPreview && (
-            <button type="button" className="ghost-btn" onClick={onOpenPreview}>
+            <button type="button" className="ghost-btn quiet" onClick={onOpenPreview}>
               <Globe size={14} />
               Preview
             </button>
@@ -138,9 +126,8 @@ export function AgentShell({
               <RotateCcw size={14} />
             </button>
           )}
-          <button type="button" className="ghost-btn" onClick={onGovernance}>
-            <Shield size={13} />
-            Governance
+          <button type="button" className="topbar-link" onClick={onGovernance} title="Policy & controls">
+            Policy
           </button>
           {isPlan && onApprove && (
             <button type="button" className="approve-btn" disabled={busy} onClick={onApprove}>
@@ -152,12 +139,9 @@ export function AgentShell({
       </header>
 
       {isPlan && (
-        <div className="integration-banner slim">
-          <Shield size={14} />
-          <span>
-            <strong>Your data stays behind the control layer.</strong> Apps talk to Simulacra — never your systems directly.
-          </span>
-        </div>
+        <p className="policy-whisper">
+          Sources stay behind Simulacra’s control layer — apps never talk to systems directly.
+        </p>
       )}
 
       {error && (

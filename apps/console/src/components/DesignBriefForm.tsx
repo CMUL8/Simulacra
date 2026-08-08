@@ -1,7 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DesignBrief } from "../api";
-
-type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
 type Props = {
   value: DesignBrief;
@@ -9,145 +7,189 @@ type Props = {
   disabled?: boolean;
 };
 
+type Preset = {
+  id: string;
+  label: string;
+  aesthetic: NonNullable<DesignBrief["aesthetic"]>;
+};
+
+const PRESETS: Preset[] = [
+  {
+    id: "soft",
+    label: "Soft",
+    aesthetic: {
+      direction: "soft-minimal",
+      density: "comfortable",
+      color_mode: "light",
+      chrome: "cards-ok-for-interaction-only",
+      shape: "rounded",
+      motion: "subtle",
+      palette: { accent: "#3D8B6E" },
+    },
+  },
+  {
+    id: "dense",
+    label: "Dense",
+    aesthetic: {
+      direction: "dense-ops",
+      density: "dense",
+      color_mode: "dark",
+      chrome: "no-cards",
+      shape: "sharp",
+      motion: "subtle",
+      palette: { accent: "#3D8B6E" },
+    },
+  },
+  {
+    id: "editorial",
+    label: "Editorial",
+    aesthetic: {
+      direction: "editorial",
+      density: "comfortable",
+      color_mode: "light",
+      chrome: "no-cards",
+      shape: "sharp",
+      motion: "subtle",
+      palette: { accent: "#1a1a1a" },
+    },
+  },
+  {
+    id: "playful",
+    label: "Playful",
+    aesthetic: {
+      direction: "branded-custom",
+      density: "comfortable",
+      color_mode: "light",
+      chrome: "cards-ok-for-interaction-only",
+      shape: "rounded",
+      motion: "playful",
+      palette: { accent: "#FF6B4A" },
+    },
+  },
+];
+
+function matchPreset(brief: DesignBrief): string | null {
+  const dir = brief.aesthetic?.direction;
+  const found = PRESETS.find((p) => p.aesthetic.direction === dir);
+  return found?.id ?? null;
+}
+
 export function DesignBriefForm({ value, onSave, disabled }: Props) {
-  const [draft, setDraft] = useState<DesignBrief>(value);
-  const [status, setStatus] = useState<SaveState>("idle");
+  const [notes, setNotes] = useState(value.user_notes ?? "");
+  const [accent, setAccent] = useState(value.aesthetic?.palette?.accent ?? "#3D8B6E");
+  const [active, setActive] = useState<string | null>(matchPreset(value));
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [err, setErr] = useState("");
+  const timer = useRef<number | null>(null);
 
   useEffect(() => {
-    setDraft(value);
-    setStatus("idle");
+    setNotes(value.user_notes ?? "");
+    setAccent(value.aesthetic?.palette?.accent ?? "#3D8B6E");
+    setActive(matchPreset(value));
   }, [value]);
 
-  const aesthetic = draft.aesthetic ?? {};
-
-  function patchAesthetic(patch: Record<string, string>) {
-    setDraft({
-      ...draft,
-      aesthetic: { ...aesthetic, ...patch },
-    });
-    setStatus("dirty");
-  }
-
-  function patchNotes(notes: string) {
-    setDraft({ ...draft, user_notes: notes });
-    setStatus("dirty");
-  }
-
-  async function handleSave() {
-    if (disabled) return;
+  async function persist(next: DesignBrief) {
     setStatus("saving");
+    setErr("");
     try {
-      await onSave(draft);
+      await onSave(next);
       setStatus("saved");
-      window.setTimeout(() => setStatus((s) => (s === "saved" ? "idle" : s)), 2200);
-    } catch {
+      window.setTimeout(() => setStatus((s) => (s === "saved" ? "idle" : s)), 1600);
+    } catch (e) {
       setStatus("error");
+      setErr(e instanceof Error ? e.message.slice(0, 120) : "Save failed");
     }
   }
 
-  const canSave = status === "dirty" || status === "error";
+  function applyPreset(preset: Preset) {
+    if (disabled) return;
+    setActive(preset.id);
+    const next: DesignBrief = {
+      ...value,
+      aesthetic: {
+        ...(value.aesthetic ?? {}),
+        ...preset.aesthetic,
+        palette: {
+          ...(value.aesthetic?.palette ?? {}),
+          ...(preset.aesthetic.palette ?? {}),
+          accent,
+        },
+      },
+      user_notes: notes,
+    };
+    void persist(next);
+  }
+
+  function scheduleNotesSave(nextNotes: string, nextAccent: string) {
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      const preset = PRESETS.find((p) => p.id === active);
+      const next: DesignBrief = {
+        ...value,
+        aesthetic: {
+          ...(value.aesthetic ?? {}),
+          ...(preset?.aesthetic ?? {}),
+          palette: {
+            ...(value.aesthetic?.palette ?? {}),
+            ...(preset?.aesthetic.palette ?? {}),
+            accent: nextAccent,
+          },
+        },
+        user_notes: nextNotes,
+      };
+      void persist(next);
+    }, 500);
+  }
 
   return (
-    <details className="design-brief-panel" open>
-      <summary>
-        <span>Look &amp; feel</span>
-        {status === "saved" && <span className="design-brief-pill ok">Saved</span>}
-        {status === "dirty" && <span className="design-brief-pill warn">Unsaved</span>}
-      </summary>
-      <p className="design-brief-hint">
-        Steers the app Prime builds. Edit freely, then save so it is captured on the project.
-      </p>
-      <div className="design-brief-grid">
-        <label>
-          Direction
-          <select
-            disabled={disabled || status === "saving"}
-            value={aesthetic.direction ?? "dense-ops"}
-            onChange={(e) => patchAesthetic({ direction: e.target.value })}
-          >
-            <option value="dense-ops">Dense ops</option>
-            <option value="utilitarian">Utilitarian</option>
-            <option value="editorial">Editorial</option>
-            <option value="soft-minimal">Soft minimal</option>
-            <option value="branded-custom">Branded custom</option>
-          </select>
-        </label>
-        <label>
-          Density
-          <select
-            disabled={disabled || status === "saving"}
-            value={aesthetic.density ?? "compact"}
-            onChange={(e) => patchAesthetic({ density: e.target.value })}
-          >
-            <option value="comfortable">Comfortable</option>
-            <option value="compact">Compact</option>
-            <option value="dense">Dense</option>
-          </select>
-        </label>
-        <label>
-          Color
-          <select
-            disabled={disabled || status === "saving"}
-            value={aesthetic.color_mode ?? "dark"}
-            onChange={(e) => patchAesthetic({ color_mode: e.target.value })}
-          >
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-            <option value="system">System</option>
-          </select>
-        </label>
-        <label>
-          Chrome
-          <select
-            disabled={disabled || status === "saving"}
-            value={aesthetic.chrome ?? "no-cards"}
-            onChange={(e) => patchAesthetic({ chrome: e.target.value })}
-          >
-            <option value="no-cards">No cards</option>
-            <option value="cards-ok-for-interaction-only">Cards for interaction only</option>
-          </select>
-        </label>
-        <label>
-          Accent
+    <div className="style-bar">
+      <div className="style-bar-row">
+        <span className="style-bar-label">Style</span>
+        <div className="style-chips" role="group" aria-label="Look and feel">
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`style-chip ${active === p.id ? "on" : ""}`}
+              disabled={disabled || status === "saving"}
+              onClick={() => applyPreset(p)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <label className="style-accent" title="Accent">
           <input
             type="color"
-            disabled={disabled || status === "saving"}
-            value={aesthetic.palette?.accent ?? "#3D8B6E"}
+            disabled={disabled}
+            value={accent}
             onChange={(e) => {
-              setDraft({
-                ...draft,
-                aesthetic: {
-                  ...aesthetic,
-                  palette: { ...(aesthetic.palette ?? {}), accent: e.target.value },
-                },
-              });
-              setStatus("dirty");
+              const v = e.target.value;
+              setAccent(v);
+              scheduleNotesSave(notes, v);
             }}
           />
         </label>
-        <label className="span-2">
-          Notes for Prime
-          <input
-            type="text"
-            disabled={disabled || status === "saving"}
-            value={draft.user_notes ?? ""}
-            placeholder="e.g. playful, card flips, no dense tables"
-            onChange={(e) => patchNotes(e.target.value)}
-          />
-        </label>
+        {status === "saved" && <span className="style-status ok">Saved</span>}
+        {status === "saving" && <span className="style-status">Saving</span>}
+        {status === "error" && (
+          <span className="style-status err" title={err}>
+            Retry
+          </span>
+        )}
       </div>
-      <div className="design-brief-actions">
-        <button
-          type="button"
-          className="design-brief-save"
-          disabled={disabled || !canSave}
-          onClick={() => void handleSave()}
-        >
-          {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : "Save look & feel"}
-        </button>
-        {status === "error" && <span className="design-brief-error">Couldn’t save — try again</span>}
-        {status === "saved" && <span className="design-brief-saved">Captured on this project</span>}
-      </div>
-    </details>
+      <input
+        className="style-notes"
+        type="text"
+        disabled={disabled}
+        value={notes}
+        placeholder="Optional notes for Prime…"
+        onChange={(e) => {
+          const v = e.target.value;
+          setNotes(v);
+          scheduleNotesSave(v, accent);
+        }}
+      />
+    </div>
   );
 }
