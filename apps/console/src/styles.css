@@ -1604,61 +1604,176 @@ body {
   color: var(--text-bright);
 }
 
-/* Cursor-style thread — stacked hierarchy, no left/right chat bubbles */
+/* Cursor-style document thread — full-width turns, no chat bubbles */
 .cursor-thread {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  max-width: 720px;
+  gap: 4px;
+  max-width: 680px;
   margin: 0 auto;
   width: 100%;
 }
-.cursor-msg {
-  animation: msg-in 0.22s ease-out;
+.cursor-turn {
+  animation: msg-in 0.2s ease-out;
   width: 100%;
-  align-self: stretch;
+  padding: 14px 14px;
+  margin: 0 -14px;
+  border-radius: 8px;
 }
-.cursor-msg-label {
-  font-size: 10px;
+.cursor-turn-user {
+  background: color-mix(in srgb, var(--text-bright) 4%, transparent);
+}
+.cursor-turn-assistant,
+.cursor-turn-plan {
+  background: transparent;
+}
+.cursor-turn-status {
+  padding: 6px 14px;
+  margin: 0 -14px;
+}
+.cursor-turn-role {
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin-bottom: 6px;
-  opacity: 0.75;
+  margin-bottom: 8px;
+  user-select: none;
 }
-.cursor-msg.user .cursor-msg-body {
-  background: transparent;
-  border: none;
-  border-left: 2px solid rgba(255, 255, 255, 0.14);
-  border-radius: 0;
-  padding: 2px 0 2px 14px;
-  color: var(--text-bright);
-  font-size: 15px;
-  line-height: 1.55;
+.cursor-turn-user .cursor-turn-role {
+  color: color-mix(in srgb, var(--text-bright) 55%, var(--text-dim));
 }
-.cursor-msg.assistant .cursor-msg-body,
-.cursor-msg.draft .cursor-msg-body {
-  padding: 0;
-  color: var(--text);
-  font-size: 14.5px;
-  line-height: 1.65;
-  letter-spacing: -0.01em;
-}
-.cursor-msg.status .cursor-msg-body {
+.cursor-turn-status .cursor-turn-status,
+.cursor-turn-status {
   font-size: 12.5px;
   color: var(--text-dim);
-  line-height: 1.5;
+  line-height: 1.45;
+}
+.cursor-turn-status {
+  /* the article itself */
+}
+.cursor-prose {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text);
+  letter-spacing: -0.011em;
+}
+.cursor-prose p {
+  margin: 0 0 0.7em;
+}
+.cursor-prose p:last-child {
+  margin-bottom: 0;
+}
+.cursor-prose .md-h,
+.cursor-prose .md-h1 {
+  margin: 0 0 0.45em;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
+  line-height: 1.35;
+}
+.cursor-prose .md-h1 {
+  font-size: 1.2rem;
+}
+.cursor-prose .md-lead {
+  color: var(--text-bright);
+}
+.cursor-prose .md-ul {
+  margin: 0 0 0.75em;
   padding: 0;
+  list-style: none;
 }
-.cursor-msg-body p { margin: 0 0 10px; }
-.cursor-msg-body p:last-child { margin-bottom: 0; }
-.cursor-msg-body .md-li {
-  display: block;
-  padding-left: 0.2em;
+.cursor-prose .md-ul li {
+  position: relative;
+  padding-left: 1em;
+  margin: 0.2em 0;
+  color: var(--text);
 }
-.cursor-msg-body .md-li::before {
-  content: "– ";
+.cursor-prose .md-ul li::before {
+  content: "–";
+  position: absolute;
+  left: 0;
+  color: var(--text-dim);
+}
+.cursor-prose strong {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+.cursor-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-bright);
+}
+
+/* Plan — document section, not a card */
+.plan-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.plan-section.compact {
+  margin-top: 10px;
+}
+.plan-section-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
+}
+.plan-section-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.plan-section-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 12px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.plan-section-files {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  opacity: 0.9;
+}
+.plan-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.plan-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-bright);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+.plan-preview-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.plan-preview-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.plan-section-hint {
+  font-size: 12px;
   color: var(--text-dim);
 }
 
@@ -2212,66 +2327,8 @@ body {
   border-color: color-mix(in srgb, var(--accent, #3d8b6e) 35%, var(--border));
 }
 
-/* Plan review card */
-.plan-card {
-  margin: 8px 0 20px;
-  padding: 18px 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
-}
-.plan-card-kicker {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: 6px;
-}
-.plan-card h2 {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-.plan-card-sub {
-  margin: 6px 0 0;
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1.45;
-}
-.plan-card-facts {
-  display: grid;
-  gap: 10px;
-  margin: 16px 0;
-}
-.plan-card-facts dt {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-.plan-card-facts dd {
-  margin: 2px 0 0;
-  font-size: 13px;
-}
-.plan-card-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-}
-.plan-card-actions .approve-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.plan-card-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-}
+/* legacy plan-card kept for safety — prefer .plan-section */
+.plan-card { display: none; }
 .cursor-msg-body .md-h2 {
   display: block;
   font-size: 1.05rem;

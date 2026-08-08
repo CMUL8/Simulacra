@@ -5,7 +5,7 @@ import {
   PanelLeftClose,
   RotateCcw,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } from "../api";
 import { DesignBriefForm } from "./DesignBriefForm";
 import { PromptComposer } from "./PromptComposer";
@@ -34,24 +34,79 @@ type Props = {
   onNew?: () => void;
 };
 
-function renderMarkdownLite(text: string) {
-  return text.split("\n").map((line, i) => {
-    let html = line
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-    if (html.startsWith("## ")) {
-      html = `<span class="md-h2">${html.slice(3)}</span>`;
-    } else if (html.startsWith("- ")) {
-      html = `<span class="md-li">${html.slice(2)}</span>`;
-    }
-    return <p key={i} dangerouslySetInnerHTML={{ __html: html || "&nbsp;" }} />;
-  });
+type TurnKind = "user" | "assistant" | "status" | "plan";
+
+function escapeHtml(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** User-facing stage chips — never expose engine names. */
+function inlineFormat(text: string) {
+  let html = escapeHtml(text);
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  return html;
+}
+
+/** Document-style markdown — paragraphs, headings, lists (Cursor transcript feel). */
+function MarkdownBody({ text }: { text: string }) {
+  const blocks = text.replace(/\r\n/g, "\n").trim().split(/\n{2,}/);
+  const nodes: ReactNode[] = [];
+
+  blocks.forEach((block, bi) => {
+    const lines = block.split("\n");
+    const isList = lines.every((l) => !l.trim() || /^[-*]\s+/.test(l.trim()) || /^\d+\.\s+/.test(l.trim()));
+    if (isList && lines.some((l) => /^[-*]\s+/.test(l.trim()))) {
+      nodes.push(
+        <ul key={`ul-${bi}`} className="md-ul">
+          {lines
+            .filter((l) => l.trim())
+            .map((l, li) => (
+              <li key={li} dangerouslySetInnerHTML={{ __html: inlineFormat(l.replace(/^[-*]\s+/, "")) }} />
+            ))}
+        </ul>,
+      );
+      return;
+    }
+
+    lines.forEach((line, li) => {
+      const t = line.trim();
+      if (!t) return;
+      if (t.startsWith("## ")) {
+        nodes.push(
+          <h3 key={`h-${bi}-${li}`} className="md-h" dangerouslySetInnerHTML={{ __html: inlineFormat(t.slice(3)) }} />,
+        );
+      } else if (t.startsWith("# ")) {
+        nodes.push(
+          <h2 key={`h-${bi}-${li}`} className="md-h md-h1" dangerouslySetInnerHTML={{ __html: inlineFormat(t.slice(2)) }} />,
+        );
+      } else if (t.startsWith("**") && t.endsWith("**") && t.indexOf("**", 2) === t.length - 2) {
+        nodes.push(
+          <p key={`p-${bi}-${li}`} className="md-lead" dangerouslySetInnerHTML={{ __html: inlineFormat(t) }} />,
+        );
+      } else {
+        nodes.push(
+          <p key={`p-${bi}-${li}`} dangerouslySetInnerHTML={{ __html: inlineFormat(t) }} />,
+        );
+      }
+    });
+  });
+
+  return <div className="cursor-prose">{nodes}</div>;
+}
+
+function turnKind(m: ChatMessage): TurnKind {
+  if (m.role === "user") return "user";
+  if (m.source === "system") return "status";
+  if (m.role === "assistant" && /^##\s*Plan:/i.test(m.content.trim())) return "plan";
+  return "assistant";
+}
+
+function roleLabel(kind: TurnKind): string | null {
+  if (kind === "user") return "You";
+  if (kind === "assistant" || kind === "plan") return "Simulacra";
+  return null;
+}
+
 function stageLabel(source?: string | null): { text: string; cls: string } | null {
   if (!source || source === "system") return null;
   if (source === "prime") return { text: "Built", cls: "source-prime" };
@@ -79,12 +134,14 @@ function ThinkingLoader({ label, onStop }: { label: string; onStop?: () => void 
   );
 }
 
-function PlanCard({
+function PlanSection({
   snapshot,
   onOpenPreview,
+  compact,
 }: {
   snapshot: Snapshot;
   onOpenPreview: () => void;
+  compact?: boolean;
 }) {
   const p = snapshot.project;
   const preview = p.plan_preview;
@@ -92,48 +149,61 @@ function PlanCard({
   const rows = preview?.row_count ?? p.row_count ?? 0;
   const high = preview?.high_risk ?? 0;
   const vendors = preview?.vendors?.length ?? 0;
-  const files = (preview?.files ?? []).slice(0, 4);
+  const files = (preview?.files ?? []).slice(0, 5);
 
   return (
-    <div className="plan-card">
-      <div className="plan-card-head">
-        <span className="plan-card-kicker">Plan</span>
-        <h2>{p.app_config?.title || "Your app"}</h2>
-        {p.app_config?.subtitle && <p className="plan-card-sub">{p.app_config.subtitle}</p>}
-      </div>
-      <dl className="plan-card-facts">
-        <div>
-          <dt>Data</dt>
-          <dd>
-            {rows} rows
-            {high ? ` · ${high} high risk` : ""}
-            {vendors ? ` · ${vendors} vendors` : ""}
-          </dd>
+    <div className={`plan-section ${compact ? "compact" : ""}`}>
+      {!compact && (
+        <div className="plan-section-head">
+          <h2>{p.app_config?.title || "Your app"}</h2>
+          {p.app_config?.subtitle && <p className="plan-section-sub">{p.app_config.subtitle}</p>}
         </div>
-        {files.length > 0 && (
-          <div>
-            <dt>Sources</dt>
-            <dd>{files.map((f) => f.name).join(", ")}</dd>
-          </div>
-        )}
-      </dl>
-      <div className="plan-card-actions">
-        <button
-          type="button"
-          className={`approve-btn ${hasPreview ? "" : "quiet"}`}
-          disabled={!hasPreview}
-          onClick={onOpenPreview}
-        >
+      )}
+      <div className="plan-section-meta">
+        <span>
+          {rows} rows
+          {high ? ` · ${high} high risk` : ""}
+          {vendors ? ` · ${vendors} vendors` : ""}
+        </span>
+        {files.length > 0 && <span className="plan-section-files">{files.map((f) => f.name).join(" · ")}</span>}
+      </div>
+      <div className="plan-section-actions">
+        <button type="button" className="plan-preview-btn" disabled={!hasPreview} onClick={onOpenPreview}>
           <Globe size={14} />
-          {hasPreview ? "Open draft preview" : "Draft preview preparing…"}
+          {hasPreview ? "Open draft preview" : "Preparing draft…"}
         </button>
-        <p className="plan-card-hint">
-          {hasPreview
-            ? "Review the draft, then Build app when the plan looks right."
-            : "Hang on — preparing a draft you can review."}
-        </p>
+        <span className="plan-section-hint">Then Build app when ready</span>
       </div>
     </div>
+  );
+}
+
+function MessageTurn({
+  message,
+  snapshot,
+  onOpenPreview,
+}: {
+  message: ChatMessage;
+  snapshot: Snapshot;
+  onOpenPreview: () => void;
+}) {
+  const kind = turnKind(message);
+  const label = roleLabel(kind);
+
+  return (
+    <article className={`cursor-turn cursor-turn-${kind}`}>
+      {label && <div className="cursor-turn-role">{label}</div>}
+      {kind === "status" ? (
+        <div className="cursor-status-line">{message.content.replace(/\*\*/g, "")}</div>
+      ) : kind === "plan" ? (
+        <Fragment>
+          <MarkdownBody text={message.content} />
+          <PlanSection snapshot={snapshot} onOpenPreview={onOpenPreview} compact />
+        </Fragment>
+      ) : (
+        <MarkdownBody text={message.content} />
+      )}
+    </article>
   );
 }
 
@@ -174,7 +244,9 @@ export function AgentShell({
   const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
   const stage = stageLabel(lastAssistant?.source ?? project.prime?.source);
   const showStyleBar = Boolean(designBrief && onSaveDesignBrief);
-  const showPlanCard = isPlan && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
+  const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
+  const showStandalonePlan =
+    isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
   const liveTraces = traces.some((e) => e.status === "running");
 
   useEffect(() => {
@@ -219,10 +291,6 @@ export function AgentShell({
         </div>
       </header>
 
-      {isPlan && (
-        <p className="policy-whisper">Review the plan, open the draft, then Build app.</p>
-      )}
-
       {error && (
         <div className="toast error-toast agent-toast" role="alert">
           <span>{error}</span>
@@ -234,33 +302,19 @@ export function AgentShell({
 
       <div className="agent-center">
         <div className="agent-thread cursor-thread">
-          {project.chat.map((m: ChatMessage, i: number) => {
-            const kind =
-              m.role === "user"
-                ? "user"
-                : m.source === "system"
-                  ? "status"
-                  : m.source === "template" || m.source === "heuristic"
-                    ? "draft"
-                    : "assistant";
-            return (
-              <article key={i} className={`cursor-msg ${kind}`}>
-                {kind === "user" && <div className="cursor-msg-label">You</div>}
-                {kind === "status" && <div className="cursor-msg-label">Status</div>}
-                <div className="cursor-msg-body">{renderMarkdownLite(m.content)}</div>
-              </article>
-            );
-          })}
+          {project.chat.map((m, i) => (
+            <MessageTurn key={i} message={m} snapshot={snapshot} onOpenPreview={onOpenPreview} />
+          ))}
 
-          {showPlanCard && !busy && <PlanCard snapshot={snapshot} onOpenPreview={onOpenPreview} />}
-
-          {busy && liveTraces && (
-            <TracePanel events={traces} compact onCancel={onCancel} />
+          {showStandalonePlan && (
+            <article className="cursor-turn cursor-turn-plan">
+              <div className="cursor-turn-role">Simulacra</div>
+              <PlanSection snapshot={snapshot} onOpenPreview={onOpenPreview} />
+            </article>
           )}
 
-          {busy && !liveTraces && (
-            <ThinkingLoader label={thinkingLabel} onStop={onCancel} />
-          )}
+          {busy && liveTraces && <TracePanel events={traces} compact onCancel={onCancel} />}
+          {busy && !liveTraces && <ThinkingLoader label={thinkingLabel} onStop={onCancel} />}
 
           <div ref={endRef} />
         </div>
