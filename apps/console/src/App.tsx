@@ -1,4 +1,4 @@
-import { Building2, Shield, UserRound } from "lucide-react";
+import { Building2, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_DESIGN_BRIEF,
@@ -14,6 +14,7 @@ import {
   listFixtureFiles,
   listProjectFiles,
   listProjects,
+  patchDesignBrief,
   rollbackProject,
   sendChat,
   sendPlanChat,
@@ -209,23 +210,22 @@ export default function App({
     return (
       <>
         <Landing
-          goal={goal}
           prompt={prompt}
-          busy
+          busy={false}
           files={fixtureFiles}
           dataAttached={dataAttached}
           error={null}
-          designBrief={designBrief}
-          onGoal={setGoal}
+          authed={false}
           onPrompt={setPrompt}
-          onDesignBrief={setDesignBrief}
           onToggleData={() => setDataAttached((v) => !v)}
-          onBuild={() => undefined}
+          onBuild={() => setProfileOpen(true)}
+          onLogin={() => setProfileOpen(true)}
           onDismissError={() => undefined}
         />
         <ProfileManageModal
-          open
-          locked
+          open={profileOpen}
+          locked={false}
+          onClose={() => setProfileOpen(false)}
           user={null}
           tenants={[]}
           clerkEnabled={clerkEnabled}
@@ -279,7 +279,7 @@ export default function App({
         product_name: designBrief.product_name || prompt.slice(0, 60),
         one_liner: designBrief.one_liner || prompt.slice(0, 120),
       };
-      const snap = await createProject(text, goal, brief);
+      const snap = await createProject(text, goal || prompt.slice(0, 80), brief);
       setSnapshot(snap);
       setMode("plan");
       setInput("");
@@ -289,6 +289,17 @@ export default function App({
       setError(err instanceof Error ? err.message : "Failed to start plan");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleDesignBriefChange(next: DesignBrief) {
+    setDesignBrief(next);
+    if (!snapshot || mode !== "plan") return;
+    try {
+      const snap = await patchDesignBrief(snapshot.project.id, next);
+      setSnapshot(snap);
+    } catch {
+      /* keep local brief; server sync optional */
     }
   }
 
@@ -450,23 +461,18 @@ export default function App({
             <Building2 size={14} />
             Admin
           </button>
-          <button type="button" className="avatar-fab" onClick={() => setProfileOpen(true)} title={user?.email}>
-            <UserRound size={16} />
-          </button>
         </div>
         <Landing
-          goal={goal}
           prompt={prompt}
           busy={busy}
           files={fixtureFiles}
           dataAttached={dataAttached}
           error={error}
-          designBrief={designBrief}
-          onGoal={setGoal}
+          authed
           onPrompt={setPrompt}
-          onDesignBrief={setDesignBrief}
           onToggleData={() => setDataAttached((v) => !v)}
           onBuild={handleStartPlanning}
+          onLogin={() => setProfileOpen(true)}
           onDismissError={() => setError(null)}
         />
         <ProfileManageModal
@@ -513,6 +519,8 @@ export default function App({
           error={error}
           traces={traces}
           sidebarOpen={sidebarOpen}
+          designBrief={designBrief}
+          onDesignBrief={handleDesignBriefChange}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onInput={setInput}
           onSend={mode === "plan" ? handlePlanSend : handleSend}

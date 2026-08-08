@@ -1,7 +1,6 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { DataRoomFile, DesignBrief } from "../api";
-import { DesignBriefForm } from "./DesignBriefForm";
+import type { DataRoomFile } from "../api";
 import { FileTypeIcon } from "./FileTypeIcon";
 
 const PILLS = [
@@ -11,34 +10,30 @@ const PILLS = [
 ];
 
 type Props = {
-  goal: string;
   prompt: string;
   busy: boolean;
   files: DataRoomFile[];
   dataAttached: boolean;
   error: string | null;
-  designBrief: DesignBrief;
-  onGoal: (v: string) => void;
+  authed?: boolean;
   onPrompt: (v: string) => void;
-  onDesignBrief: (v: DesignBrief) => void;
   onToggleData: () => void;
   onBuild: () => void;
+  onLogin?: () => void;
   onDismissError: () => void;
 };
 
 export function Landing({
-  goal,
   prompt,
   busy,
   files,
   dataAttached,
   error,
-  designBrief,
-  onGoal,
+  authed = true,
   onPrompt,
-  onDesignBrief,
   onToggleData,
   onBuild,
+  onLogin,
   onDismissError,
 }: Props) {
   const [dataOpen, setDataOpen] = useState(false);
@@ -51,15 +46,42 @@ export function Landing({
 
   return (
     <div className="landing">
-      <div className="landing-bg" aria-hidden />
-      <div className="landing-grain" aria-hidden />
+      <img
+        className="landing-hero-img"
+        src="/images/hero-sky.jpg"
+        alt=""
+        aria-hidden
+      />
+      <div className="landing-hero-veil" aria-hidden />
 
-      <div className="landing-content">
-        <p className="brand-mark">
+      <header className="landing-nav">
+        <div className="landing-nav-pill">
+          <span className="landing-nav-brand">
+            Simu<em>lacra</em>
+          </span>
+          <nav className="landing-nav-links" aria-label="Primary">
+            <a href="#start">Product</a>
+            <button type="button" onClick={() => onLogin?.()}>
+              {authed ? "Account" : "Login"}
+            </button>
+          </nav>
+          <button
+            type="button"
+            className="landing-nav-cta"
+            onClick={() => (authed ? promptRef.current?.focus() : onLogin?.())}
+          >
+            {authed ? "Start building" : "Get started"}
+          </button>
+        </div>
+      </header>
+
+      <div className="landing-content" id="start">
+        <h1 className="brand-mark">
           Simu<em>lacra</em>
-        </p>
+        </h1>
         <p className="landing-sub">
           Turn data rooms into governed internal apps — plan, approve, build, audit.
+          Built with code, gated by policy.
         </p>
 
         {error && (
@@ -72,52 +94,39 @@ export function Landing({
         )}
 
         <div className="prompt-card anything-prompt">
-          <div className="prompt-section goal-section">
-            <label htmlFor="goal">Goal</label>
-            <input
-              id="goal"
-              type="text"
-              value={goal}
-              onChange={(e) => onGoal(e.target.value)}
-              placeholder="What should this app achieve?"
-              disabled={busy}
-            />
-          </div>
-          <div className="prompt-divider" />
-          <div className="prompt-section main-section">
-            <textarea
-              ref={promptRef}
-              value={prompt}
-              onChange={(e) => onPrompt(e.target.value)}
-              placeholder="Describe what you're building…"
-              rows={3}
-              disabled={busy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canBuild) onBuild();
+          <textarea
+            ref={promptRef}
+            value={prompt}
+            onChange={(e) => onPrompt(e.target.value)}
+            placeholder="What are you working on?"
+            rows={4}
+            disabled={busy}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canBuild) onBuild();
+            }}
+          />
+          <div className="prompt-footer">
+            <button
+              type="button"
+              className={`data-chip ${dataAttached ? "on" : ""}`}
+              onClick={() => {
+                onToggleData();
+                setDataOpen((v) => !v);
               }}
-            />
-            <div className="prompt-footer">
-              <button
-                type="button"
-                className={`data-chip ${dataAttached ? "on" : ""}`}
-                onClick={() => {
-                  onToggleData();
-                  setDataOpen((v) => !v);
-                }}
-              >
-                <Database size={14} />
-                Data room {files.length ? `(${files.length})` : ""}
-              </button>
-              <button
-                type="button"
-                className="send-orb"
-                disabled={!canBuild}
-                onClick={onBuild}
-                aria-label="Start planning"
-              >
-                <ArrowUp size={18} />
-              </button>
-            </div>
+              disabled={busy}
+            >
+              <Database size={14} />
+              Data room {files.length ? `(${files.length})` : ""}
+            </button>
+            <button
+              type="button"
+              className="send-orb"
+              disabled={!canBuild}
+              onClick={onBuild}
+              aria-label="Start planning"
+            >
+              <ArrowUp size={18} />
+            </button>
           </div>
         </div>
 
@@ -139,11 +148,6 @@ export function Landing({
             ))}
           </div>
         )}
-
-        <details className="landing-brief">
-          <summary>Look &amp; feel</summary>
-          <DesignBriefForm value={designBrief} onChange={onDesignBrief} disabled={busy} />
-        </details>
       </div>
     </div>
   );

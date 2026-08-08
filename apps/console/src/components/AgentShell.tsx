@@ -10,7 +10,8 @@ import {
   User,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { AgentEvent, ChatMessage, DataRoomFile, Snapshot } from "../api";
+import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } from "../api";
+import { DesignBriefForm } from "./DesignBriefForm";
 import { PromptComposer } from "./PromptComposer";
 import { TracePanel } from "./TracePanel";
 
@@ -23,6 +24,8 @@ type Props = {
   error: string | null;
   traces: AgentEvent[];
   sidebarOpen: boolean;
+  designBrief?: DesignBrief;
+  onDesignBrief?: (v: DesignBrief) => void;
   onToggleSidebar: () => void;
   onInput: (v: string) => void;
   onSend: () => void;
@@ -73,6 +76,8 @@ export function AgentShell({
   error,
   traces,
   sidebarOpen,
+  designBrief,
+  onDesignBrief,
   onToggleSidebar,
   onInput,
   onSend,
@@ -189,6 +194,9 @@ export function AgentShell({
         </div>
 
         <div className="agent-composer-wrap">
+          {isPlan && designBrief && onDesignBrief && (
+            <DesignBriefForm value={designBrief} onChange={onDesignBrief} disabled={busy} />
+          )}
           <PromptComposer
             value={input}
             onChange={onInput}

@@ -17,8 +17,11 @@ export function DesignBriefForm({ value, onChange, disabled }: Props) {
   }
 
   return (
-    <details className="design-brief-panel">
+    <details className="design-brief-panel" open>
       <summary>Look &amp; feel</summary>
+      <p className="design-brief-hint">
+        These choices steer the app Prime builds — not this console.
+      </p>
       <div className="design-brief-grid">
         <label>
           Direction
