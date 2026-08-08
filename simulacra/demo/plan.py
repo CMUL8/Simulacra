@@ -165,7 +165,7 @@ def start_plan_chat(project_id: str, message: str) -> ProjectState:
 		return _plan_chat_reply(project_id, message)
 
 	try:
-		start_job(project_id, "plan_ask", label="Prime planning", target=target)
+		start_job(project_id, "plan_ask", label="Planning", target=target)
 	except JobConflictError as exc:
 		raise ValueError(str(exc)) from exc
 	return load_state(project_id)
@@ -205,13 +205,13 @@ def approve_plan(project_id: str) -> ProjectState:
 	if state.phase == "plan":
 		state.phase = "build"
 		state.status = "approved"
-		state.chat.append(
-			ChatMessage(
-				role="assistant",
-				content="Deepening with **Prime** under your design brief…",
-				source="system",
-			)
+	state.chat.append(
+		ChatMessage(
+			role="assistant",
+			content="Building your app…",
+			source="system",
 		)
+	)
 	save_state(state)
 	return state
 
@@ -231,13 +231,13 @@ def _open_reply(
 	high: int,
 	vendors: list[str],
 ) -> str:
-	"""Clean opening when Prime cannot answer — no harness confession in the chat."""
+	"""Clean opening when the planner cannot answer."""
 	return (
 		f"**{state.app_config.title}** — {state.app_config.subtitle}\n\n"
 		f"I have {len(files)} source files ready"
 		+ (f" ({rows} rows across {len(vendors)} vendors)" if rows else "")
 		+ ".\n\n"
-		"Refine the idea below, pick a style, then **Improve with Prime** when you want taste and depth."
+		"Review the plan, pick a style, open the **draft preview**, then **Build app**."
 	)
 
 
@@ -265,5 +265,5 @@ def _heuristic_plan_reply(state: ProjectState, message: str) -> str:
 
 	return (
 		f"Noted for **{state.app_config.title}**. "
-		f"I’ll fold that into the next deepen. Preview stays live — or hit **Improve with Prime**."
+		f"I’ll fold that into the build. Open the draft preview, or hit **Build app**."
 	)

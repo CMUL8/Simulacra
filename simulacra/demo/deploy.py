@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import signal
-import socket
 import subprocess
-import time
 from pathlib import Path
 
 from .paths import TEMPLATE_APP
@@ -15,16 +12,12 @@ from .analytics import build_analytics
 from .design_brief import apply_brief_css_tokens, write_brief
 
 
-def _free_port() -> int:
-	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-		s.bind(("127.0.0.1", 0))
-		return s.getsockname()[1]
-
-
 def sync_app(project_id: str, config: AppConfig, data_rows: list[dict]) -> Path:
 	root = project_dir(project_id)
 	app_dir = root / "app"
 	if TEMPLATE_APP.exists():
+		import shutil
+
 		shutil.copytree(
 			TEMPLATE_APP,
 			app_dir,
@@ -55,7 +48,6 @@ def sync_app(project_id: str, config: AppConfig, data_rows: list[dict]) -> Path:
 			indent=2,
 		)
 	)
-	# Re-apply design brief after template sync
 	try:
 		from .runs import load_state
 
@@ -72,7 +64,13 @@ def _npm_install(app_dir: Path) -> None:
 	subprocess.run(["npm", "install", "--silent"], cwd=app_dir, check=True)
 
 
+def preview_path(project_id: str) -> str:
+	"""Same-origin URL path served by the API (works on Railway + local)."""
+	return f"/projects/{project_id}/preview/"
+
+
 def stop_preview(state: ProjectState) -> None:
+	"""Stop any legacy localhost preview process."""
 	if state.preview_pid:
 		try:
 			os.kill(state.preview_pid, signal.SIGTERM)
@@ -83,31 +81,36 @@ def stop_preview(state: ProjectState) -> None:
 
 
 def start_preview(state: ProjectState, data_rows: list[dict], *, app_dir: Path | None = None) -> str:
+	"""Build the app to dist/ and return a same-origin preview path.
+
+	Browsers cannot reach 127.0.0.1 inside a Railway container — we serve
+	``app/dist`` via FastAPI at ``/projects/{id}/preview/``.
+	"""
 	stop_preview(state)
 	if app_dir is None:
 		app_dir = sync_app(state.id, state.app_config, data_rows)
 	_npm_install(app_dir)
-	subprocess.run(["npm", "run", "build", "--silent"], cwd=app_dir, check=True)
-	port = _free_port()
-	proc = subprocess.Popen(
-		["npm", "run", "preview", "--", "--host", "127.0.0.1", "--port", str(port)],
+
+	base = preview_path(state.id)
+	subprocess.run(
+		["npm", "run", "build", "--silent", "--", "--base", base],
 		cwd=app_dir,
-		stdout=subprocess.DEVNULL,
-		stderr=subprocess.DEVNULL,
+		check=True,
 	)
-	time.sleep(1.5)
-	if proc.poll() is not None:
-		raise RuntimeError("App preview failed to start (run npm install in templates/internal-app)")
-	state.preview_port = port
-	state.preview_pid = proc.pid
-	url = f"http://127.0.0.1:{port}"
-	(root := project_dir(state.id) / "audit" / "deploy.json").parent.mkdir(parents=True, exist_ok=True)
-	root.write_text(
+	dist = app_dir / "dist"
+	if not (dist / "index.html").is_file():
+		raise RuntimeError("App build produced no dist/index.html")
+
+	state.preview_port = None
+	state.preview_pid = None
+	url = base
+	audit = project_dir(state.id) / "audit" / "deploy.json"
+	audit.parent.mkdir(parents=True, exist_ok=True)
+	audit.write_text(
 		json.dumps(
 			{
 				"preview_url": url,
-				"pid": proc.pid,
-				"port": port,
+				"mode": "static",
 				"deployed": state.deployed,
 			},
 			indent=2,

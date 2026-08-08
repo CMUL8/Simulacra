@@ -16,14 +16,16 @@ def get_auth(
 	authorization: Annotated[str | None, Header()] = None,
 	x_tenant_id: Annotated[str | None, Header()] = None,
 	token: Annotated[str | None, Query()] = None,
+	tenant: Annotated[str | None, Query()] = None,
 ) -> AuthContext:
 	ensure_bootstrap()
-	# Allow ?token= for EventSource (cannot set Authorization header)
+	# Allow ?token=&tenant= for EventSource / preview iframe (no Authorization header)
 	auth = authorization
 	if (not auth or not auth.lower().startswith("bearer ")) and token:
 		auth = f"Bearer {token}"
+	tid = x_tenant_id or tenant
 	try:
-		return resolve_auth(auth, tenant_header=x_tenant_id)
+		return resolve_auth(auth, tenant_header=tid)
 	except PermissionError as exc:
 		raise HTTPException(
 			401 if "required" in str(exc).lower() or "invalid" in str(exc).lower() else 403,
@@ -60,8 +62,14 @@ def require_project_access(permission: str = "project:read") -> Callable[..., Au
 		authorization: Annotated[str | None, Header()] = None,
 		x_tenant_id: Annotated[str | None, Header()] = None,
 		token: Annotated[str | None, Query()] = None,
+		tenant: Annotated[str | None, Query()] = None,
 	) -> AuthContext:
-		auth = get_auth(authorization=authorization, x_tenant_id=x_tenant_id, token=token)
+		auth = get_auth(
+			authorization=authorization,
+			x_tenant_id=x_tenant_id,
+			token=token,
+			tenant=tenant,
+		)
 		try:
 			auth.require(permission)
 		except PermissionError as exc:

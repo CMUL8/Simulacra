@@ -183,7 +183,7 @@ export function DesignBriefForm({ value, onSave, disabled }: Props) {
         type="text"
         disabled={disabled}
         value={notes}
-        placeholder="Optional notes for Prime…"
+        placeholder="Optional notes for the build…"
         onChange={(e) => {
           const v = e.target.value;
           setNotes(v);

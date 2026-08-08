@@ -59,8 +59,8 @@ def prime_build_app(
 	emit_event(
 		project_id,
 		"phase",
-		label="Prime building app",
-		detail="Customizing React app under design brief",
+		label="Building app",
+		detail="Customizing under your design brief",
 		status="running",
 	)
 
@@ -76,15 +76,15 @@ def prime_build_app(
 		emit_event(
 			project_id,
 			"phase",
-			label="Prime build complete",
-			detail=f"{meta.get('events', 0)} agent steps",
+			label="Build complete",
+			detail=f"{meta.get('events', 0)} steps",
 			status="done",
 		)
 	elif meta.get("used"):
 		emit_event(
 			project_id,
 			"think",
-			label="Using template (Prime build incomplete)",
+			label="Keeping draft (build incomplete)",
 			detail=meta.get("error") or "no durable changes",
 			status="done",
 		)

@@ -4,11 +4,9 @@ import {
   ChevronRight,
   Circle,
   Loader2,
-  Terminal,
-  Wrench,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { AgentEvent } from "../api";
 
 type Props = {
@@ -17,12 +15,24 @@ type Props = {
   onCancel?: () => void;
 };
 
+/** Collapse running→done duplicates: one row per label (latest wins). */
+function collapseEvents(events: AgentEvent[]): AgentEvent[] {
+  const order: string[] = [];
+  const byKey = new Map<string, AgentEvent>();
+  for (const e of events) {
+    if (e.type === "done" || e.type === "error" || e.type === "message") continue;
+    // Drop noisy sandbox lines from the compact view
+    if (e.label?.startsWith("Sandbox:")) continue;
+    const key = `${e.type}:${e.label}`;
+    if (!byKey.has(key)) order.push(key);
+    byKey.set(key, e);
+  }
+  return order.map((k) => byKey.get(k)!).filter(Boolean);
+}
+
 function iconFor(type: AgentEvent["type"], status: AgentEvent["status"]) {
   if (status === "running") return <Loader2 size={13} className="trace-spin" />;
   if (status === "fail") return <XCircle size={13} className="trace-fail" />;
-  if (type === "tool") return <Wrench size={13} />;
-  if (type === "gate") return status === "done" ? <CheckCircle2 size={13} className="trace-ok" /> : <XCircle size={13} />;
-  if (type === "think") return <Terminal size={13} />;
   if (status === "done") return <CheckCircle2 size={13} className="trace-ok" />;
   return <Circle size={13} />;
 }
@@ -49,16 +59,19 @@ function TraceRow({ evt }: { evt: AgentEvent }) {
 }
 
 export function TracePanel({ events, compact, onCancel }: Props) {
-  if (events.length === 0) return null;
+  const collapsed = useMemo(() => collapseEvents(events), [events]);
+  if (collapsed.length === 0) return null;
 
-  const running = events.some((e) => e.status === "running");
+  const running = collapsed.some((e) => e.status === "running");
+  // Idle history: don't clog the thread — only show while work is in flight
+  if (!running && !compact) return null;
 
   return (
-    <div className={`trace-panel ${compact ? "compact" : ""}`}>
+    <div className={`trace-panel ${compact ? "compact" : ""} ${running ? "live" : ""}`}>
       <div className="trace-panel-head">
-        {running ? <Loader2 size={13} className="trace-spin" /> : <Terminal size={13} />}
-        <span>Agent activity</span>
-        <span className="trace-count">{events.length}</span>
+        {running ? <Loader2 size={13} className="trace-spin" /> : <CheckCircle2 size={13} className="trace-ok" />}
+        <span>{running ? "Working" : "Done"}</span>
+        <span className="trace-count">{collapsed.length}</span>
         {running && onCancel && (
           <button type="button" className="trace-stop" onClick={onCancel}>
             Stop
@@ -66,8 +79,8 @@ export function TracePanel({ events, compact, onCancel }: Props) {
         )}
       </div>
       <div className="trace-list">
-        {events.map((evt) => (
-          <TraceRow key={evt.id} evt={evt} />
+        {collapsed.map((evt) => (
+          <TraceRow key={`${evt.type}:${evt.label}`} evt={evt} />
         ))}
       </div>
     </div>

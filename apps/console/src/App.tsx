@@ -138,9 +138,8 @@ export default function App({
           const liveRunning = liveInfo.live && (status === "running" || status === "settling");
           const staleRunning = !liveInfo.live && (status === "running" || status === "settling");
           const timedOut = ticks >= 80; // ~2 min at 1.5s
-          if (!liveRunning || staleRunning || timedOut || snap.project.phase === "ready") {
+          if (!liveRunning || staleRunning || timedOut) {
             if (staleRunning || timedOut) {
-              // Clear ghost busy so UI unfreezes after restart / hung Prime
               setBusy(false);
               setJobLive(false);
             } else {
@@ -149,6 +148,11 @@ export default function App({
             stopPolling();
             if (snap.project.phase === "ready") {
               setMode("workspace");
+            } else {
+              setMode("plan");
+            }
+            // Auto-open draft/build preview when a browser-reachable URL exists
+            if (snap.preview_url && !String(snap.preview_url).includes("127.0.0.1")) {
               setPreviewOpen(true);
             }
             await refreshProjects();

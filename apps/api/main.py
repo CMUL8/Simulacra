@@ -755,6 +755,32 @@ async def upload_files(
 	return {"uploaded": len(files), "project_id": project_id}
 
 
+@app.get("/projects/{project_id}/preview")
+@app.get("/projects/{project_id}/preview/")
+@app.get("/projects/{project_id}/preview/{full_path:path}")
+def serve_project_preview(
+	project_id: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+	full_path: str = "",
+) -> FileResponse:
+	"""Serve built app dist over the public API (not localhost)."""
+	dist = project_dir(project_id) / "app" / "dist"
+	if not dist.is_dir():
+		raise HTTPException(404, "Preview not ready")
+	# Path traversal guard
+	target = (dist / (full_path or "index.html")).resolve()
+	try:
+		target.relative_to(dist.resolve())
+	except ValueError as exc:
+		raise HTTPException(404, "Not found") from exc
+	if target.is_file():
+		return FileResponse(target)
+	index = dist / "index.html"
+	if index.is_file():
+		return FileResponse(index)
+	raise HTTPException(404, "Preview not ready")
+
+
 # ── Console SPA (production / Docker) ────────────────────────────────
 
 _CONSOLE_DIST = Path(__file__).resolve().parents[1] / "console" / "dist"

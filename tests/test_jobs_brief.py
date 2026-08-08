@@ -60,7 +60,7 @@ def test_bounds_table_complete():
 
 
 def test_bootstrap_skips_prime(tmp_path, monkeypatch):
-	"""Bootstrap reaches ready with source=template and never calls Prime build."""
+	"""Bootstrap leaves plan phase with draft preview; never calls deepen."""
 	from simulacra.demo import pipeline as pipe
 	from simulacra.demo import runs as runs_mod
 	from simulacra.demo.runs import AppConfig, ProjectState, save_state
@@ -70,7 +70,6 @@ def test_bootstrap_skips_prime(tmp_path, monkeypatch):
 	for d in ("inputs/data-room", "outputs", "work", "app", "audit"):
 		(tmp_path / pid / d).mkdir(parents=True)
 
-	# Minimal fixture row via extract mock
 	rows = [
 		{
 			"vendor": "Acme",
@@ -97,7 +96,7 @@ def test_bootstrap_skips_prime(tmp_path, monkeypatch):
 	monkeypatch.setattr(pipe, "sync_app", lambda *_a, **_k: tmp_path / pid / "app")
 	monkeypatch.setattr(pipe, "apply_brief_css_tokens", lambda *_a, **_k: None)
 	monkeypatch.setattr(pipe, "write_brief", lambda *_a, **_k: None)
-	monkeypatch.setattr(pipe, "start_preview", lambda state, rows, app_dir=None: "http://127.0.0.1:9999")
+	monkeypatch.setattr(pipe, "start_preview", lambda state, rows, app_dir=None: f"/projects/{pid}/preview/")
 	monkeypatch.setattr(pipe, "save_checkpoint", lambda *_a, **_k: None)
 
 	state = ProjectState(
@@ -112,11 +111,14 @@ def test_bootstrap_skips_prime(tmp_path, monkeypatch):
 
 	out = pipe.bootstrap_project(runs_mod.load_state(pid))
 	assert called_prime["n"] == 0
-	assert out.phase == "ready"
-	assert out.deploy_url == "http://127.0.0.1:9999"
+	assert out.phase == "plan"
+	assert out.status == "draft"
+	assert out.deploy_url == f"/projects/{pid}/preview/"
 	assert out.prime.get("source") == "template"
 	assert out.chat[-1].source == "template"
-	assert "Improve with Prime" in out.chat[-1].content
+	assert "Plan:" in out.chat[-1].content
+	assert "Build app" in out.chat[-1].content
+	assert "Prime" not in out.chat[-1].content
 
 
 def test_deepen_calls_prime_when_preview_exists(tmp_path, monkeypatch):
@@ -138,15 +140,15 @@ def test_deepen_calls_prime_when_preview_exists(tmp_path, monkeypatch):
 	)
 	monkeypatch.setattr(pipe, "apply_brief_css_tokens", lambda *_a, **_k: None)
 	monkeypatch.setattr(pipe, "write_brief", lambda *_a, **_k: None)
-	monkeypatch.setattr(pipe, "start_preview", lambda state, rows, app_dir=None: "http://127.0.0.1:9998")
+	monkeypatch.setattr(pipe, "start_preview", lambda state, rows, app_dir=None: f"/projects/{pid}/preview/")
 	monkeypatch.setattr(pipe, "save_checkpoint", lambda *_a, **_k: None)
 
 	state = ProjectState(
 		id=pid,
 		prompt="vendor risk",
-		phase="ready",
-		status="ready",
-		deploy_url="http://127.0.0.1:1",
+		phase="plan",
+		status="draft",
+		deploy_url=f"/projects/{pid}/preview/",
 		app_config=AppConfig(title="Vendor Risk", subtitle="demo"),
 		prime={"source": "template", "status": "ok"},
 	)
@@ -155,6 +157,7 @@ def test_deepen_calls_prime_when_preview_exists(tmp_path, monkeypatch):
 	out = pipe.deepen_with_prime(pid)
 	assert out.prime.get("source") == "prime"
 	assert out.chat[-1].source == "prime"
+	assert "Prime" not in out.chat[-1].content
 	assert out.phase == "ready"
 
 

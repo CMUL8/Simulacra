@@ -2184,7 +2184,78 @@ body {
   border-radius: 999px;
   background: var(--bg-3);
 }
-.trace-list { max-height: 280px; overflow-y: auto; }
+.trace-list { max-height: 200px; overflow-y: auto; }
+.trace-panel.compact .trace-list { max-height: 160px; }
+.trace-panel.live {
+  border-color: color-mix(in srgb, var(--accent, #3d8b6e) 35%, var(--border));
+}
+
+/* Plan review card */
+.plan-card {
+  margin: 8px 0 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+}
+.plan-card-kicker {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.plan-card h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.plan-card-sub {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.plan-card-facts {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+.plan-card-facts dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.plan-card-facts dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+.plan-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.plan-card-actions .approve-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.plan-card-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.cursor-msg-body .md-h2 {
+  display: block;
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
 .trace-row { border-bottom: 1px solid var(--border); }
 .trace-row:last-child { border-bottom: none; }
 .trace-row-head {

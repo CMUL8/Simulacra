@@ -174,8 +174,8 @@ export function PromptComposer({
               className="send-btn stop"
               onClick={() => onCancel?.()}
               disabled={!onCancel}
-              title="Stop Prime"
-              aria-label="Stop Prime"
+              title="Stop"
+              aria-label="Stop"
             >
               <Square size={11} fill="currentColor" />
             </button>

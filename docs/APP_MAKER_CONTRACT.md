@@ -15,7 +15,9 @@ User types intent → sees a **live preview they trust in under ~60s** for known
 3. **Stop always works** — cancel is idempotent; UI unlocks in &lt;200ms even if Prime is still dying.
 4. **No silent heuristics** — chips must say `Template` / `Heuristic` / `Prime` / `Fallback` / `Stopped`. Never claim Prime built it when it did not.
 5. **Prime is deepen** — taste, layout, iteration under the design brief. Explicit user action (or clear auto-deepen later); not required for first preview.
-6. **Deploy ≠ checkbox forever** — today `deployed=true` keeps the preview URL; call the control **Ship** / **Approve deploy**, not “we shipped to multi-region cloud.”
+6. **Same-origin preview** — never hand the browser `127.0.0.1`. Built apps are served at `/projects/{id}/preview/`.
+7. **Deploy ≠ checkbox forever** — today `deployed=true` keeps the preview URL; call the control **Ship** / **Approve deploy**, not “we shipped to multi-region cloud.”
+8. **Plan before Build** — draft preview may be ready early, but the user reviews a **Plan** card and clicks **Build app** to leave plan mode.
 
 ## Phases
 
