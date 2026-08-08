@@ -93,7 +93,7 @@ export function Landing({
           </div>
         )}
 
-        <div className="prompt-card anything-prompt">
+        <div className="anything-prompt">
           <textarea
             ref={promptRef}
             value={prompt}
