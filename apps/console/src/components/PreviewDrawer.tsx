@@ -106,7 +106,10 @@ export function PreviewDrawer({
                 type="button"
                 className="ghost-btn quiet"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(previewUrl);
+                  const abs = previewUrl.startsWith("http")
+                    ? previewUrl
+                    : `${window.location.origin}${previewUrl}`;
+                  void navigator.clipboard?.writeText(abs);
                 }}
                 title="Copy share URL"
               >

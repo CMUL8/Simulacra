@@ -518,22 +518,63 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	save_state(state)
 
 
+def _answer_from_data(state: ProjectState, message: str) -> str | None:
+	"""Answer factual questions from plan/analytics without the builder agent."""
+	lower = message.lower().strip()
+	preview = state.plan_preview or {}
+	rows = int(preview.get("row_count") or state.row_count or 0)
+	high = int(preview.get("high_risk") or 0)
+	vendors = list(preview.get("vendors") or [])
+	files = list(preview.get("files") or [])
+
+	if not rows and not vendors:
+		return None
+
+	if any(w in lower for w in ("how many", "what's the count", "what is the count", "count of")):
+		if "high" in lower or "critical" in lower:
+			return (
+				f"There are **{high}** high-risk findings "
+				f"(out of **{rows}** total rows across **{len(vendors)}** vendors)."
+			)
+		if "vendor" in lower:
+			return f"There are **{len(vendors)}** vendors in the current data room extract."
+		if "row" in lower or "finding" in lower:
+			return f"There are **{rows}** findings/rows extracted from your sources."
+		if "file" in lower or "source" in lower:
+			names = ", ".join(f.get("name", "?") for f in files[:8]) or "none"
+			return f"**{len(files)}** source files: {names}."
+
+	if lower.startswith(("what vendors", "which vendors", "list vendors")):
+		sample = ", ".join(vendors[:12])
+		more = f" (+{len(vendors) - 12} more)" if len(vendors) > 12 else ""
+		return f"Vendors in scope ({len(vendors)}): {sample}{more}."
+
+	return None
+
+
 def _follow_up_qa(project_id: str, message: str) -> ProjectState:
 	state = load_state(project_id)
 	state.chat.append(ChatMessage(role="user", content=message, source="system"))
 	rows = _load_rows(project_id)
 	summary = write_summary(rows, state.prompt) if rows else ""
 	emit_event(project_id, "think", label="Answering", status="running")
+
+	local = _answer_from_data(state, message)
+	if local:
+		state.chat.append(ChatMessage(role="assistant", content=local, source="system"))
+		emit_event(project_id, "think", label="Follow-up answered", status="done")
+		save_state(state)
+		return state
+
 	reply = prime_follow_up(project_dir(project_id), state, message, summary, project_id=project_id)
 	if reply:
 		state.chat.append(ChatMessage(role="assistant", content=reply, source="prime"))
-		state.prime["source"] = state.prime.get("source") or "prime"
 	else:
 		state.chat.append(
 			ChatMessage(
 				role="assistant",
 				content=(
-					"I can answer questions here without editing the app. "
+					"I can answer questions about your data and plan here without editing the app. "
 					"To change the UI, send an instruction (e.g. “make the KPI strip denser”)."
 				),
 				source="system",
@@ -588,6 +629,8 @@ def rollback_project(project_id: str, checkpoint_id: str | None = None) -> Proje
 
 
 def approve_deploy(project_id: str) -> ProjectState:
+	import os
+
 	state = load_state(project_id)
 	if state.gates_status != "pass":
 		raise ValueError("Gates must pass before deploy")
@@ -602,14 +645,19 @@ def approve_deploy(project_id: str) -> ProjectState:
 		state.deploy_url = preview_path(project_id)
 
 	path = state.deploy_url or preview_path(project_id)
+	public = (os.environ.get("SIMULACRA_PUBLIC_BASE") or os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+	if public and not public.startswith("http"):
+		public = f"https://{public}"
+	share = f"{public.rstrip('/')}{path}" if public else path
+
 	state.chat.append(
 		ChatMessage(
 			role="assistant",
 			content=(
 				"## Shipped\n\n"
 				"This build is **approved** for your team.\n\n"
-				f"**Share path:** `{path}`\n\n"
-				"Open **Preview** → use the link control to copy the full URL. "
+				f"**Share URL:** `{share}`\n\n"
+				"Open **Preview** → **Copy link** for the full URL if needed. "
 				"You can keep chatting — the builder will keep iterating on this project."
 			),
 			source="system",

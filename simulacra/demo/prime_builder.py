@@ -43,6 +43,9 @@ BUILD_TASK = """You are building an internal data app. Taste and visualization a
 8. Make durable file edits — narration without diffs is a failed build
 
 Impress the user. If risk bars have empty middles, text sticks to edges, or one KPI is flood-filled, you are not done.
+
+CRITICAL: You must make durable file edits with your tools (write/edit `src/App.tsx` and/or `src/styles.css`).
+Narration without file changes is a failed build. Do not stop after only reading files.
 """
 
 
@@ -179,8 +182,8 @@ def prime_build_app(
 		emit_event(
 			project_id,
 			"think",
-			label="Styles applied — layout unchanged",
-			detail="Builder did not edit App.tsx; brief styles were applied",
+			label="Builder ran but did not edit layout",
+			detail="No App.tsx/styles changes detected — styles only. Retry Build or rephrase.",
 			status="done",
 		)
 	elif meta.get("ok"):
