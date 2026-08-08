@@ -4,9 +4,9 @@ import type { DataRoomFile } from "../api";
 import { FileTypeIcon } from "./FileTypeIcon";
 
 const PILLS = [
-  "Vendor risk command center from diligence files",
-  "Filterable findings table ranked by severity",
-  "Internal analytics app people can explore",
+  "A vendor risk dashboard from my diligence pack",
+  "A findings table ranked by severity",
+  "An analytics app my team can explore",
 ];
 
 type Props = {
@@ -80,8 +80,8 @@ export function Landing({
           Simu<em>lacra</em>
         </h1>
         <p className="landing-sub">
-          Turn data rooms into governed internal apps — plan, approve, build, audit.
-          Built with code, gated by policy.
+          Describe the internal app you need. Simulacra plans it, builds it with real code,
+          and keeps every step auditable.
         </p>
 
         {error && (
@@ -114,9 +114,10 @@ export function Landing({
                 setDataOpen((v) => !v);
               }}
               disabled={busy}
+              title={dataAttached ? "Sources attached" : "Attach sources"}
             >
-              <Database size={14} />
-              Data room {files.length ? `(${files.length})` : ""}
+              <Database size={15} strokeWidth={1.75} />
+              <span>{dataAttached ? `Sources · ${files.length || 0}` : "Add sources"}</span>
             </button>
             <button
               type="button"

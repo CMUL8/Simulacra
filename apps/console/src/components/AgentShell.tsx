@@ -105,8 +105,8 @@ export function AgentShell({
           <button type="button" className="icon-btn" onClick={onToggleSidebar} title="Toggle sidebar">
             {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
           </button>
-          <span className="product">Simulacra</span>
-          {isPlan && <span className="plan-badge">Plan</span>}
+          <span className="product">Simu<em>lacra</em></span>
+          {isPlan && <span className="plan-badge">Planning</span>}
           {primeSource && primeSource !== "none" && sourceChip(primeSource)}
           <span className="sep">/</span>
           <span className="project-name">{project.app_config.title}</span>
@@ -147,8 +147,7 @@ export function AgentShell({
         <div className="integration-banner slim">
           <Shield size={14} />
           <span>
-            <strong>Apps never access business systems directly.</strong> Data flows through Simulacra&apos;s
-            integration control layer.
+            <strong>Your data stays behind the control layer.</strong> Apps talk to Simulacra — never your systems directly.
           </span>
         </div>
       )}
@@ -209,7 +208,7 @@ export function AgentShell({
                 ? "Explore the data room, tag sources with @, refine requirements…"
                 : "Ask for changes to your app…"
             }
-            submitLabel={isPlan ? "Plan" : "Send"}
+            submitLabel="Send"
             modeTag={isPlan ? "Plan" : "Agent"}
           />
         </div>

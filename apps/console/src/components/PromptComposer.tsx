@@ -145,9 +145,13 @@ export function PromptComposer({
         </span>
         <div className="composer-actions">
           <span className="kbd-hint">⌘↵</span>
-          <button type="submit" className="send-btn" disabled={disabled || busy || !value.trim()}>
-            {submitLabel}
-            <ArrowUp size={14} strokeWidth={2.5} />
+          <button
+            type="submit"
+            className="send-btn"
+            disabled={disabled || busy || !value.trim()}
+            aria-label={submitLabel || "Send"}
+          >
+            <ArrowUp size={16} strokeWidth={2.5} />
           </button>
         </div>
       </div>
