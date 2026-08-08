@@ -1643,14 +1643,14 @@ body {
 .cursor-turn-user .cursor-turn-role {
   color: color-mix(in srgb, var(--text-bright) 55%, var(--text-dim));
 }
-.cursor-turn-status .cursor-turn-status,
 .cursor-turn-status {
+  padding: 6px 14px;
+  margin: 0 -14px;
+}
+.cursor-status-line {
   font-size: 12.5px;
   color: var(--text-dim);
   line-height: 1.45;
-}
-.cursor-turn-status {
-  /* the article itself */
 }
 .cursor-prose {
   font-size: 14.5px;
