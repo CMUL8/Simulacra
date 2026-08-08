@@ -1345,25 +1345,23 @@ body {
 .plan-md { white-space: pre-wrap; }
 
 /* Prompt composer with @ mentions */
-.prompt-composer { position: relative; border-top: 1px solid var(--border); background: var(--bg-1); }
-.prompt-composer textarea {
-  width: 100%; border: none; background: transparent; color: var(--text-bright);
-  padding: 12px 14px 4px; font: inherit; font-size: 14px; line-height: 1.5; resize: none; outline: none;
-}
+.prompt-composer { position: relative; }
 .mention-menu {
   position: absolute; bottom: 100%; left: 12px; right: 12px;
-  list-style: none; margin: 0 0 4px; padding: 4px;
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+  list-style: none; margin: 0 0 8px; padding: 6px;
+  background: #fff; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 14px;
   max-height: 160px; overflow: auto; z-index: 30;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
 }
 .mention-menu button {
   display: flex; align-items: center; gap: 6px; width: 100%;
-  padding: 6px 8px; border: none; border-radius: var(--radius-sm);
-  background: transparent; color: var(--text); font-size: 12px; cursor: pointer; text-align: left;
+  padding: 8px 10px; border: none; border-radius: 10px;
+  background: transparent; color: #222; font-size: 13px; cursor: pointer; text-align: left;
+  font-family: var(--font-ui);
 }
-.mention-menu button.active, .mention-menu button:hover { background: var(--bg-4); }
-.mention-tag { color: var(--accent-hover); font-weight: 600; }
-.mention-type { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+.mention-menu button.active, .mention-menu button:hover { background: #f3f3f3; }
+.mention-tag { color: #3d8b6e; font-weight: 600; }
+.mention-type { margin-left: auto; color: #999; font-size: 10px; }
 
 /* Governance page */
 .gov-shell { min-height: 100vh; background: var(--bg-0); padding: 24px 32px 48px; overflow: auto; }
