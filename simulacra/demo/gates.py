@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .formats import get_format
 from .runs import ProjectState, file_hash, project_dir
 
 
@@ -92,6 +93,11 @@ def write_manifest(
 		"gates": {"status": state.gates_status, "results": []},
 		"prime": prime or {"session_id": None, "model": "simulacra-demo-pipeline", "source": "heuristic"},
 		"design_brief": state.design_brief,
-		"app": {"template": "internal-app", "path": "app"},
+		"artifact_kind": getattr(state, "artifact_kind", "data_app"),
+		"app": {
+			"template": get_format(getattr(state, "artifact_kind", None)).template_dir,
+			"path": "app",
+			"kind": getattr(state, "artifact_kind", "data_app"),
+		},
 	}
 	(root / "outputs" / "manifest.json").write_text(json.dumps(manifest, indent=2))

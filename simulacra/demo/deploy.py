@@ -2,40 +2,76 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 from pathlib import Path
 
-from .paths import TEMPLATE_APP
-from .runs import AppConfig, ProjectState, project_dir
 from .analytics import build_analytics
 from .design_brief import apply_brief_css_tokens, write_brief
+from .formats import get_format, normalize_kind, template_path
+from .runs import AppConfig, ProjectState, load_state, project_dir
 
 
-def sync_app(project_id: str, config: AppConfig, data_rows: list[dict]) -> Path:
+def sync_app(
+	project_id: str,
+	config: AppConfig,
+	data_rows: list[dict],
+	*,
+	artifact_kind: str | None = None,
+) -> Path:
+	"""Copy the format template into runs/<id>/app (keeps node_modules)."""
 	root = project_dir(project_id)
 	app_dir = root / "app"
-	if TEMPLATE_APP.exists():
-		import shutil
+	kind = normalize_kind(artifact_kind)
+	if artifact_kind is None:
+		try:
+			kind = normalize_kind(load_state(project_id).artifact_kind)
+		except Exception:
+			kind = "data_app"
+	template = template_path(kind)
+	if not template.exists():
+		raise FileNotFoundError(f"Template missing for {kind}: {template}")
 
-		shutil.copytree(
-			TEMPLATE_APP,
-			app_dir,
-			dirs_exist_ok=True,
-			ignore=shutil.ignore_patterns("node_modules", "dist"),
-		)
-	elif not (app_dir / "package.json").exists():
-		raise FileNotFoundError(f"Template missing: {TEMPLATE_APP}")
+	app_dir.mkdir(parents=True, exist_ok=True)
+	# Wipe everything except node_modules so switching formats is clean
+	for child in list(app_dir.iterdir()):
+		if child.name == "node_modules":
+			continue
+		if child.is_dir():
+			shutil.rmtree(child)
+		else:
+			child.unlink()
 
-	return refresh_app_data(project_id, config, data_rows)
+	shutil.copytree(
+		template,
+		app_dir,
+		dirs_exist_ok=True,
+		ignore=shutil.ignore_patterns("node_modules", "dist"),
+	)
+	return refresh_app_data(project_id, config, data_rows, artifact_kind=kind)
 
 
-def refresh_app_data(project_id: str, config: AppConfig, data_rows: list[dict]) -> Path:
+def refresh_app_data(
+	project_id: str,
+	config: AppConfig,
+	data_rows: list[dict],
+	*,
+	artifact_kind: str | None = None,
+) -> Path:
 	"""Update public data/config/brief without wiping agent edits to src/."""
 	root = project_dir(project_id)
 	app_dir = root / "app"
 	if not (app_dir / "package.json").exists():
-		return sync_app(project_id, config, data_rows)
+		return sync_app(project_id, config, data_rows, artifact_kind=artifact_kind)
+
+	kind = normalize_kind(artifact_kind)
+	if artifact_kind is None:
+		try:
+			kind = normalize_kind(load_state(project_id).artifact_kind)
+		except Exception:
+			kind = "data_app"
+	spec = get_format(kind)
 
 	(app_dir / "public" / "data.json").parent.mkdir(parents=True, exist_ok=True)
 	(app_dir / "public" / "data.json").write_text(json.dumps(data_rows, indent=2))
@@ -47,7 +83,8 @@ def refresh_app_data(project_id: str, config: AppConfig, data_rows: list[dict]) 
 			{
 				"title": config.title,
 				"subtitle": config.subtitle,
-				"layout": "command_center",
+				"layout": spec.layout,
+				"artifactKind": spec.kind,
 				"searchEnabled": config.search_enabled,
 				"sortColumn": config.sort_column,
 				"sortDirection": config.sort_direction,
@@ -59,7 +96,6 @@ def refresh_app_data(project_id: str, config: AppConfig, data_rows: list[dict]) 
 		)
 	)
 	try:
-		from .runs import load_state
 		from .sources import profile_rows, write_agent_context
 
 		state = load_state(project_id)
@@ -99,14 +135,10 @@ def stop_preview(state: ProjectState) -> None:
 
 
 def start_preview(state: ProjectState, data_rows: list[dict], *, app_dir: Path | None = None) -> str:
-	"""Build the app to dist/ and return a same-origin preview path.
-
-	Browsers cannot reach 127.0.0.1 inside a Railway container — we serve
-	``app/dist`` via FastAPI at ``/projects/{id}/preview/``.
-	"""
+	"""Build the artifact to dist/ and return a same-origin preview path."""
 	stop_preview(state)
 	if app_dir is None:
-		app_dir = sync_app(state.id, state.app_config, data_rows)
+		app_dir = sync_app(state.id, state.app_config, data_rows, artifact_kind=state.artifact_kind)
 	_npm_install(app_dir)
 
 	base = preview_path(state.id)
@@ -118,6 +150,12 @@ def start_preview(state: ProjectState, data_rows: list[dict], *, app_dir: Path |
 	dist = app_dir / "dist"
 	if not (dist / "index.html").is_file():
 		raise RuntimeError("App build produced no dist/index.html")
+	try:
+		from .design_brief import apply_brief_to_dist
+
+		apply_brief_to_dist(app_dir, state.design_brief or {})
+	except Exception:
+		pass
 
 	state.preview_port = None
 	state.preview_pid = None
@@ -129,6 +167,7 @@ def start_preview(state: ProjectState, data_rows: list[dict], *, app_dir: Path |
 			{
 				"preview_url": url,
 				"mode": "static",
+				"artifact_kind": getattr(state, "artifact_kind", "data_app"),
 				"deployed": state.deployed,
 			},
 			indent=2,

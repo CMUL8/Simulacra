@@ -22,6 +22,7 @@ import {
   uploadProjectFiles,
   type AuthSession,
   type AuthUser,
+  type ArtifactKind,
   type DataRoomFile,
   type DesignBrief,
   type Project,
@@ -30,6 +31,7 @@ import {
 } from "./api";
 import { AgentShell } from "./components/AgentShell";
 import { Landing } from "./components/Landing";
+import { WaitStage } from "./components/WaitStage";
 import { PreviewDrawer } from "./components/PreviewDrawer";
 import { ProfileManageModal, type ProfileTab } from "./components/ProfileManageModal";
 import { Sidebar } from "./components/Sidebar";
@@ -67,6 +69,7 @@ export default function App({
   const [projectFiles, setProjectFiles] = useState<DataRoomFile[]>([]);
   const [goal, setGoal] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [artifactKind, setArtifactKind] = useState<ArtifactKind>("data_app");
   const [designBrief, setDesignBrief] = useState<DesignBrief>(DEFAULT_DESIGN_BRIEF);
   const [dataAttached, setDataAttached] = useState(true);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -78,7 +81,7 @@ export default function App({
   const [profileTab, setProfileTab] = useState<ProfileTab>("account");
   const [jobLive, setJobLive] = useState(false);
   const pollRef = useRef<number | null>(null);
-  const busyStartedAt = useRef<number | null>(null);
+  const [waitStartedAt, setWaitStartedAt] = useState<number | null>(null);
 
   const projectId = snapshot?.project.id ?? null;
   const { events: traces } = useEventStream(projectId);
@@ -86,9 +89,9 @@ export default function App({
 
   useEffect(() => {
     if (running) {
-      if (busyStartedAt.current == null) busyStartedAt.current = Date.now();
+      setWaitStartedAt((prev) => prev ?? Date.now());
     } else {
-      busyStartedAt.current = null;
+      setWaitStartedAt(null);
     }
   }, [running]);
 
@@ -154,7 +157,7 @@ export default function App({
           const status = liveInfo.job?.status ?? snap.job?.status ?? snap.project.job?.status ?? "idle";
           const liveRunning = liveInfo.live && (status === "running" || status === "settling");
           const staleRunning = !liveInfo.live && (status === "running" || status === "settling");
-          const timedOut = ticks >= 80; // ~2 min at 1.5s
+          const timedOut = ticks >= 280; // ~7 min — create now includes builder
           if (!liveRunning || staleRunning || timedOut) {
             if (staleRunning || timedOut) {
               setBusy(false);
@@ -259,6 +262,7 @@ export default function App({
       <>
         <Landing
           prompt={prompt}
+          artifactKind={artifactKind}
           busy={false}
           files={fixtureFiles}
           pendingFiles={pendingFiles}
@@ -267,6 +271,7 @@ export default function App({
           authed={false}
           projects={[]}
           onPrompt={setPrompt}
+          onArtifactKind={setArtifactKind}
           onToggleData={() => setDataAttached((v) => !v)}
           onPickPending={(files) =>
             setPendingFiles((prev) => {
@@ -339,13 +344,14 @@ export default function App({
       };
       let snap = await createProject(text, goal || prompt.slice(0, 80), brief, {
         useFixture: dataAttached,
+        artifactKind,
       });
       if (pendingFiles.length > 0) {
         snap = await uploadProjectFiles(snap.project.id, pendingFiles, { reingest: true });
         setPendingFiles([]);
       }
       setSnapshot(snap);
-      setMode("plan");
+      setMode(snap.project.phase === "ready" ? "workspace" : "plan");
       setInput("");
       setSidebarOpen(false);
       await refreshProjects();
@@ -355,6 +361,7 @@ export default function App({
       } else {
         setBusy(false);
         setJobLive(false);
+        if (snap.project.phase === "ready") setMode("workspace");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start plan");
@@ -495,6 +502,7 @@ export default function App({
     setMode("landing");
     setGoal("");
     setPrompt("");
+    setArtifactKind("data_app");
     setDesignBrief(DEFAULT_DESIGN_BRIEF);
     setDataAttached(true);
     setInput("");
@@ -510,10 +518,19 @@ export default function App({
   }
 
   if (mode === "landing") {
+    const formatLabel =
+      artifactKind === "slides"
+        ? "slides"
+        : artifactKind === "report"
+          ? "report"
+          : artifactKind === "one_pager"
+            ? "one-pager"
+            : "app";
     return (
       <>
         <Landing
           prompt={prompt}
+          artifactKind={artifactKind}
           busy={busy}
           files={fixtureFiles}
           pendingFiles={pendingFiles}
@@ -522,6 +539,7 @@ export default function App({
           authed
           projects={projects}
           onPrompt={setPrompt}
+          onArtifactKind={setArtifactKind}
           onToggleData={() => setDataAttached((v) => !v)}
           onPickPending={(files) =>
             setPendingFiles((prev) => {
@@ -535,6 +553,15 @@ export default function App({
           onLogin={() => openAccount("account")}
           onDismissError={() => setError(null)}
         />
+        {busy && (
+          <WaitStage
+            variant="overlay"
+            title={`Building ${formatLabel}`}
+            subtitle="Sources → scaffold → builder → preview. Hang tight."
+            jobKind="bootstrap"
+            startedAt={waitStartedAt}
+          />
+        )}
         <ProfileManageModal
           open={profileOpen}
           onClose={() => setProfileOpen(false)}
@@ -585,6 +612,7 @@ export default function App({
           error={error}
           traces={traces}
           sidebarOpen={sidebarOpen}
+          waitStartedAt={waitStartedAt}
           designBrief={designBrief}
           onSaveDesignBrief={handleDesignBriefSave}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}

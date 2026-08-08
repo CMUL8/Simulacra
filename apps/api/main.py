@@ -68,7 +68,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("simulacra.api")
 
-app = FastAPI(title="Simulacra API", version="0.7.0")
+app = FastAPI(title="Simulacra API", version="0.8.0")
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
@@ -91,6 +91,7 @@ class CreateProjectBody(BaseModel):
 	use_fixture: bool = True
 	design_brief: dict[str, Any] | None = None
 	tenant_id: str | None = None
+	artifact_kind: str | None = None
 
 
 class ChatBody(BaseModel):
@@ -161,7 +162,7 @@ def health() -> dict[str, Any]:
 		"identity": db_health(),
 		"siem": siem_status(),
 		"clerk": clerk_enabled(),
-		"version": "0.7.1",
+		"version": "0.8.0",
 	}
 
 
@@ -651,6 +652,13 @@ def get_projects(ctx: Annotated[AuthContext, Depends(require_perm("project:read"
 	}
 
 
+@app.get("/formats")
+def list_formats() -> dict:
+	from simulacra.demo.formats import formats_catalog
+
+	return {"formats": formats_catalog()}
+
+
 @app.post("/projects")
 def post_project(
 	body: CreateProjectBody,
@@ -670,6 +678,7 @@ def post_project(
 			goal=body.goal,
 			design_brief=brief,
 			tenant_id=tid,
+			artifact_kind=body.artifact_kind,
 		)
 		state = init_plan(state)
 		audit_request(request, ctx, "project.create", project_id=state.id)
@@ -915,6 +924,7 @@ if _CONSOLE_DIST.is_dir():
 			"admin/",
 			"projects/",
 			"tenants/",
+			"formats",
 			"governance",
 			"fixtures/",
 			"health",

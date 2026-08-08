@@ -1,0 +1,10 @@
+{
+  "title": "Data App",
+  "subtitle": "Built with Simulacra",
+  "searchEnabled": true,
+  "sortColumn": "risk_score",
+  "sortDirection": "desc",
+  "groupBy": null,
+  "highlightColumn": "risk_level",
+  "columns": ["vendor", "theme", "risk_level", "risk_score", "evidence"]
+}

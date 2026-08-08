@@ -81,13 +81,18 @@ DIRECTION_PALETTES: dict[str, dict[str, str]] = {
 }
 
 
-def default_brief(*, prompt: str = "") -> dict[str, Any]:
+def default_brief(*, prompt: str = "", artifact_kind: str | None = None) -> dict[str, Any]:
+	from .formats import brief_defaults_for, normalize_kind
+
 	brief = copy.deepcopy(DEFAULT_BRIEF)
 	if prompt:
 		title = prompt.strip().split(".")[0][:60].strip()
 		if len(title) > 8:
 			brief["product_name"] = title
 			brief["one_liner"] = prompt.strip()[:120]
+	kind = normalize_kind(artifact_kind) if artifact_kind else None
+	if kind:
+		brief = _deep_merge(brief, brief_defaults_for(kind))
 	return brief
 
 

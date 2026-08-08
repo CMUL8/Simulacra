@@ -20,6 +20,9 @@ apps/**/node_modules/
 templates/**/node_modules/
 apps/console/dist/
 templates/internal-app/dist/
+templates/report/dist/
+templates/slides/dist/
+templates/one-pager/dist/
 
 # Upstream clone — keep local for development; do not vendor in this repo
 prime-agent/

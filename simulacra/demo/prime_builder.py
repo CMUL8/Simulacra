@@ -1,4 +1,4 @@
-"""Builder — customize the scaffolded app under design brief + data-viz craft."""
+"""Builder — customize the scaffolded artifact under design brief + format craft."""
 
 from __future__ import annotations
 
@@ -10,47 +10,51 @@ from typing import Any
 
 from .design_brief import apply_brief_css_tokens, brief_to_prime_block, resolve_palette
 from .events import emit_event
+from .formats import get_format, normalize_kind, skill_path
 from .prime_hook import prime_enabled
 from .prime_session import prime_run
 from .runs import load_state
 
 _SKILL_PATH = Path(__file__).resolve().parent / "skills" / "data_viz.md"
 
-BUILD_TASK = """You are building an internal data app. Taste and visualization are the product.
+BUILD_TASK = """You are building a {format_label} ({artifact_kind}). Taste and craft are the product.
 
 ## User goal
 {prompt}
 
+## Format
+{format_hint}
+
 ## Data already prepared
 - `public/data.json` — extracted findings ({row_count} rows)
 - `public/analytics.json` — KPIs / charts
-- `public/config.json` — title/subtitle
+- `public/config.json` — title/subtitle + artifactKind
 - `public/design_brief.json` — aesthetics (OBEY)
 - `public/sources.json` — source inventory + extract report
 - `public/data_profile.json` — schema stats + design nuances
 - `public/agent_context.md` — excerpts + inventory (READ THIS)
-- `src/App.tsx` + `src/styles.css` — current app (edit these)
+- `src/App.tsx` + `src/styles.css` — current artifact (edit these)
 
 {data_block}
 
 {design_block}
 
-## Visualization craft (memorize and apply)
+## Craft (memorize and apply)
 {viz_skill}
 
 ## Your job (all required)
 1. Read data_profile.json + agent_context.md + analytics.json + design brief + current App.tsx
-2. Design layout around the data nuances (severity density, vendor count, region/owner fields, score spread)
+2. Design for THIS format — not a generic dashboard unless artifact_kind is data_app
 3. Edit `src/styles.css` so palette tokens match the brief — including --muted, --border, --panel-2
-4. Edit `src/App.tsx` so layout + hero viz feel bespoke for THIS data — not a generic template
-5. Fix contrast: body text readable, theme/vendor labels not black-on-black
+4. Edit `src/App.tsx` so layout + hierarchy feel bespoke for THIS data and format
+5. Fix contrast: body text readable; labels not black-on-black
 6. Update `public/config.json` title/subtitle from the brief if needed
 7. Keep valid React/TypeScript; stay in this directory
 8. Do NOT start servers or npm install
 9. Make durable file edits — narration without diffs is a failed build
 10. If the room is empty, show an honest empty state — never invent vendors/findings
 
-Impress the user. If risk bars have empty middles, text sticks to edges, or one KPI is flood-filled, you are not done.
+Impress the user. Format-specific done-when rules in the craft section are mandatory.
 
 CRITICAL: You must make durable file edits with your tools (write/edit `src/App.tsx` and/or `src/styles.css`).
 Narration without file changes is a failed build. Do not stop after only reading files.
@@ -60,7 +64,7 @@ STEER_RETRY = """CRITICAL RETRY — previous turn made ZERO durable edits to `sr
 
 You failed the build contract. Do this now, in order:
 1. Open/edit `src/App.tsx` with your write/edit tool (required).
-2. Personalize layout: root classes for density/chrome, KPI order (high risk first), section titles from the product name, brand mark.
+2. Personalize for the chosen format and product name.
 3. Edit `src/styles.css` tokens if needed.
 4. Do not only read files. Do not only narrate a plan. Stop only after App.tsx is written.
 
@@ -70,11 +74,19 @@ You failed the build contract. Do this now, in order:
 CRAFT_MARKER = "// simulacra_craft:"
 
 
-def _load_viz_skill() -> str:
+def _load_skill(kind: str | None) -> str:
+	path = skill_path(kind)
 	try:
-		return _SKILL_PATH.read_text()[:3500]
+		return path.read_text()[:3500]
 	except OSError:
-		return "Prefer ranked bars and KPI strips; encode risk with one hue family; no emoji."
+		try:
+			return _SKILL_PATH.read_text()[:3500]
+		except OSError:
+			return "Prefer clear hierarchy; encode risk with one hue family; no emoji."
+
+
+def _load_viz_skill() -> str:
+	return _load_skill("data_app")
 
 
 def _file_hash(path: Path) -> str:
@@ -146,8 +158,9 @@ def _brand_mark(direction: str) -> str:
 
 
 def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
-	"""Honest craft fallback: rewrite App.tsx layout when the agent narrates without writing."""
+	"""Honest craft fallback when the agent narrates without writing."""
 	state = load_state(project_id)
+	kind = normalize_kind(state.artifact_kind)
 	brief = state.design_brief or {}
 	aes = brief.get("aesthetic") or {}
 	density = str(aes.get("density") or "compact")
@@ -161,6 +174,29 @@ def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
 	css_path = app_dir / "src" / "styles.css"
 	if not tsx_path.is_file():
 		return False
+
+	# Non-app formats: stamp craft marker + title/classes; don't regex command-center DOM
+	if kind != "data_app":
+		before = tsx_path.read_bytes()
+		tsx = before.decode("utf-8")
+		stamp = f"{CRAFT_MARKER}{kind}:{direction}:{density}\n"
+		if CRAFT_MARKER not in tsx:
+			tsx = stamp + tsx
+		else:
+			tsx = re.sub(rf"{re.escape(CRAFT_MARKER)}[^\n]*\n?", stamp, tsx, count=1)
+		# Soft class hooks on common roots
+		for root in ("report", "deck", "sheet", "app"):
+			tsx = re.sub(
+				rf'className="{root}(?:\s[^"]*)?"',
+				f'className="{root} density-{density} chrome-{chrome} dir-{direction}"',
+				tsx,
+				count=1,
+			)
+		changed = tsx.encode("utf-8") != before
+		if changed:
+			tsx_path.write_text(tsx)
+		_force_style_pass(app_dir, project_id)
+		return changed or True
 
 	before = tsx_path.read_bytes()
 	tsx = before.decode("utf-8")
@@ -289,6 +325,7 @@ def prime_build_app(
 		}
 
 	state = load_state(project_id)
+	spec = get_format(state.artifact_kind)
 	design_block = brief_to_prime_block(state.design_brief or {}, delta_note=delta_note)
 	data_block = ""
 	try:
@@ -322,15 +359,18 @@ def prime_build_app(
 		row_count=row_count,
 		design_block=design_block,
 		data_block=data_block,
-		viz_skill=_load_viz_skill(),
+		viz_skill=_load_skill(spec.kind),
+		format_label=spec.label,
+		artifact_kind=spec.kind,
+		format_hint=spec.aesthetic_hint,
 	)
 	timeout = 300.0 if kind == "build_run" else 200.0
 
 	emit_event(
 		project_id,
 		"phase",
-		label="Building app",
-		detail="Customizing layout, style, and charts",
+		label=f"Building {spec.short.lower()}",
+		detail=f"Customizing {spec.label.lower()} from your brief",
 		status="running",
 	)
 

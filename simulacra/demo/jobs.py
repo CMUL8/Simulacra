@@ -18,9 +18,9 @@ log = logging.getLogger("simulacra.jobs")
 
 # APP_MAKER_CONTRACT + PRODUCT_SPEC §3A.6 defaults
 BOUNDS: dict[str, dict[str, float | int]] = {
-	"bootstrap": {"timeout": 180, "max_steps": 20, "stall": 90},
+	"bootstrap": {"timeout": 480, "max_steps": 50, "stall": 120},
 	"plan_ask": {"timeout": 120, "max_steps": 12, "stall": 60},
-	"build_run": {"timeout": 240, "max_steps": 40, "stall": 45},
+	"build_run": {"timeout": 300, "max_steps": 40, "stall": 45},
 	"iterate_run": {"timeout": 180, "max_steps": 25, "stall": 45},
 	"iterate_ask": {"timeout": 90, "max_steps": 6, "stall": 45},
 	"reingest": {"timeout": 180, "max_steps": 20, "stall": 60},

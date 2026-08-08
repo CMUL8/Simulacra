@@ -59,8 +59,8 @@ def test_bounds_table_complete():
 		assert BOUNDS[kind]["max_steps"] > 0
 
 
-def test_bootstrap_skips_prime(tmp_path, monkeypatch):
-	"""Bootstrap leaves plan phase with draft preview; never calls deepen."""
+def test_bootstrap_runs_prime(tmp_path, monkeypatch):
+	"""Bootstrap scaffolds behind the scenes then runs the builder → phase=ready."""
 	from simulacra.demo import pipeline as pipe
 	from simulacra.demo import runs as runs_mod
 	from simulacra.demo.runs import AppConfig, ProjectState, save_state
@@ -105,11 +105,17 @@ def test_bootstrap_skips_prime(tmp_path, monkeypatch):
 	)
 	called_prime = {"n": 0}
 
-	def _no_prime(*_a, **_k):
+	def _prime(*_a, **_k):
 		called_prime["n"] += 1
-		return {"used": True, "ok": True, "source": "prime"}
+		return {
+			"used": True,
+			"ok": True,
+			"source": "prime",
+			"layout_customized": True,
+			"style_only": False,
+		}
 
-	monkeypatch.setattr(pipe, "prime_build_app", _no_prime)
+	monkeypatch.setattr(pipe, "prime_build_app", _prime)
 	monkeypatch.setattr(pipe, "sync_app", lambda *_a, **_k: tmp_path / pid / "app")
 	monkeypatch.setattr(pipe, "apply_brief_css_tokens", lambda *_a, **_k: None)
 	monkeypatch.setattr(pipe, "write_brief", lambda *_a, **_k: None)
@@ -121,21 +127,22 @@ def test_bootstrap_skips_prime(tmp_path, monkeypatch):
 		prompt="vendor risk dashboard",
 		phase="plan",
 		status="planning",
+		artifact_kind="data_app",
 		app_config=AppConfig(title="Vendor Risk", subtitle="demo"),
 		plan_preview={"files": [{"name": "a.md"}], "vendors": ["Acme"], "high_risk": 1, "row_count": 1},
 	)
 	save_state(state)
 
 	out = pipe.bootstrap_project(runs_mod.load_state(pid))
-	assert called_prime["n"] == 0
-	assert out.phase == "plan"
-	assert out.status == "draft"
+	assert called_prime["n"] == 1
+	assert out.phase == "ready"
+	assert out.status == "ready"
 	assert out.deploy_url == f"/projects/{pid}/preview/"
-	assert out.prime.get("source") == "template"
-	assert out.chat[-1].source == "template"
-	assert "Plan:" in out.chat[-1].content
-	assert "Build app" in out.chat[-1].content
+	assert out.prime.get("source") == "prime"
+	assert out.chat[-1].source == "prime"
+	assert "Built" in out.chat[-1].content
 	assert "Prime" not in out.chat[-1].content
+	assert "Build app" not in out.chat[-1].content
 
 
 def test_deepen_calls_prime_when_preview_exists(tmp_path, monkeypatch):

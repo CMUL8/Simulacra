@@ -83,6 +83,8 @@ class ProjectState:
 	phase: str = "plan"  # plan | build | ready
 	plan_approved: bool = False
 	status: str = "planning"
+	# data_app | report | slides | one_pager — same maker loop, different craft
+	artifact_kind: str = "data_app"
 	created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 	updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 	preview_port: int | None = None
@@ -108,6 +110,8 @@ class ProjectState:
 	def from_dict(cls, data: dict[str, Any]) -> ProjectState:
 		chat = [ChatMessage(**{k: v for k, v in m.items() if k in ("role", "content", "at", "source")}) for m in data.get("chat", [])]
 		cfg = data.get("app_config") or {}
+		from .formats import normalize_kind
+
 		return cls(
 			id=data["id"],
 			prompt=data["prompt"],
@@ -116,6 +120,7 @@ class ProjectState:
 			phase=data.get("phase", "plan"),
 			plan_approved=data.get("plan_approved", False),
 			status=data.get("status", "planning"),
+			artifact_kind=normalize_kind(data.get("artifact_kind")),
 			created_at=data.get("created_at", datetime.now(UTC).isoformat()),
 			updated_at=data.get("updated_at", datetime.now(UTC).isoformat()),
 			preview_port=data.get("preview_port"),
@@ -173,8 +178,10 @@ def create_project(
 	goal: str = "",
 	design_brief: dict[str, Any] | None = None,
 	tenant_id: str | None = None,
+	artifact_kind: str | None = None,
 ) -> ProjectState:
-	from .tenants import assert_tenant_active, assert_under_project_quota
+	from .formats import brief_defaults_for, infer_kind_from_prompt, normalize_kind
+	from .tenants import assert_under_project_quota
 
 	ensure_runs_dir()
 	tid = tenant_id or default_tenant_id()
@@ -188,7 +195,14 @@ def create_project(
 	if use_fixture and FIXTURES.exists():
 		shutil.copytree(FIXTURES, root / "inputs/data-room", dirs_exist_ok=True)
 
-	brief = design_brief if design_brief else default_brief(prompt=prompt)
+	kind = normalize_kind(artifact_kind) if artifact_kind else (infer_kind_from_prompt(prompt) or "data_app")
+	kind = normalize_kind(kind)
+	brief = design_brief if design_brief else default_brief(prompt=prompt, artifact_kind=kind)
+	if design_brief:
+		# Ensure IA knows the chosen format even when a custom brief is passed
+		from .design_brief import merge_brief
+
+		brief = merge_brief(brief, brief_defaults_for(kind))
 	state = ProjectState(
 		id=project_id,
 		prompt=prompt,
@@ -196,6 +210,7 @@ def create_project(
 		tenant_id=tid,
 		phase="plan",
 		status="planning",
+		artifact_kind=kind,
 		design_brief=brief,
 	)
 	state.chat.append(ChatMessage(role="user", content=prompt, source="system"))
@@ -206,6 +221,7 @@ def create_project(
 		yaml.safe_dump(
 			{
 				"run": {"id": project_id, "task": prompt, "tenant_id": tid},
+				"artifact_kind": kind,
 				"sources": [{"type": "folder", "path": "inputs/data-room"}],
 				"design_brief": brief,
 			}

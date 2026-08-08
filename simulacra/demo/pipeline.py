@@ -199,23 +199,32 @@ def _scaffold_and_preview(
 	state.status = "building_app"
 	save_state(state)
 
-	emit_event(pid, "phase", label="Preparing draft app", status="running")
+	emit_event(pid, "phase", label="Preparing craft scaffold", status="running")
 	write_brief(pid, state.design_brief)
 	app_dir = sync_app(state.id, state.app_config, rows)
 	apply_brief_css_tokens(app_dir, state.design_brief)
 	write_brief(pid, state.design_brief)
-	emit_event(pid, "phase", label="Preparing draft app", status="done")
+	emit_event(pid, "phase", label="Preparing craft scaffold", status="done")
 
 	source = "template"
 	if run_prime:
-		emit_event(pid, "phase", label="Building app", status="running")
+		from .formats import get_format
+
+		spec = get_format(getattr(state, "artifact_kind", None))
+		emit_event(
+			pid,
+			"phase",
+			label=f"Building {spec.short.lower()}",
+			detail="Customizing from your brief",
+			status="running",
+		)
 		build_meta = prime_build_app(
 			app_dir, state.prompt, project_id=pid, row_count=len(rows), kind="build_run"
 		)
 		source = build_meta.get("source") or ("prime" if build_meta.get("ok") else "heuristic")
 		if build_meta.get("used") and not build_meta.get("ok"):
 			source = build_meta.get("source") or "error"
-			emit_event(pid, "think", label="Keeping draft (build incomplete)", status="done")
+			emit_event(pid, "think", label="Keeping scaffold (build incomplete)", status="done")
 		state.prime = {
 			**state.prime,
 			"session_id": build_meta.get("session_id") or state.prime.get("session_id"),
@@ -227,7 +236,7 @@ def _scaffold_and_preview(
 			"style_only": bool(build_meta.get("style_only")),
 			"layout_customized": bool(build_meta.get("layout_customized")),
 		}
-		emit_event(pid, "phase", label="Building app", status="done")
+		emit_event(pid, "phase", label=f"Building {spec.short.lower()}", status="done")
 	else:
 		state.prime = {
 			**state.prime,
@@ -256,13 +265,20 @@ def _scaffold_and_preview(
 
 
 def bootstrap_project(state: ProjectState) -> ProjectState:
-	"""Fast draft: data + gates + scaffold + same-origin preview. Stays in plan for review."""
+	"""Create path: data + gates + scaffold + builder customize + preview.
+
+	Template sync stays behind the scenes — the user lands on a Built artifact
+	(phase=ready), not a Draft waiting for an extra Build click.
+	"""
+	from .formats import get_format
+
 	pid = state.id
 	state, rows, _sources = _prepare_data_and_gates(state)
 	if not rows:
 		return state
 
-	state = _scaffold_and_preview(state, rows, run_prime=False, leave_in_plan=True)
+	spec = get_format(state.artifact_kind)
+	state = _scaffold_and_preview(state, rows, run_prime=True, leave_in_plan=False)
 	preview = state.plan_preview or {}
 	files = list(preview.get("files") or [])
 	vendors = list(preview.get("vendors") or [])
@@ -274,26 +290,41 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	if vendors:
 		facts += f" · {len(vendors)} vendors"
 
-	state.chat.append(
-		ChatMessage(
-			role="assistant",
-			content=(
-				f"## Plan: {state.app_config.title}\n\n"
+	source = state.prime.get("source") or "prime"
+	if source in ("prime", "craft"):
+		body = (
+			f"## {spec.label}: {state.app_config.title}\n\n"
+			f"{state.app_config.subtitle}\n\n"
+			f"**Sources:** {facts}\n"
+			f"{file_names}\n\n"
+			f"**Built.** Preview is ready — open it, then **chat to refine** "
+			f"(layout, copy, viz). **Ship** when you want an approved share link.\n\n"
+			f"Need a clean restart? Use **Rebuild from draft**."
+		)
+		if source == "craft":
+			body = (
+				f"## {spec.label}: {state.app_config.title}\n\n"
 				f"{state.app_config.subtitle}\n\n"
 				f"**Sources:** {facts}\n"
 				f"{file_names}\n\n"
-				"**Draft preview** is ready — open it to check the scaffold against your data.\n\n"
-				"**How this works**\n"
-				"1. Tweak **Style** chips or ask about the plan in chat (no code edits yet)\n"
-				"2. **Build app** — the builder customizes the draft\n"
-				"3. After that, **chat drives the builder** — each change request edits the app\n"
-				"4. **Ship** when you want an approved share link"
-			),
-			source="template",
+				"**Built.** Layout was personalized from your Style brief "
+				"(craft fallback — agent file edits incomplete).\n\n"
+				"Open **Preview**, chat to refine, or **Ship** when ready."
+			)
+	else:
+		body = (
+			f"## {spec.label}: {state.app_config.title}\n\n"
+			f"{state.app_config.subtitle}\n\n"
+			f"**Sources:** {facts}\n"
+			f"{file_names}\n\n"
+			f"Scaffold preview is up, but the builder did not finish customizing. "
+			f"Try **Rebuild from draft**, or describe changes in chat."
 		)
-	)
-	save_checkpoint(state, "Draft preview")
-	emit_event(pid, "done", label="Plan ready", detail=state.deploy_url or "", status="done")
+		source = source if source in ("error", "heuristic", "timeout") else "heuristic"
+
+	state.chat.append(ChatMessage(role="assistant", content=body, source=source))
+	save_checkpoint(state, "Built")
+	emit_event(pid, "done", label=f"{spec.label} ready", detail=state.deploy_url or "", status="done")
 	save_state(state)
 	return state
 

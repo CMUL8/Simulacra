@@ -10,6 +10,7 @@ import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } fro
 import { DesignBriefForm } from "./DesignBriefForm";
 import { PromptComposer } from "./PromptComposer";
 import { TracePanel } from "./TracePanel";
+import { WaitStage } from "./WaitStage";
 
 type Props = {
   variant: "plan" | "workspace";
@@ -20,6 +21,7 @@ type Props = {
   error: string | null;
   traces: AgentEvent[];
   sidebarOpen: boolean;
+  waitStartedAt?: number | null;
   designBrief?: DesignBrief;
   onSaveDesignBrief?: (v: DesignBrief) => Promise<void>;
   onToggleSidebar: () => void;
@@ -129,22 +131,18 @@ function statusChip(
   return null;
 }
 
-function ThinkingLoader({ label, onStop }: { label: string; onStop?: () => void }) {
-  return (
-    <div className="cursor-thinking" aria-live="polite" aria-busy="true">
-      <span className="cursor-thinking-dots" aria-hidden>
-        <i />
-        <i />
-        <i />
-      </span>
-      <span className="cursor-thinking-label">{label}</span>
-      {onStop && (
-        <button type="button" className="cursor-thinking-stop" onClick={onStop}>
-          Stop
-        </button>
-      )}
-    </div>
-  );
+function formatBuildLabel(kind?: string | null): string {
+  if (kind === "report") return "Build report";
+  if (kind === "slides") return "Build slides";
+  if (kind === "one_pager") return "Build one-pager";
+  return "Build app";
+}
+
+function formatNoun(kind?: string | null): string {
+  if (kind === "report") return "report";
+  if (kind === "slides") return "slides";
+  if (kind === "one_pager") return "one-pager";
+  return "app";
 }
 
 function PlanSection({
@@ -185,7 +183,7 @@ function PlanSection({
           <Globe size={14} />
           {hasPreview ? "Open draft preview" : "Preparing draft…"}
         </button>
-        <span className="plan-section-hint">Then Build app — chat drives the builder after that</span>
+        <span className="plan-section-hint">Builder is customizing — preview opens when Built</span>
       </div>
     </div>
   );
@@ -227,6 +225,7 @@ export function AgentShell({
   error,
   traces,
   sidebarOpen,
+  waitStartedAt = null,
   designBrief,
   onSaveDesignBrief,
   onToggleSidebar,
@@ -246,13 +245,15 @@ export function AgentShell({
   const hasPreview = Boolean(snapshot.preview_url);
   const waitingForOpen = busy && !project.chat.some((m) => m.role === "assistant");
   const jobKind = snapshot.job?.kind ?? project.job?.kind;
+  const noun = formatNoun(project.artifact_kind);
+  const buildLabel = formatBuildLabel(project.artifact_kind);
   const thinkingLabel =
     jobKind === "bootstrap" || (isPlan && waitingForOpen)
-      ? "Preparing plan & draft…"
+      ? `Building ${noun}…`
       : jobKind === "build_run"
-        ? "Builder customizing app…"
+        ? `Builder customizing ${noun}…`
         : jobKind === "iterate_run"
-          ? "Builder updating app…"
+          ? `Builder updating ${noun}…`
           : "Working…";
   const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
   const stage = statusChip(project, lastAssistant?.source ?? project.prime?.source);
@@ -262,7 +263,7 @@ export function AgentShell({
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
   const liveTraces = traces.some((e) => e.status === "running");
   const loopHint = isPlan
-    ? "Plan mode — chat refines the plan. Build app hands the draft to the builder."
+    ? `Still building — hang tight. Then chat drives the builder.`
     : project.deployed
       ? "Shipped — keep chatting to iterate; Preview has the share link."
       : "Agent mode — each change request drives the builder. Questions ending in ? are Q&A only.";
@@ -301,7 +302,7 @@ export function AgentShell({
           </button>
           {isPlan && onApprove && (
             <button type="button" className="approve-btn" disabled={busy} onClick={onApprove}>
-              Build app
+              {buildLabel}
               <ArrowRight size={14} />
             </button>
           )}
@@ -340,8 +341,22 @@ export function AgentShell({
             </article>
           )}
 
+          {busy && (
+            <WaitStage
+              variant="thread"
+              title={thinkingLabel.replace(/…$/, "")}
+              subtitle={
+                jobKind === "iterate_run"
+                  ? "Applying your change to the live preview"
+                  : `Scaffold stays behind the scenes — ${noun} lands Built`
+              }
+              jobKind={jobKind}
+              traces={traces}
+              startedAt={waitStartedAt}
+              onStop={onCancel}
+            />
+          )}
           {busy && liveTraces && <TracePanel events={traces} compact onCancel={onCancel} />}
-          {busy && !liveTraces && <ThinkingLoader label={thinkingLabel} onStop={onCancel} />}
 
           <div ref={endRef} />
         </div>

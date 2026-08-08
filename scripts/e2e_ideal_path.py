@@ -142,17 +142,28 @@ def main() -> int:
 	pid = snap["project"]["id"]
 	existing.write_text(pid)
 	note(True, "Create project", pid)
-	snap = wait_idle(token, tenant, pid, 180)
+	snap = wait_idle(token, tenant, pid, 540, expect_phase="ready")
 
 	proj = snap.get("project") or {}
 	preview = snap.get("preview_url")
 	chat = proj.get("chat") or []
+	prime = proj.get("prime") or {}
+	source = prime.get("source")
 
-	note(proj.get("phase") == "plan", "Scaffold leaves phase=plan", f"phase={proj.get('phase')} status={proj.get('status')}")
-	note(bool(preview) and "127.0.0.1" not in str(preview), "Draft preview same-origin", str(preview))
+	note(proj.get("phase") == "ready", "Create lands phase=ready", f"phase={proj.get('phase')} status={proj.get('status')}")
+	note(
+		source in ("prime", "craft"),
+		"Create Built (source=prime|craft)",
+		f"source={source} style_only={prime.get('style_only')} err={prime.get('last_error')}",
+	)
+	note(bool(preview) and "127.0.0.1" not in str(preview), "Built preview same-origin", str(preview))
 	note(proj.get("gates_status") == "pass", "Gates pass", str(proj.get("gates_status")))
-	note(any("How this works" in (m.get("content") or "") for m in chat), "Loop explained in plan chat")
-	note((proj.get("prime") or {}).get("source") == "template", "Scaffold source=template", str((proj.get("prime") or {}).get("source")))
+	built_msg = any(
+		m.get("role") == "assistant" and ("Built" in (m.get("content") or "") or m.get("source") in ("prime", "craft"))
+		for m in chat
+	)
+	note(built_msg, "Built honesty message present")
+	note(proj.get("status") == "ready", "Create status=ready", f"status={proj.get('status')}")
 
 	# Preview assets
 	if preview:
@@ -176,33 +187,6 @@ def main() -> int:
 	if code == 200:
 		files = sources.get("files") or sources.get("sources") or []
 		note(len(files) >= 1, "Sources list non-empty", f"n={len(files)}")
-
-	# Plan chat
-	code, _ = api("POST", f"/projects/{pid}/plan", token, tenant, {"message": "Keep dense ops dark aesthetic."})
-	note(code == 200, "Plan chat accepted", f"status={code}")
-	snap = wait_idle(token, tenant, pid, 120)
-	proj = snap.get("project") or {}
-	note(proj.get("phase") == "plan", "Plan chat keeps phase=plan", f"phase={proj.get('phase')}")
-
-	# Build
-	code, _ = api("POST", f"/projects/{pid}/approve", token, tenant, {})
-	note(code in (200, 202), "Build app accepted", f"status={code}")
-	snap = wait_idle(token, tenant, pid, 420, expect_phase="ready")
-	proj = snap.get("project") or {}
-	prime = proj.get("prime") or {}
-	source = prime.get("source")
-	note(proj.get("phase") == "ready", "After build phase=ready", f"phase={proj.get('phase')} status={proj.get('status')}")
-	note(
-		source in ("prime", "craft"),
-		"Agent Built (source=prime|craft)",
-		f"source={source} style_only={prime.get('style_only')} err={prime.get('last_error')}",
-	)
-	built_msg = any(
-		m.get("role") == "assistant" and ("Built" in (m.get("content") or "") or m.get("source") == "prime")
-		for m in (proj.get("chat") or [])
-	)
-	note(built_msg, "Build honesty message present")
-	note(proj.get("status") == "ready", "After build status=ready", f"status={proj.get('status')}")
 
 	# Iterate 1 — style / density
 	n_before = len(proj.get("chat") or [])

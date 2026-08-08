@@ -154,7 +154,7 @@ def init_plan(state: ProjectState) -> ProjectState:
 		return bootstrap_project(load_state(pid))
 
 	try:
-		start_job(pid, "bootstrap", label="Building preview", target=target)
+		start_job(pid, "bootstrap", label="Building", target=target)
 	except JobConflictError:
 		pass
 	return load_state(pid)
@@ -258,7 +258,7 @@ def _open_reply(
 		f"I have {len(files)} source files ready"
 		+ (f" ({rows} rows across {len(vendors)} vendors)" if rows else "")
 		+ ".\n\n"
-		"Review the plan, pick a style, open the **draft preview**, then **Build app**."
+		"Describe what you want next in chat — the builder will update the preview."
 	)
 
 

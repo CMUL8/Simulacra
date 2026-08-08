@@ -1,6 +1,6 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DataRoomFile, Project } from "../api";
+import type { ArtifactKind, DataRoomFile, Project } from "../api";
 import { SourcesPanel } from "./SourcesPanel";
 
 /** Prompt chips — three shown; set rotates each UTC day. */
@@ -23,6 +23,15 @@ const IDEA_BANK = [
   "A compact command center for diligence follow-ups",
   "A findings explorer my analysts can query in chat",
   "A portfolio risk strip with drill-down to evidence",
+  "A board deck on vendor risk from our diligence pack",
+  "A one-page risk briefing for tomorrow's review",
+];
+
+const FORMAT_OPTIONS: { kind: ArtifactKind; label: string; hint: string }[] = [
+  { kind: "data_app", label: "App", hint: "Interactive command center" },
+  { kind: "report", label: "Report", hint: "Long-form HTML document" },
+  { kind: "slides", label: "Slides", hint: "Multi-page deck" },
+  { kind: "one_pager", label: "One-pager", hint: "Single printable sheet" },
 ];
 
 function utcDayIndex(): number {
@@ -51,8 +60,14 @@ function phaseLabel(p: Project): string {
   return p.status || p.phase;
 }
 
+function kindShort(p: Project): string {
+  const k = p.artifact_kind || "data_app";
+  return FORMAT_OPTIONS.find((f) => f.kind === k)?.label || "App";
+}
+
 type Props = {
   prompt: string;
+  artifactKind: ArtifactKind;
   busy: boolean;
   files: DataRoomFile[];
   pendingFiles?: File[];
@@ -61,6 +76,7 @@ type Props = {
   authed?: boolean;
   projects?: Project[];
   onPrompt: (v: string) => void;
+  onArtifactKind: (k: ArtifactKind) => void;
   onToggleData: () => void;
   onPickPending?: (files: File[]) => void;
   onClearPending?: (name: string) => void;
@@ -72,6 +88,7 @@ type Props = {
 
 export function Landing({
   prompt,
+  artifactKind,
   busy,
   files,
   pendingFiles = [],
@@ -80,6 +97,7 @@ export function Landing({
   authed = true,
   projects = [],
   onPrompt,
+  onArtifactKind,
   onToggleData,
   onPickPending,
   onClearPending,
@@ -95,6 +113,7 @@ export function Landing({
   const canBuild = prompt.trim().length >= 3 && sourceCount > 0 && !busy;
   const recent = projects.slice(0, 12);
   const pills = useMemo(() => pillsForDay(utcDayIndex()), []);
+  const activeFormat = FORMAT_OPTIONS.find((f) => f.kind === artifactKind) || FORMAT_OPTIONS[0]!;
 
   useEffect(() => {
     promptRef.current?.focus();
@@ -141,8 +160,8 @@ export function Landing({
           Simu<em>lacra</em>
         </h1>
         <p className="landing-sub">
-          Describe the internal app you need. Simulacra plans it, builds it with real code, and keeps
-          every step auditable.
+          Describe what you need from the data room. Pick a format — we build it in one shot,
+          then you chat to refine and ship.
         </p>
 
         {error && (
@@ -154,12 +173,27 @@ export function Landing({
           </div>
         )}
 
+        <div className="format-strip" role="group" aria-label="Output format">
+          {FORMAT_OPTIONS.map((f) => (
+            <button
+              key={f.kind}
+              type="button"
+              className={f.kind === artifactKind ? "format-chip on" : "format-chip"}
+              disabled={busy}
+              title={f.hint}
+              onClick={() => onArtifactKind(f.kind)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
         <div className="anything-prompt">
           <textarea
             ref={promptRef}
             value={prompt}
             onChange={(e) => onPrompt(e.target.value)}
-            placeholder="What are you working on?"
+            placeholder={activeFormat.hint}
             rows={4}
             disabled={busy}
             onKeyDown={(e) => {
@@ -216,7 +250,7 @@ export function Landing({
                       {p.app_config?.title || p.goal || "Untitled"}
                     </span>
                     <span className="landing-project-meta">
-                      {phaseLabel(p)}
+                      {kindShort(p)} · {phaseLabel(p)}
                       {p.row_count ? ` · ${p.row_count} rows` : ""}
                     </span>
                   </button>
@@ -243,4 +277,4 @@ export function Landing({
   );
 }
 
-export { IDEA_BANK, pillsForDay, utcDayIndex };
+export { IDEA_BANK, FORMAT_OPTIONS, pillsForDay, utcDayIndex };

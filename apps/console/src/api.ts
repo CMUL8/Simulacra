@@ -138,6 +138,7 @@ export type Project = {
   phase: "plan" | "build" | "ready";
   plan_approved: boolean;
   status: string;
+  artifact_kind?: "data_app" | "report" | "slides" | "one_pager" | string;
   gates_status: string;
   deployed: boolean;
   deploy_url: string | null;
@@ -403,11 +404,22 @@ export async function fetchPlatformAudit(limit = 50): Promise<{ events: Record<s
   return json(`/admin/audit?limit=${limit}`);
 }
 
+export type ArtifactKind = "data_app" | "report" | "slides" | "one_pager";
+
+export type FormatInfo = {
+  kind: ArtifactKind;
+  label: string;
+  short: string;
+  placeholder: string;
+  build_label: string;
+  hint: string;
+};
+
 export async function createProject(
   prompt: string,
   goal = "",
   designBrief?: DesignBrief,
-  opts?: { useFixture?: boolean },
+  opts?: { useFixture?: boolean; artifactKind?: ArtifactKind | string },
 ): Promise<Snapshot> {
   return json("/projects", {
     method: "POST",
@@ -416,6 +428,7 @@ export async function createProject(
       goal,
       use_fixture: opts?.useFixture ?? true,
       design_brief: designBrief ?? null,
+      artifact_kind: opts?.artifactKind ?? null,
     }),
   });
 }
