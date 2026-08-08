@@ -1,6 +1,6 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { DataRoomFile } from "../api";
+import type { DataRoomFile, Project } from "../api";
 import { FileTypeIcon } from "./FileTypeIcon";
 
 const PILLS = [
@@ -9,6 +9,13 @@ const PILLS = [
   "An analytics app my team can explore",
 ];
 
+function phaseLabel(p: Project): string {
+  if (p.deployed) return "Deployed";
+  if (p.phase === "ready") return "Built";
+  if (p.phase === "plan") return "Draft";
+  return p.status || p.phase;
+}
+
 type Props = {
   prompt: string;
   busy: boolean;
@@ -16,9 +23,11 @@ type Props = {
   dataAttached: boolean;
   error: string | null;
   authed?: boolean;
+  projects?: Project[];
   onPrompt: (v: string) => void;
   onToggleData: () => void;
   onBuild: () => void;
+  onOpenProject?: (id: string) => void;
   onLogin?: () => void;
   onDismissError: () => void;
 };
@@ -30,19 +39,27 @@ export function Landing({
   dataAttached,
   error,
   authed = true,
+  projects = [],
   onPrompt,
   onToggleData,
   onBuild,
+  onOpenProject,
   onLogin,
   onDismissError,
 }: Props) {
   const [dataOpen, setDataOpen] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const projectsRef = useRef<HTMLElement>(null);
   const canBuild = prompt.trim().length >= 3 && dataAttached && !busy;
+  const recent = projects.slice(0, 12);
 
   useEffect(() => {
     promptRef.current?.focus();
   }, []);
+
+  function scrollToProjects() {
+    projectsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <div className="landing">
@@ -56,6 +73,11 @@ export function Landing({
           </span>
 
           <nav className="landing-nav-links" aria-label="Primary">
+            {authed && recent.length > 0 && (
+              <button type="button" onClick={scrollToProjects}>
+                Projects
+              </button>
+            )}
             <button type="button" onClick={() => onLogin?.()}>
               {authed ? "Account" : "Login"}
             </button>
@@ -144,6 +166,35 @@ export function Landing({
               </div>
             ))}
           </div>
+        )}
+
+        {authed && recent.length > 0 && (
+          <section className="landing-projects" ref={projectsRef} id="projects" aria-label="Your projects">
+            <div className="landing-projects-head">
+              <h2>Your projects</h2>
+              <span>{projects.length}</span>
+            </div>
+            <ul className="landing-project-list">
+              {recent.map((p) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    className="landing-project-item"
+                    disabled={busy}
+                    onClick={() => onOpenProject?.(p.id)}
+                  >
+                    <span className="landing-project-title">
+                      {p.app_config?.title || p.goal || "Untitled"}
+                    </span>
+                    <span className="landing-project-meta">
+                      {phaseLabel(p)}
+                      {p.row_count ? ` · ${p.row_count} rows` : ""}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </div>
     </div>

@@ -96,17 +96,31 @@ export default function App({
       setAuthed(false);
       return;
     }
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      cancelled = true;
+      clearAuth();
+      setAuthed(false);
+    }, 8000);
     fetchMe()
       .then((me) => {
+        if (cancelled) return;
+        window.clearTimeout(timeout);
         setUser(me.user);
         setTenants(me.tenants || []);
         if (me.tenant_id) setTenantId(me.tenant_id);
         setAuthed(true);
       })
       .catch(() => {
+        if (cancelled) return;
+        window.clearTimeout(timeout);
         clearAuth();
         setAuthed(false);
       });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
   }, []);
 
   const refreshProjects = useCallback(async () => {
@@ -248,6 +262,7 @@ export default function App({
           dataAttached={dataAttached}
           error={null}
           authed={false}
+          projects={[]}
           onPrompt={setPrompt}
           onToggleData={() => setDataAttached((v) => !v)}
           onBuild={() => setProfileOpen(true)}
@@ -487,9 +502,11 @@ export default function App({
           dataAttached={dataAttached}
           error={error}
           authed
+          projects={projects}
           onPrompt={setPrompt}
           onToggleData={() => setDataAttached((v) => !v)}
           onBuild={handleStartPlanning}
+          onOpenProject={loadProject}
           onLogin={() => openAccount("account")}
           onDismissError={() => setError(null)}
         />

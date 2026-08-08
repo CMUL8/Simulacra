@@ -400,8 +400,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  justify-content: flex-start;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: #5ba3d9;
 }
 .landing-hero-img {
@@ -515,8 +516,85 @@ body {
   position: relative;
   z-index: 1;
   width: min(720px, calc(100vw - 32px));
-  padding: 96px 0 64px;
+  padding: max(96px, 12vh) 0 80px;
   text-align: center;
+}
+.landing-projects {
+  margin-top: 36px;
+  text-align: left;
+  padding: 18px;
+  border-radius: var(--radius-md, 14px);
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+}
+.landing-projects-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+.landing-projects-head h2 {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.88);
+}
+.landing-projects-head span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  font-variant-numeric: tabular-nums;
+}
+.landing-project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(360px, 42vh);
+  overflow-y: auto;
+}
+.landing-project-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-sm, 10px);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-ui);
+  transition: background 0.15s, border-color 0.15s;
+}
+.landing-project-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.landing-project-item:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.landing-project-title {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #fff;
+}
+.landing-project-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
 }
 .brand-mark {
   margin: 0 0 16px;
