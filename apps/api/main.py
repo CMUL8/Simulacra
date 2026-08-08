@@ -203,23 +203,9 @@ def auth_config() -> dict:
 
 @app.post("/auth/register")
 def auth_register(body: RegisterBody, request: Request) -> dict:
-	try:
-		user, token = register_user(
-			body.email,
-			body.password,
-			name=body.name,
-			tenant_name=body.tenant_name,
-		)
-	except ValueError as exc:
-		raise HTTPException(400, str(exc)) from exc
-	tenants = user_tenants(user)
-	return {
-		"token": token,
-		"token_type": "bearer",
-		"user": user.public(),
-		"tenants": tenants,
-		"tenant_id": tenants[0]["id"] if tenants else default_tenant_id(),
-	}
+	raise HTTPException(403, "Public signup is disabled — ask an admin to invite you")
+	# Kept for typing; unreachable
+	_ = (body, request)
 
 
 @app.post("/auth/login")
