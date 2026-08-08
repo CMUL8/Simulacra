@@ -70,22 +70,39 @@ def test_bootstrap_skips_prime(tmp_path, monkeypatch):
 	for d in ("inputs/data-room", "outputs", "work", "app", "audit"):
 		(tmp_path / pid / d).mkdir(parents=True)
 
+	from types import SimpleNamespace
+
 	rows = [
 		{
 			"vendor": "Acme",
+			"theme": "SSO",
 			"risk_level": "high",
-			"finding": "SSO gap",
-			"source": "note.md",
-			"severity": "high",
+			"risk_score": 85,
+			"evidence": "SSO gap",
+			"source_file": "note.md",
+			"region": "",
+			"owner": "",
 		}
 	]
-	monkeypatch.setattr(pipe, "extract_data_room", lambda *_a, **_k: rows)
+
+	monkeypatch.setattr(
+		pipe,
+		"extract_data_room_report",
+		lambda *_a, **_k: SimpleNamespace(rows=rows, errors=[], skipped=[]),
+	)
 	monkeypatch.setattr(pipe, "write_summary", lambda *_a, **_k: "summary")
 	monkeypatch.setattr(pipe, "rows_to_parquet", lambda *_a, **_k: None)
 	monkeypatch.setattr(pipe, "run_gates", lambda *_a, **_k: {"status": "pass", "results": []})
 	monkeypatch.setattr(pipe, "write_manifest", lambda *_a, **_k: None)
 	monkeypatch.setattr(pipe, "prepare_project_sandbox", lambda *_a, **_k: {"active": "none", "trust_model": "t"})
 	monkeypatch.setattr(pipe, "get_tenant", lambda *_a, **_k: (_ for _ in ()).throw(KeyError()))
+	monkeypatch.setattr(pipe, "write_agent_context", lambda *_a, **_k: {})
+	monkeypatch.setattr(pipe, "apply_profile_to_brief", lambda brief, *_a, **_k: brief)
+	monkeypatch.setattr(
+		pipe,
+		"profile_rows",
+		lambda r: SimpleNamespace(high_risk=1, to_dict=lambda: {}),
+	)
 	called_prime = {"n": 0}
 
 	def _no_prime(*_a, **_k):

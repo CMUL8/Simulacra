@@ -23,6 +23,7 @@ BOUNDS: dict[str, dict[str, float | int]] = {
 	"build_run": {"timeout": 240, "max_steps": 40, "stall": 45},
 	"iterate_run": {"timeout": 180, "max_steps": 25, "stall": 45},
 	"iterate_ask": {"timeout": 90, "max_steps": 6, "stall": 45},
+	"reingest": {"timeout": 180, "max_steps": 20, "stall": 60},
 }
 
 

@@ -19,6 +19,7 @@ import {
   sendChat,
   sendPlanChat,
   setTenantId,
+  uploadProjectFiles,
   type AuthSession,
   type AuthUser,
   type DataRoomFile,
@@ -68,6 +69,7 @@ export default function App({
   const [prompt, setPrompt] = useState("");
   const [designBrief, setDesignBrief] = useState<DesignBrief>(DEFAULT_DESIGN_BRIEF);
   const [dataAttached, setDataAttached] = useState(true);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -259,12 +261,20 @@ export default function App({
           prompt={prompt}
           busy={false}
           files={fixtureFiles}
+          pendingFiles={pendingFiles}
           dataAttached={dataAttached}
           error={null}
           authed={false}
           projects={[]}
           onPrompt={setPrompt}
           onToggleData={() => setDataAttached((v) => !v)}
+          onPickPending={(files) =>
+            setPendingFiles((prev) => {
+              const names = new Set(prev.map((f) => f.name));
+              return [...prev, ...files.filter((f) => !names.has(f.name))];
+            })
+          }
+          onClearPending={(name) => setPendingFiles((prev) => prev.filter((f) => f.name !== name))}
           onBuild={() => setProfileOpen(true)}
           onLogin={() => setProfileOpen(true)}
           onDismissError={() => undefined}
@@ -311,8 +321,9 @@ export default function App({
   }
 
   async function handleStartPlanning() {
-    if (!dataAttached) {
-      setError("Attach a data room before planning.");
+    const hasSources = dataAttached || pendingFiles.length > 0;
+    if (!hasSources) {
+      setError("Add sources (sample pack and/or uploads) before planning.");
       return;
     }
     const text = buildPrompt();
@@ -326,7 +337,13 @@ export default function App({
         product_name: designBrief.product_name || prompt.slice(0, 60),
         one_liner: designBrief.one_liner || prompt.slice(0, 120),
       };
-      const snap = await createProject(text, goal || prompt.slice(0, 80), brief);
+      let snap = await createProject(text, goal || prompt.slice(0, 80), brief, {
+        useFixture: dataAttached,
+      });
+      if (pendingFiles.length > 0) {
+        snap = await uploadProjectFiles(snap.project.id, pendingFiles, { reingest: true });
+        setPendingFiles([]);
+      }
       setSnapshot(snap);
       setMode("plan");
       setInput("");
@@ -499,12 +516,20 @@ export default function App({
           prompt={prompt}
           busy={busy}
           files={fixtureFiles}
+          pendingFiles={pendingFiles}
           dataAttached={dataAttached}
           error={error}
           authed
           projects={projects}
           onPrompt={setPrompt}
           onToggleData={() => setDataAttached((v) => !v)}
+          onPickPending={(files) =>
+            setPendingFiles((prev) => {
+              const names = new Set(prev.map((f) => f.name));
+              return [...prev, ...files.filter((f) => !names.has(f.name))];
+            })
+          }
+          onClearPending={(name) => setPendingFiles((prev) => prev.filter((f) => f.name !== name))}
           onBuild={handleStartPlanning}
           onOpenProject={loadProject}
           onLogin={() => openAccount("account")}

@@ -26,7 +26,12 @@ BUILD_TASK = """You are building an internal data app. Taste and visualization a
 - `public/analytics.json` — KPIs / charts
 - `public/config.json` — title/subtitle
 - `public/design_brief.json` — aesthetics (OBEY)
+- `public/sources.json` — source inventory + extract report
+- `public/data_profile.json` — schema stats + design nuances
+- `public/agent_context.md` — excerpts + inventory (READ THIS)
 - `src/App.tsx` + `src/styles.css` — current app (edit these)
+
+{data_block}
 
 {design_block}
 
@@ -34,14 +39,16 @@ BUILD_TASK = """You are building an internal data app. Taste and visualization a
 {viz_skill}
 
 ## Your job (all required)
-1. Read analytics.json + design brief + current App.tsx / styles.css
-2. Edit `src/styles.css` so palette tokens match the brief — including --muted, --border, --panel-2 (panel-2 MUST differ from panel so bar tracks show)
-3. Edit `src/App.tsx` so layout + hero viz feel bespoke — not stock cyan / not one loud accent KPI card
-4. Fix contrast: body text readable, theme/vendor labels not black-on-black
-5. Update `public/config.json` title/subtitle from the brief if needed
-6. Keep valid React/TypeScript; stay in this directory
-7. Do NOT start servers or npm install
-8. Make durable file edits — narration without diffs is a failed build
+1. Read data_profile.json + agent_context.md + analytics.json + design brief + current App.tsx
+2. Design layout around the data nuances (severity density, vendor count, region/owner fields, score spread)
+3. Edit `src/styles.css` so palette tokens match the brief — including --muted, --border, --panel-2
+4. Edit `src/App.tsx` so layout + hero viz feel bespoke for THIS data — not a generic template
+5. Fix contrast: body text readable, theme/vendor labels not black-on-black
+6. Update `public/config.json` title/subtitle from the brief if needed
+7. Keep valid React/TypeScript; stay in this directory
+8. Do NOT start servers or npm install
+9. Make durable file edits — narration without diffs is a failed build
+10. If the room is empty, show an honest empty state — never invent vendors/findings
 
 Impress the user. If risk bars have empty middles, text sticks to edges, or one KPI is flood-filled, you are not done.
 
@@ -283,10 +290,38 @@ def prime_build_app(
 
 	state = load_state(project_id)
 	design_block = brief_to_prime_block(state.design_brief or {}, delta_note=delta_note)
+	data_block = ""
+	try:
+		from .sources import profile_rows, sources_to_prime_block
+		from .extract import ExtractReport
+
+		preview = state.plan_preview or {}
+		profile_raw = preview.get("profile")
+		if profile_raw:
+			from .sources import DataProfile
+
+			profile = DataProfile(**{k: v for k, v in profile_raw.items() if k in DataProfile.__dataclass_fields__})
+		else:
+			# Fallback: profile from public data if present
+			data_path = app_dir / "public" / "data.json"
+			rows = json.loads(data_path.read_text()) if data_path.is_file() else []
+			profile = profile_rows(rows if isinstance(rows, list) else [])
+		extract = None
+		if preview.get("extract"):
+			extract = ExtractReport(
+				rows=[],
+				errors=list((preview.get("extract") or {}).get("errors") or []),
+				skipped=list((preview.get("extract") or {}).get("skipped") or []),
+			)
+		data_block = sources_to_prime_block(profile, extract=extract)
+	except Exception:  # noqa: BLE001
+		data_block = "## Data room\n- See public/data.json and public/analytics.json"
+
 	task = BUILD_TASK.format(
 		prompt=prompt,
 		row_count=row_count,
 		design_block=design_block,
+		data_block=data_block,
 		viz_skill=_load_viz_skill(),
 	)
 	timeout = 300.0 if kind == "build_run" else 200.0

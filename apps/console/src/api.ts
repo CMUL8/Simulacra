@@ -83,14 +83,53 @@ export type JobState = {
 };
 
 export type Checkpoint = { id: string; label: string; created_at: string };
+export type DataRoomFile = {
+  name: string;
+  size: number;
+  type: string;
+  status?: string;
+  detail?: string;
+  sha256?: string;
+  row_count?: number;
+};
+
+export type DataProfile = {
+  row_count?: number;
+  columns?: string[];
+  vendors?: string[];
+  themes?: string[];
+  high_risk?: number;
+  medium_risk?: number;
+  low_risk?: number;
+  regions?: string[];
+  owners?: string[];
+  source_files?: string[];
+  empty_room?: boolean;
+  suggested_primary?: string;
+  suggested_must_have?: string[];
+  nuance_notes?: string[];
+};
+
 export type PlanPreview = {
   row_count: number;
   high_risk: number;
+  medium_risk?: number;
+  low_risk?: number;
   vendors: string[];
+  themes?: string[];
   files: DataRoomFile[];
   summary: string;
   sample_rows: Record<string, unknown>[];
+  profile?: DataProfile;
+  extract?: {
+    row_count?: number;
+    errors?: string[];
+    skipped?: string[];
+    ok_files?: number;
+  };
+  fingerprint?: string;
 };
+
 export type Project = {
   id: string;
   prompt: string;
@@ -130,8 +169,6 @@ export type Snapshot = {
   job_id?: string;
   status?: string;
 };
-
-export type DataRoomFile = { name: string; size: number; type: string };
 
 export type AgentEvent = {
   id: string;
@@ -370,11 +407,62 @@ export async function createProject(
   prompt: string,
   goal = "",
   designBrief?: DesignBrief,
+  opts?: { useFixture?: boolean },
 ): Promise<Snapshot> {
   return json("/projects", {
     method: "POST",
-    body: JSON.stringify({ prompt, goal, use_fixture: true, design_brief: designBrief ?? null }),
+    body: JSON.stringify({
+      prompt,
+      goal,
+      use_fixture: opts?.useFixture ?? true,
+      design_brief: designBrief ?? null,
+    }),
   });
+}
+
+export async function uploadProjectFiles(
+  id: string,
+  files: File[],
+  opts?: { reingest?: boolean },
+): Promise<Snapshot & { uploaded?: number; errors?: string[] }> {
+  const body = new FormData();
+  for (const f of files) body.append("files", f);
+  const q = opts?.reingest === false ? "?reingest=false" : "?reingest=true";
+  const headers: Record<string, string> = { "X-Tenant-Id": getTenantId() };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API}/projects/${id}/upload${q}`, {
+    method: "POST",
+    body,
+    headers,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function removeProjectSource(id: string, fileName: string): Promise<Snapshot> {
+  return json(`/projects/${id}/sources/${encodeURIComponent(fileName)}`, { method: "DELETE" });
+}
+
+export async function seedProjectFixtures(id: string): Promise<Snapshot> {
+  return json(`/projects/${id}/sources/seed`, { method: "POST" });
+}
+
+export async function reingestProjectSources(id: string): Promise<Snapshot> {
+  return json(`/projects/${id}/sources/reingest`, { method: "POST" });
+}
+
+export async function getProjectSources(id: string): Promise<{
+  files: DataRoomFile[];
+  fingerprint: string;
+  profile?: DataProfile;
+  extract?: PlanPreview["extract"];
+  row_count?: number;
+}> {
+  return json(`/projects/${id}/sources`);
 }
 
 export async function getProject(id: string): Promise<Snapshot> {

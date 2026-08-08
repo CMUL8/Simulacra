@@ -7,11 +7,18 @@ from typing import Any
 
 from .chat import infer_app_config
 from .design_brief import write_brief
-from .extract import extract_data_room, write_summary
+from .extract import extract_data_room_report, write_summary
 from .events import emit_event
 from .jobs import JobConflictError, start_job
 from .prime_hook import prime_open_plan, prime_plan_chat
 from .runs import ChatMessage, ProjectState, load_state, project_dir, save_state
+from .sources import (
+	apply_profile_to_brief,
+	content_fingerprint,
+	list_source_files,
+	profile_rows,
+	write_agent_context,
+)
 
 
 def explore_plan_scan(state: ProjectState) -> ProjectState:
@@ -20,37 +27,51 @@ def explore_plan_scan(state: ProjectState) -> ProjectState:
 	pid = state.id
 	data_room = root / "inputs" / "data-room"
 	emit_event(pid, "phase", label="Scanning sources", status="running")
-	rows = extract_data_room(data_room)
+	report = extract_data_room_report(data_room, project_id=pid)
+	rows = report.rows
 	summary = write_summary(rows, state.prompt)
+	profile = profile_rows(rows)
+	sources = list_source_files(pid)
 
-	files: list[dict[str, Any]] = []
-	if data_room.exists():
-		for p in sorted(data_room.rglob("*")):
-			if p.is_file():
-				files.append(
-					{
-						"name": str(p.relative_to(data_room)),
-						"size": p.stat().st_size,
-						"type": p.suffix.lstrip("."),
-					}
-				)
-
-	vendors = sorted({r["vendor"] for r in rows})
-	high = sum(1 for r in rows if r["risk_level"] == "high")
+	files: list[dict[str, Any]] = [
+		{
+			"name": s.name,
+			"size": s.size,
+			"type": s.type,
+			"status": s.status,
+			"detail": s.detail,
+			"sha256": s.sha256[:16],
+		}
+		for s in sources
+	]
 
 	state.plan_preview = {
 		"row_count": len(rows),
-		"high_risk": high,
-		"vendors": vendors,
+		"high_risk": profile.high_risk,
+		"medium_risk": profile.medium_risk,
+		"low_risk": profile.low_risk,
+		"vendors": profile.vendors,
+		"themes": profile.themes,
 		"files": files,
 		"summary": summary,
 		"sample_rows": rows[:5],
+		"profile": profile.to_dict(),
+		"extract": report.to_dict(),
+		"fingerprint": content_fingerprint(pid),
 	}
 	state.row_count = len(rows)
 	state.status = "planning"
 	state.prime = {**state.prime, "status": "starting", "source": "pending"}
-	(root / "work" / "plan_preview.json").write_text(json.dumps(state.plan_preview, indent=2))
-	emit_event(pid, "phase", label="Scanning sources", detail=f"{len(rows)} rows", status="done")
+	state.design_brief = apply_profile_to_brief(state.design_brief or {}, profile)
+	write_brief(pid, state.design_brief)
+	write_agent_context(
+		pid, rows=rows, profile=profile, extract=report, prompt=state.prompt
+	)
+	(root / "work" / "plan_preview.json").write_text(json.dumps(state.plan_preview, indent=2, default=str))
+	detail = f"{len(rows)} rows · {len(files)} sources"
+	if report.errors:
+		detail += f" · {len(report.errors)} extract errors"
+	emit_event(pid, "phase", label="Scanning sources", detail=detail, status="done")
 	save_state(state)
 	return state
 

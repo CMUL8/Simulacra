@@ -60,11 +60,19 @@ def refresh_app_data(project_id: str, config: AppConfig, data_rows: list[dict]) 
 	)
 	try:
 		from .runs import load_state
+		from .sources import profile_rows, write_agent_context
 
 		state = load_state(project_id)
 		if state.design_brief:
 			write_brief(project_id, state.design_brief)
 			apply_brief_css_tokens(app_dir, state.design_brief)
+		profile = profile_rows(data_rows)
+		write_agent_context(
+			project_id,
+			rows=data_rows,
+			profile=profile,
+			prompt=state.prompt,
+		)
 	except Exception:
 		pass
 	return app_dir

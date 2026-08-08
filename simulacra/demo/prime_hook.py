@@ -116,12 +116,23 @@ def prime_open_plan(
 	pid = project_id or state.id
 	preview = state.plan_preview or {}
 	design = brief_to_prime_block(state.design_brief or {})
+	data_block = ""
+	try:
+		from .sources import DataProfile, sources_to_prime_block
+
+		raw = preview.get("profile") or {}
+		if raw:
+			profile = DataProfile(**{k: v for k, v in raw.items() if k in DataProfile.__dataclass_fields__})
+			data_block = sources_to_prime_block(profile)
+	except Exception:  # noqa: BLE001
+		data_block = ""
 	prime_prompt = (
 		"You are Simulacra in PLAN mode. The user just started a project.\n"
 		"Propose what to build based on THEIR request — not a generic data explorer.\n"
 		"Honor intent: games, learning/quiz apps, dashboards, ops tools, etc.\n"
 		"Do NOT claim you have built anything yet. Do not write app code.\n"
-		"Source material is available for the app to draw from; mention it briefly.\n\n"
+		"Source material is available for the app to draw from; mention it briefly.\n"
+		"Design the proposal around the actual data profile/nuances below.\n\n"
 		f"User request:\n{state.prompt}\n\n"
 		f"Goal (if any):\n{state.goal or '(none)'}\n\n"
 		f"Source summary:\n{summary[:2200]}\n\n"
@@ -129,13 +140,14 @@ def prime_open_plan(
 		f"{preview.get('high_risk', 0)} high-risk, "
 		f"{len(preview.get('vendors') or [])} vendors, "
 		f"{len(preview.get('files') or [])} files.\n\n"
+		f"{data_block}\n\n"
 		f"{design}\n\n"
 		"Reply with ONLY valid JSON (no markdown fences):\n"
 		"{\n"
 		'  "title": "short product name matching the request",\n'
 		'  "subtitle": "one-line description",\n'
 		'  "reply": "markdown for the user: reflect their ask, propose the app, '
-		"briefly note sources, invite refine or Approve & Build\"\n"
+		"briefly note sources and data nuances, invite refine or Approve & Build\"\n"
 		"}"
 	)
 	text, meta = prime_ask(

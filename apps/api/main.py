@@ -488,15 +488,98 @@ def project_files(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	root = project_dir(project_id) / "inputs" / "data-room"
-	if not root.exists():
-		raise HTTPException(404, "Data room not found")
+	from simulacra.demo.sources import list_source_files
+
 	files = [
-		{"name": str(p.relative_to(root)), "size": p.stat().st_size, "type": p.suffix.lstrip(".")}
-		for p in sorted(root.rglob("*"))
-		if p.is_file()
+		{
+			"name": s.name,
+			"size": s.size,
+			"type": s.type,
+			"status": s.status,
+			"detail": s.detail,
+			"sha256": s.sha256[:16] if s.sha256 else "",
+			"row_count": s.row_count,
+		}
+		for s in list_source_files(project_id)
 	]
 	return {"files": files}
+
+
+@app.get("/projects/{project_id}/sources")
+def get_sources(
+	project_id: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+) -> dict:
+	from simulacra.demo.sources import content_fingerprint, list_source_files
+
+	state = load_state(project_id)
+	preview = state.plan_preview or {}
+	return {
+		"files": [s.to_dict() for s in list_source_files(project_id)],
+		"fingerprint": content_fingerprint(project_id),
+		"profile": preview.get("profile"),
+		"extract": preview.get("extract"),
+		"row_count": preview.get("row_count") or state.row_count,
+	}
+
+
+@app.post("/projects/{project_id}/sources/seed")
+def post_sources_seed(
+	project_id: str,
+	request: Request,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict:
+	from simulacra.demo.pipeline import start_reingest
+	from simulacra.demo.sources import SourceError, seed_fixtures
+
+	try:
+		seed_fixtures(project_id, clear=False)
+	except SourceError as exc:
+		raise HTTPException(400, str(exc)) from exc
+	audit_request(request, ctx, "sources.seed", project_id=project_id)
+	try:
+		start_reingest(project_id)
+	except ValueError as exc:
+		raise HTTPException(409, str(exc)) from exc
+	return project_snapshot(project_id)
+
+
+@app.delete("/projects/{project_id}/sources/{file_name:path}")
+def delete_source(
+	project_id: str,
+	file_name: str,
+	request: Request,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict:
+	from simulacra.demo.pipeline import start_reingest
+	from simulacra.demo.sources import SourceError, remove_source
+
+	try:
+		remove_source(project_id, file_name)
+	except SourceError as exc:
+		raise HTTPException(400, str(exc)) from exc
+	audit_request(request, ctx, "sources.remove", project_id=project_id, file=file_name)
+	try:
+		start_reingest(project_id)
+	except ValueError as exc:
+		raise HTTPException(409, str(exc)) from exc
+	return project_snapshot(project_id)
+
+
+@app.post("/projects/{project_id}/sources/reingest")
+def post_reingest(
+	project_id: str,
+	request: Request,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict:
+	from simulacra.demo.pipeline import start_reingest
+
+	try:
+		start_reingest(project_id)
+	except ValueError as exc:
+		raise HTTPException(409, str(exc)) from exc
+	audit_request(request, ctx, "sources.reingest", project_id=project_id)
+	return project_snapshot(project_id)
 
 
 @app.get("/projects/{project_id}/events")
@@ -745,18 +828,39 @@ def post_deploy(
 @app.post("/projects/{project_id}/upload")
 async def upload_files(
 	project_id: str,
+	request: Request,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 	files: list[UploadFile] = File(...),
+	reingest: bool = True,
 ) -> dict:
-	state = load_state(project_id)
-	dest = project_dir(project_id) / "inputs" / "data-room"
-	dest.mkdir(parents=True, exist_ok=True)
+	from simulacra.demo.pipeline import start_reingest
+	from simulacra.demo.sources import SourceError, add_upload
+
+	if not files:
+		raise HTTPException(400, "No files uploaded")
+	uploaded: list[dict] = []
+	errors: list[str] = []
 	for f in files:
-		path = dest / (f.filename or "upload.bin")
-		path.write_bytes(await f.read())
+		try:
+			data = await f.read()
+			src = add_upload(project_id, filename=f.filename, data=data, overwrite=True)
+			uploaded.append(src.to_dict())
+		except SourceError as exc:
+			errors.append(str(exc))
+	if not uploaded and errors:
+		raise HTTPException(400, "; ".join(errors[:5]))
+	state = load_state(project_id)
 	state.status = "uploaded"
 	save_state(state)
-	return {"uploaded": len(files), "project_id": project_id}
+	audit_request(request, ctx, "sources.upload", project_id=project_id, count=len(uploaded))
+	snap: dict[str, Any] = {"uploaded": len(uploaded), "files": uploaded, "errors": errors, "project_id": project_id}
+	if reingest and uploaded:
+		try:
+			start_reingest(project_id)
+			snap = {**project_snapshot(project_id), **snap}
+		except ValueError as exc:
+			snap["reingest_error"] = str(exc)
+	return snap
 
 
 @app.get("/projects/{project_id}/preview")

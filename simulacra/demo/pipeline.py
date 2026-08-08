@@ -16,15 +16,21 @@ from .design_brief import (
 )
 from .duckdb_engine import default_preview_query, rows_to_parquet
 from .events import emit_event
-from .extract import extract_data_room, write_summary
+from .extract import extract_data_room_report, write_summary
 from .gates import run_gates, write_manifest
 from .jobs import JobConflictError, JobRecord, request_cancel, start_job
-from .plan import approve_plan, init_plan, plan_chat, start_plan_chat
+from .plan import approve_plan, explore_plan_scan, init_plan, plan_chat, start_plan_chat
 
 from .prime_builder import prime_build_app
 from .prime_hook import is_question_only, prime_follow_up, prime_meta_dict
 from .runs import ChatMessage, ProjectState, file_hash, load_state, project_dir, save_state
 from .sandbox import prepare_project_sandbox
+from .sources import (
+	apply_profile_to_brief,
+	content_fingerprint,
+	profile_rows,
+	write_agent_context,
+)
 from .tenants import get_tenant
 
 log = logging.getLogger("simulacra.pipeline")
@@ -77,19 +83,28 @@ def _prepare_data_and_gates(state: ProjectState) -> tuple[ProjectState, list[dic
 	save_state(state)
 
 	emit_event(pid, "phase", label="Reading data room", status="running")
-	rows = extract_data_room(data_room)
-	emit_event(pid, "phase", label="Reading data room", detail=f"{len(rows)} findings", status="done")
+	report = extract_data_room_report(data_room, project_id=pid)
+	rows = report.rows
+	profile = profile_rows(rows)
+	state.design_brief = apply_profile_to_brief(state.design_brief or {}, profile)
+	write_brief(pid, state.design_brief)
+	write_agent_context(
+		pid, rows=rows, profile=profile, extract=report, prompt=state.prompt
+	)
+	detail = f"{len(rows)} findings"
+	if report.errors:
+		detail += f" · {len(report.errors)} file errors"
+	emit_event(pid, "phase", label="Reading data room", detail=detail, status="done")
 
 	if not rows:
 		state.status = "failed"
 		state.phase = "plan"
-		state.chat.append(
-			ChatMessage(
-				role="assistant",
-				content="No rows extracted from the data room — attach sources and try again.",
-				source="system",
-			)
-		)
+		msg = "No rows extracted from the data room — attach extractable sources (.md/.csv/.json) and re-ingest."
+		if report.skipped:
+			msg += f" Skipped: {', '.join(report.skipped[:5])}."
+		if report.errors:
+			msg += f" Errors: {'; '.join(report.errors[:3])}."
+		state.chat.append(ChatMessage(role="assistant", content=msg, source="system"))
 		save_state(state)
 		return state, [], []
 
@@ -635,6 +650,116 @@ def rollback_project(project_id: str, checkpoint_id: str | None = None) -> Proje
 		state.deploy_url = url
 		save_state(state)
 	return state
+
+
+def reingest_sources(project_id: str, *, refresh_preview: bool = True) -> ProjectState:
+	"""Re-extract data room → update plan preview, agent context, app public JSON.
+
+	Call after upload/remove/seed. Safe to run in plan or ready phase.
+	Does not wipe agent App.tsx edits — only refreshes data artifacts.
+	"""
+	state = load_state(project_id)
+	pid = project_id
+	emit_event(pid, "phase", label="Re-ingesting sources", status="running")
+	prev_fp = (state.plan_preview or {}).get("fingerprint")
+	state = explore_plan_scan(state)
+	preview = state.plan_preview or {}
+	rows = list(preview.get("sample_rows") or [])
+	# explore only keeps 5 samples — re-extract full for parquet
+	root = project_dir(pid)
+	report = extract_data_room_report(root / "inputs" / "data-room", project_id=pid)
+	rows = report.rows
+	profile = profile_rows(rows)
+	fp = content_fingerprint(pid)
+
+	if rows:
+		rows_to_parquet(rows, root / "outputs" / "table.parquet")
+		(root / "outputs" / "summary.md").write_text(write_summary(rows, state.prompt))
+		sources = _collect_sources(root, root / "inputs" / "data-room")
+		write_manifest(
+			state,
+			rows,
+			sources[:20],
+			prime={
+				"session_id": state.prime.get("session_id"),
+				"model": state.prime.get("model") or "pending",
+				"source": state.prime.get("source") or "pending",
+			},
+		)
+		# Re-run gates when we have rows
+		state.status = "gating"
+		save_state(state)
+		audit = run_gates(pid)
+		state.gates_status = audit.get("status", "fail")
+	else:
+		state.gates_status = "pending"
+		state.row_count = 0
+
+	write_agent_context(
+		pid, rows=rows, profile=profile, extract=report, prompt=state.prompt
+	)
+	app_dir = root / "app"
+	if app_dir.exists() and (app_dir / "package.json").exists() and rows:
+		refresh_app_data(pid, state.app_config, rows)
+		if refresh_preview and (
+			state.phase in ("ready", "build") or (app_dir / "dist" / "index.html").is_file()
+		):
+			try:
+				url = start_preview(state, rows, app_dir=app_dir)
+				state.deploy_url = url
+			except Exception as exc:  # noqa: BLE001
+				emit_event(
+					pid,
+					"think",
+					label="Preview refresh skipped",
+					detail=str(exc)[:200],
+					status="done",
+				)
+
+	changed = prev_fp and prev_fp != fp
+	n_files = len(preview.get("files") or [])
+	msg = (
+		f"**Sources updated.** {len(rows)} findings from {n_files} file(s)."
+		+ (" Content changed — preview data refreshed." if changed else "")
+	)
+	if report.errors:
+		msg += f"\n\nExtract issues: {'; '.join(report.errors[:3])}"
+	if report.skipped:
+		msg += f"\n\nSkipped (not extractable): {', '.join(report.skipped[:5])}"
+	if not rows:
+		msg = (
+			"**Sources updated**, but no extractable findings yet. "
+			"Add `.md` / `.csv` / `.json` (or re-attach the fixture pack), then re-ingest."
+		)
+	state.chat.append(ChatMessage(role="assistant", content=msg, source="system"))
+	state.status = "draft" if state.phase == "plan" else state.status
+	if state.phase == "plan" and rows:
+		state.status = "draft"
+	elif rows and state.phase == "ready":
+		state.status = "ready"
+	save_state(state)
+	emit_event(
+		pid,
+		"done",
+		label="Re-ingest complete",
+		detail=f"{len(rows)} rows · fp={fp[:10]}",
+		status="done",
+	)
+	return state
+
+
+def start_reingest(project_id: str) -> ProjectState:
+	"""Queue re-ingest as a background job (one job at a time)."""
+	state = load_state(project_id)
+
+	def target(_job: JobRecord) -> ProjectState:
+		return reingest_sources(project_id)
+
+	try:
+		start_job(project_id, "reingest", label="Re-ingesting sources", target=target)
+	except JobConflictError as exc:
+		raise ValueError(str(exc)) from exc
+	return load_state(project_id)
 
 
 def approve_deploy(project_id: str, *, public_base: str | None = None) -> ProjectState:
