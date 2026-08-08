@@ -1017,6 +1017,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.thread::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 .thread-empty {
   color: var(--text-dim);
@@ -1638,25 +1644,19 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-6) 0 var(--space-5);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  /* Hide native chrome — trackpad/wheel still scroll */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 .agent-thread::-webkit-scrollbar {
-  width: 8px;
+  width: 0 !important;
+  height: 0 !important;
+  display: none;
 }
+.agent-thread::-webkit-scrollbar-button,
+.agent-thread::-webkit-scrollbar-thumb,
 .agent-thread::-webkit-scrollbar-track {
-  background: transparent;
-}
-.agent-thread::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-pill);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-.agent-thread::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
-  background-clip: padding-box;
-  border: 2px solid transparent;
+  display: none;
 }
 .agent-msg {
   margin-bottom: 22px;
