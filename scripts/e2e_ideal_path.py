@@ -49,9 +49,22 @@ def api(method: str, path: str, token: str, tenant: str, body: dict | None = Non
 		return 0, {"detail": str(e)}
 
 
-def wait_idle(token: str, tenant: str, pid: str, timeout: float = 300) -> dict:
+def wait_idle(
+	token: str,
+	tenant: str,
+	pid: str,
+	timeout: float = 300,
+	*,
+	expect_phase: str | None = None,
+) -> dict:
+	"""Wait until the project job is truly idle and (optionally) phase matches.
+
+	Requires two consecutive stable polls so we don't race npm preview publish
+	or in-memory job teardown.
+	"""
 	deadline = time.time() + timeout
-	last = {}
+	last: dict = {}
+	stable = 0
 	while time.time() < deadline:
 		_, snap = api("GET", f"/projects/{pid}", token, tenant)
 		_, jobinfo = api("GET", f"/projects/{pid}/job", token, tenant)
@@ -60,14 +73,32 @@ def wait_idle(token: str, tenant: str, pid: str, timeout: float = 300) -> dict:
 		status = job.get("status") or "idle"
 		live = bool(jobinfo.get("live"))
 		proj = snap.get("project") or {}
+		phase = proj.get("phase")
+		pstatus = proj.get("status")
 		print(
-			f"  … live={live} job={status}/{job.get('kind')} phase={proj.get('phase')} "
-			f"status={proj.get('status')} source={(proj.get('prime') or {}).get('source')} "
+			f"  … live={live} job={status}/{job.get('kind')} phase={phase} "
+			f"status={pstatus} source={(proj.get('prime') or {}).get('source')} "
 			f"preview={bool(snap.get('preview_url'))}",
 			flush=True,
 		)
-		if not live and status in ("idle", "failed", "cancelled"):
-			return snap
+		building = pstatus in (
+			"building_app",
+			"publishing_preview",
+			"extracting",
+			"gating",
+			"updating",
+		) or (phase == "build" and pstatus not in ("ready", "failed", "draft"))
+		terminal = (not live) and status in ("idle", "failed", "cancelled")
+		if expect_phase:
+			done = terminal and phase == expect_phase and not building
+		else:
+			done = terminal and not building
+		if done:
+			stable += 1
+			if stable >= 2:
+				return snap
+		else:
+			stable = 0
 		time.sleep(3)
 	note(False, "Timed out waiting for idle job")
 	return last
@@ -84,39 +115,34 @@ def login() -> tuple[str, str]:
 def main() -> int:
 	OUT.mkdir(parents=True, exist_ok=True)
 	token, tenant = login()
-	pid = None
+	# Always create a fresh project for full create→build→iterate proof
 	existing = OUT / "pid.txt"
 	if existing.exists():
-		pid = existing.read_text().strip() or None
+		existing.unlink()
 
-	if not pid:
-		# create with retries (first call occasionally races)
-		snap = None
-		for attempt in range(3):
-			code, snap = api(
-				"POST",
-				"/projects",
-				token,
-				tenant,
-				{
-					"prompt": "A vendor risk dashboard from my diligence pack",
-					"goal": "Vendor risk command center",
-					"use_fixture": True,
-				},
-			)
-			if code == 200 and snap.get("project"):
-				break
-			note(False, f"Create attempt {attempt+1}", f"status={code} detail={snap.get('detail')}")
-			time.sleep(2)
-		else:
-			return 1
-		pid = snap["project"]["id"]
-		existing.write_text(pid)
-		note(True, "Create project", pid)
-		snap = wait_idle(token, tenant, pid, 180)
+	snap = None
+	for attempt in range(3):
+		code, snap = api(
+			"POST",
+			"/projects",
+			token,
+			tenant,
+			{
+				"prompt": "A vendor risk dashboard from my diligence pack",
+				"goal": "Vendor risk command center",
+				"use_fixture": True,
+			},
+		)
+		if code == 200 and snap.get("project"):
+			break
+		note(False, f"Create attempt {attempt+1}", f"status={code} detail={snap.get('detail')}")
+		time.sleep(2)
 	else:
-		note(True, "Resume project", pid)
-		snap = wait_idle(token, tenant, pid, 60)
+		return 1
+	pid = snap["project"]["id"]
+	existing.write_text(pid)
+	note(True, "Create project", pid)
+	snap = wait_idle(token, tenant, pid, 180)
 
 	proj = snap.get("project") or {}
 	preview = snap.get("preview_url")
@@ -144,6 +170,13 @@ def main() -> int:
 		except Exception as e:
 			note(False, "Preview assets", str(e))
 
+	# Sources inventory (must not 404 behind SPA catch-all)
+	code, sources = api("GET", f"/projects/{pid}/sources", token, tenant)
+	note(code == 200, "GET /sources OK", f"status={code} detail={sources.get('detail')}")
+	if code == 200:
+		files = sources.get("files") or sources.get("sources") or []
+		note(len(files) >= 1, "Sources list non-empty", f"n={len(files)}")
+
 	# Plan chat
 	code, _ = api("POST", f"/projects/{pid}/plan", token, tenant, {"message": "Keep dense ops dark aesthetic."})
 	note(code == 200, "Plan chat accepted", f"status={code}")
@@ -154,19 +187,24 @@ def main() -> int:
 	# Build
 	code, _ = api("POST", f"/projects/{pid}/approve", token, tenant, {})
 	note(code in (200, 202), "Build app accepted", f"status={code}")
-	snap = wait_idle(token, tenant, pid, 420)
+	snap = wait_idle(token, tenant, pid, 420, expect_phase="ready")
 	proj = snap.get("project") or {}
 	prime = proj.get("prime") or {}
 	source = prime.get("source")
-	note(proj.get("phase") == "ready", "After build phase=ready", f"phase={proj.get('phase')}")
-	note(source == "prime", "Agent Built (source=prime)", f"source={source} style_only={prime.get('style_only')} err={prime.get('last_error')}")
+	note(proj.get("phase") == "ready", "After build phase=ready", f"phase={proj.get('phase')} status={proj.get('status')}")
+	note(
+		source in ("prime", "craft"),
+		"Agent Built (source=prime|craft)",
+		f"source={source} style_only={prime.get('style_only')} err={prime.get('last_error')}",
+	)
 	built_msg = any(
 		m.get("role") == "assistant" and ("Built" in (m.get("content") or "") or m.get("source") == "prime")
 		for m in (proj.get("chat") or [])
 	)
 	note(built_msg, "Build honesty message present")
+	note(proj.get("status") == "ready", "After build status=ready", f"status={proj.get('status')}")
 
-	# Iterate
+	# Iterate 1 — style / density
 	n_before = len(proj.get("chat") or [])
 	code, _ = api(
 		"POST",
@@ -183,10 +221,37 @@ def main() -> int:
 	snap = wait_idle(token, tenant, pid, 420)
 	proj = snap.get("project") or {}
 	note(len(proj.get("chat") or []) > n_before, "Iterate adds chat turns")
+	note(proj.get("status") == "ready", "After iterate status=ready", f"status={proj.get('status')}")
 	last = [m for m in (proj.get("chat") or []) if m.get("role") == "assistant"][-1]
 	silent_heuristic = last.get("source") == "heuristic" and "Updated the app layout" in (last.get("content") or "")
 	note(not silent_heuristic, "No silent heuristic success on iterate", f"source={last.get('source')} {(last.get('content') or '')[:140]}")
-	note(last.get("source") in ("prime", "heuristic", "error", "system"), "Iterate reply sourced", str(last.get("source")))
+	note(last.get("source") in ("prime", "heuristic", "error", "system", "craft"), "Iterate reply sourced", str(last.get("source")))
+
+	# Iterate 2 — addition / layout change
+	n_before = len(proj.get("chat") or [])
+	code, _ = api(
+		"POST",
+		f"/projects/{pid}/chat",
+		token,
+		tenant,
+		{
+			"message": (
+				"Add a Vendors section below the KPI strip listing vendor names from the data "
+				"as a compact table with name and risk. Edit src/App.tsx."
+			),
+		},
+	)
+	note(code in (200, 202), "Addition iterate accepted", f"status={code}")
+	snap = wait_idle(token, tenant, pid, 480)
+	proj = snap.get("project") or {}
+	note(len(proj.get("chat") or []) > n_before, "Addition iterate adds chat")
+	last = [m for m in (proj.get("chat") or []) if m.get("role") == "assistant"][-1]
+	note(
+		last.get("source") in ("prime", "heuristic", "error", "system", "craft"),
+		"Addition iterate reply sourced",
+		f"source={last.get('source')} {(last.get('content') or '')[:160]}",
+	)
+	note(proj.get("phase") == "ready", "Still phase=ready after addition", f"phase={proj.get('phase')}")
 
 	# Question-only
 	code, _ = api(
@@ -204,6 +269,7 @@ def main() -> int:
 	proj = snap.get("project") or {}
 	last = [m for m in (proj.get("chat") or []) if m.get("role") == "assistant"][-1]
 	note(bool(last.get("content")), "Question answered", f"source={last.get('source')} {(last.get('content') or '')[:120]}")
+	note("high" in (last.get("content") or "").lower() or any(c.isdigit() for c in (last.get("content") or "")), "Question has a count", (last.get("content") or "")[:120])
 
 	# Ship
 	code, snap = api("POST", f"/projects/{pid}/deploy", token, tenant, {})
@@ -219,7 +285,15 @@ def main() -> int:
 	ids = [p.get("id") for p in (listing.get("projects") or [])]
 	note(pid in ids, "Listed in home projects", f"n={len(ids)}")
 
-	report = {"project_id": pid, "passes": passes, "faults": faults, "final_source": (proj.get("prime") or {}).get("source"), "deployed": proj.get("deployed")}
+	report = {
+		"project_id": pid,
+		"passes": passes,
+		"faults": faults,
+		"final_source": (proj.get("prime") or {}).get("source"),
+		"deployed": proj.get("deployed"),
+		"phase": proj.get("phase"),
+		"status": proj.get("status"),
+	}
 	(OUT / "report.json").write_text(json.dumps(report, indent=2))
 	print("\n=== SUMMARY ===", flush=True)
 	print(f"project={pid} passes={len(passes)} faults={len(faults)}", flush=True)

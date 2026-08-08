@@ -368,11 +368,10 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 	state.prime["style_only"] = bool(build_meta.get("style_only"))
 	state.prime["layout_customized"] = bool(build_meta.get("layout_customized"))
 
-	emit_event(pid, "phase", label="Publishing preview", status="running")
-	url = start_preview(state, rows, app_dir=app_dir)
-	state.deploy_url = url
+	# Mark Built BEFORE the long npm preview publish so waiters never see
+	# source=prime stuck on phase=build (the E2E race fault).
 	state.phase = "ready"
-	state.status = "ready"
+	state.status = "publishing_preview"
 	state.plan_approved = True
 	state.chat.append(
 		ChatMessage(
@@ -381,6 +380,13 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 			source=source,
 		)
 	)
+	save_state(state)
+
+	emit_event(pid, "phase", label="Publishing preview", status="running")
+	url = start_preview(state, rows, app_dir=app_dir)
+	state = load_state(pid)
+	state.deploy_url = url
+	state.status = "ready"
 	save_checkpoint(state, "Build")
 	emit_event(pid, "done", label="Build complete", detail=url, status="done")
 	save_state(state)
@@ -532,9 +538,10 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	state.prime["source"] = source
 	state.prime["layout_customized"] = bool(meta.get("layout_customized"))
 	state.chat.append(ChatMessage(role="assistant", content=honesty, source=source))
-	state.status = "updating"
+	state.status = "publishing_preview"
 	save_state(state)
 	url = start_preview(state, rows, app_dir=app_dir)
+	state = load_state(project_id)
 	state.deploy_url = url
 	state.status = "ready"
 	save_checkpoint(state, f"After: {message[:40]}")

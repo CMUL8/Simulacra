@@ -161,7 +161,7 @@ def health() -> dict[str, Any]:
 		"identity": db_health(),
 		"siem": siem_status(),
 		"clerk": clerk_enabled(),
-		"version": "0.7.0",
+		"version": "0.7.1",
 	}
 
 
@@ -923,7 +923,8 @@ if _CONSOLE_DIST.is_dir():
 			"openapi",
 		)
 		if full_path == "health" or full_path.startswith(api_prefixes):
-			raise HTTPException(404, "Not found")
+			# Let missing API routes surface as clear 404s (not SPA fallback)
+			raise HTTPException(404, f"Not found: /{full_path}")
 		candidate = _CONSOLE_DIST / full_path
 		if candidate.is_file():
 			return FileResponse(candidate)
