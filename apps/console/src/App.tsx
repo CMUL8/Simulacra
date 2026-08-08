@@ -292,15 +292,11 @@ export default function App({
     }
   }
 
-  async function handleDesignBriefChange(next: DesignBrief) {
+  async function handleDesignBriefSave(next: DesignBrief) {
     setDesignBrief(next);
-    if (!snapshot || mode !== "plan") return;
-    try {
-      const snap = await patchDesignBrief(snapshot.project.id, next);
-      setSnapshot(snap);
-    } catch {
-      /* keep local brief; server sync optional */
-    }
+    if (!snapshot) return;
+    const snap = await patchDesignBrief(snapshot.project.id, next);
+    setSnapshot(snap);
   }
 
   async function handlePlanSend() {
@@ -520,7 +516,7 @@ export default function App({
           traces={traces}
           sidebarOpen={sidebarOpen}
           designBrief={designBrief}
-          onDesignBrief={handleDesignBriefChange}
+          onSaveDesignBrief={handleDesignBriefSave}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onInput={setInput}
           onSend={mode === "plan" ? handlePlanSend : handleSend}

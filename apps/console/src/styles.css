@@ -2050,6 +2050,99 @@ body {
   cursor: not-allowed;
 }
 
+
+/* Design brief save UX */
+.design-brief-panel summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+}
+.design-brief-panel summary::-webkit-details-marker { display: none; }
+.design-brief-panel summary::before {
+  content: "▸";
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.design-brief-panel[open] summary::before { content: "▾"; }
+.design-brief-pill {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.design-brief-pill.ok { background: rgba(61, 139, 110, 0.18); color: #7ddea8; }
+.design-brief-pill.warn { background: rgba(240, 192, 64, 0.16); color: #f0c040; }
+.design-brief-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.design-brief-save {
+  border: none;
+  border-radius: 999px;
+  background: #fff;
+  color: #111;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 560;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.design-brief-save:disabled { opacity: 0.4; cursor: not-allowed; }
+.design-brief-save:not(:disabled):hover { background: #f2f2f2; }
+.design-brief-saved { font-size: 12px; color: #7ddea8; }
+.design-brief-error { font-size: 12px; color: #e85d5d; }
+
+.agent-msg.assistant .agent-msg-body {
+  padding: 2px 0;
+}
+.agent-msg.assistant .agent-msg-body code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: rgba(255,255,255,0.06);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.agent-msg.assistant .agent-msg-body .md-li {
+  display: block;
+  padding-left: 12px;
+  position: relative;
+}
+.agent-msg.assistant .agent-msg-body .md-li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--text-dim);
+}
+.source-chip {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.source-chip.source-prime {
+  color: #7ddea8;
+  border-color: rgba(61, 139, 110, 0.45);
+  background: rgba(61, 139, 110, 0.12);
+}
+.source-chip.source-heuristic {
+  color: #f0c040;
+  border-color: rgba(240, 192, 64, 0.35);
+  background: rgba(240, 192, 64, 0.1);
+}
+.source-chip.source-system {
+  color: var(--text-dim);
+}
+
 /* Manage profile modal — CMUL8 manage pattern */
 .profile-backdrop {
   position: fixed;

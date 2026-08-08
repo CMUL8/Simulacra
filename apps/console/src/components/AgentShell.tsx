@@ -25,7 +25,7 @@ type Props = {
   traces: AgentEvent[];
   sidebarOpen: boolean;
   designBrief?: DesignBrief;
-  onDesignBrief?: (v: DesignBrief) => void;
+  onSaveDesignBrief?: (v: DesignBrief) => Promise<void>;
   onToggleSidebar: () => void;
   onInput: (v: string) => void;
   onSend: () => void;
@@ -49,8 +49,16 @@ function formatTime(at?: string) {
 
 function renderMarkdownLite(text: string) {
   return text.split("\n").map((line, i) => {
-    const bold = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    return <p key={i} dangerouslySetInnerHTML={{ __html: bold }} />;
+    let html = line
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    if (html.startsWith("- ")) {
+      html = `<span class="md-li">${html.slice(2)}</span>`;
+    }
+    return <p key={i} dangerouslySetInnerHTML={{ __html: html || "&nbsp;" }} />;
   });
 }
 
@@ -77,7 +85,7 @@ export function AgentShell({
   traces,
   sidebarOpen,
   designBrief,
-  onDesignBrief,
+  onSaveDesignBrief,
   onToggleSidebar,
   onInput,
   onSend,
@@ -184,8 +192,11 @@ export function AgentShell({
                   <Bot size={12} />
                 </span>
                 <span className="who">Simulacra</span>
+                <span className="source-chip source-prime">Prime</span>
               </div>
-              <div className="agent-msg-body dim">Working…</div>
+              <div className="agent-msg-body dim">
+                {isPlan ? "Prime is planning from your request…" : "Working…"}
+              </div>
             </article>
           )}
 
@@ -193,8 +204,8 @@ export function AgentShell({
         </div>
 
         <div className="agent-composer-wrap">
-          {isPlan && designBrief && onDesignBrief && (
-            <DesignBriefForm value={designBrief} onChange={onDesignBrief} disabled={busy} />
+          {isPlan && designBrief && onSaveDesignBrief && (
+            <DesignBriefForm value={designBrief} onSave={onSaveDesignBrief} disabled={busy} />
           )}
           <PromptComposer
             value={input}
@@ -205,7 +216,7 @@ export function AgentShell({
             files={files}
             placeholder={
               isPlan
-                ? "Explore the data room, tag sources with @, refine requirements…"
+                ? "Refine the idea, tag sources with @…"
                 : "Ask for changes to your app…"
             }
             submitLabel="Send"

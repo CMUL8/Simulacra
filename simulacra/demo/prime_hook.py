@@ -94,6 +94,93 @@ def prime_infer_app_config(
 	return cfg, out
 
 
+def prime_open_plan(
+	cwd: Path,
+	state: ProjectState,
+	*,
+	summary: str,
+	project_id: str | None = None,
+) -> tuple[AppConfig | None, str | None, PrimeBuildMeta]:
+	"""First-turn plan: hand the user request to Prime immediately (no dashboard bias)."""
+	if not prime_enabled() or not (project_id or state.id):
+		return None, None, PrimeBuildMeta(used=False, source="heuristic")
+
+	pid = project_id or state.id
+	preview = state.plan_preview or {}
+	design = brief_to_prime_block(state.design_brief or {})
+	prime_prompt = (
+		"You are Simulacra in PLAN mode. The user just started a project.\n"
+		"Propose what to build based on THEIR request — not a generic data explorer.\n"
+		"Honor intent: games, learning/quiz apps, dashboards, ops tools, etc.\n"
+		"Do NOT claim you have built anything yet. Do not write app code.\n"
+		"Source material is available for the app to draw from; mention it briefly.\n\n"
+		f"User request:\n{state.prompt}\n\n"
+		f"Goal (if any):\n{state.goal or '(none)'}\n\n"
+		f"Source summary:\n{summary[:2200]}\n\n"
+		f"Stats: {preview.get('row_count', 0)} extracted rows, "
+		f"{preview.get('high_risk', 0)} high-risk, "
+		f"{len(preview.get('vendors') or [])} vendors, "
+		f"{len(preview.get('files') or [])} files.\n\n"
+		f"{design}\n\n"
+		"Reply with ONLY valid JSON (no markdown fences):\n"
+		"{\n"
+		'  "title": "short product name matching the request",\n'
+		'  "subtitle": "one-line description",\n'
+		'  "reply": "markdown for the user: reflect their ask, propose the app, '
+		"briefly note sources, invite refine or Approve & Build\"\n"
+		"}"
+	)
+	text, meta = prime_ask(
+		pid,
+		cwd=cwd,
+		prompt=prime_prompt,
+		name="simulacra-plan-open",
+		timeout=90.0,
+	)
+	out = PrimeBuildMeta(
+		used=True,
+		session_id=meta.get("session_id"),
+		model=meta.get("model"),
+		error=meta.get("error"),
+		source="prime" if text else "error",
+	)
+	if meta.get("error"):
+		emit_event(pid, "error", label="Prime plan open error", detail=str(meta["error"])[:200], status="fail")
+	cfg, reply = _parse_plan_open_json(text)
+	if cfg is None and text:
+		out.error = out.error or "could not parse Prime plan JSON"
+		# If Prime returned prose, still use it as the chat reply
+		if not reply and text.strip():
+			reply = text.strip()
+	return cfg, reply, out
+
+
+def _parse_plan_open_json(text: str | None) -> tuple[AppConfig | None, str | None]:
+	if not text:
+		return None, None
+	raw = text.strip()
+	fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+	if fence:
+		raw = fence.group(1).strip()
+	match = re.search(r"\{[\s\S]*\}", raw)
+	if not match:
+		return None, text.strip() if text.strip() else None
+	try:
+		data = json.loads(match.group())
+	except json.JSONDecodeError:
+		return None, text.strip() if text.strip() else None
+	cfg = AppConfig()
+	if title := data.get("title"):
+		cfg.title = str(title)[:80]
+	if subtitle := data.get("subtitle"):
+		cfg.subtitle = str(subtitle)[:120]
+	reply = data.get("reply")
+	reply_s = str(reply).strip() if reply else None
+	if not cfg.title and not reply_s:
+		return None, None
+	return cfg, reply_s
+
+
 def prime_plan_chat(
 	cwd: Path, state: ProjectState, message: str, *, project_id: str | None = None
 ) -> str | None:
@@ -103,14 +190,17 @@ def prime_plan_chat(
 	preview = state.plan_preview
 	design = brief_to_prime_block(state.design_brief or {})
 	prime_prompt = (
-		"You are Simulacra in PLAN mode (read-only). Help the user explore their data room "
-		"and refine requirements. Do NOT claim to have built anything. "
-		"You may propose design_brief changes; do not write app code.\n\n"
+		"You are Simulacra in PLAN mode (read-only). Help refine what to build.\n"
+		"Do NOT force a vendor dashboard or data explorer unless the user wants that.\n"
+		"Match their product intent (game, learning tool, analytics, ops, etc.).\n"
+		"Do NOT claim to have built anything. Do not write app code.\n"
+		"You may suggest look-and-feel / design_brief tweaks.\n\n"
+		f"Proposed app so far: {state.app_config.title} — {state.app_config.subtitle}\n"
 		f"User goal/prompt:\n{state.prompt}\n\n"
 		f"Data preview: {json.dumps(preview, default=str)[:2000]}\n\n"
 		f"{design}\n\n"
 		f"User message:\n{message}\n\n"
-		"Reply concisely in markdown. Mention integration control layer if asked about security."
+		"Reply concisely in markdown."
 	)
 	text, meta = prime_ask(
 		pid,

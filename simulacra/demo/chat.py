@@ -9,15 +9,21 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 	cfg = existing or AppConfig()
 	lower = prompt.lower()
 
-	if "vendor" in lower or "risk" in lower or "diligence" in lower:
+	if any(w in lower for w in ("game", "quiz", "flashcard", "learn", "learning", "training", "tutorial")):
+		if not existing or existing.title in ("", "Data Explorer"):
+			cfg.title = "Learning Game"
+		cfg.subtitle = "Practice with your source material"
+	elif "vendor" in lower or "risk" in lower or "diligence" in lower:
 		cfg.title = "Vendor Risk Command Center"
 		cfg.subtitle = "Third-party diligence · live risk posture"
 	elif "sales" in lower or "revenue" in lower:
 		cfg.title = "Sales Analytics"
 		cfg.subtitle = "Internal revenue view"
-	else:
-		cfg.title = "Data Explorer"
-		cfg.subtitle = "Built from your data room"
+	elif not existing or existing.title in ("", "Data Explorer"):
+		# Prefer a short title from the prompt instead of generic explorer
+		clause = prompt.strip().split("\n")[0].strip()[:60]
+		cfg.title = clause[:1].upper() + clause[1:] if clause else "Custom App"
+		cfg.subtitle = "Built from your sources"
 
 	if "region" in lower or "country" in lower:
 		cfg.group_by = "theme"
