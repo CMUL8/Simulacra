@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Query, Request
@@ -32,30 +33,48 @@ def get_auth(
 		raise HTTPException(404, str(exc)) from exc
 
 
-def require_perm(permission: str):
-	def _dep(ctx: Annotated[AuthContext, Depends(get_auth)]) -> AuthContext:
+def require_perm(permission: str) -> Callable[..., AuthContext]:
+	"""Return a FastAPI dependency that requires ``permission``."""
+
+	def _dep(auth: Annotated[AuthContext, Depends(get_auth)]) -> AuthContext:
 		try:
-			ctx.require(permission)
+			auth.require(permission)
 		except PermissionError as exc:
 			raise HTTPException(403, str(exc)) from exc
-		return ctx
+		return auth
 
+	_dep.__name__ = f"require_perm_{permission.replace(':', '_')}"
 	return _dep
 
 
-def require_project_access(permission: str = "project:read"):
+def require_project_access(permission: str = "project:read") -> Callable[..., AuthContext]:
+	"""Auth + tenant check for a project path param.
+
+	Important: do not nest ``Depends(require_perm(...))`` here — with
+	``from __future__ import annotations`` FastAPI/Pydantic can fail to resolve
+	the nested Annotated type and leak ``ctx`` as a required query param.
+	"""
+
 	def _dep(
 		project_id: str,
-		ctx: Annotated[AuthContext, Depends(require_perm(permission))],
+		authorization: Annotated[str | None, Header()] = None,
+		x_tenant_id: Annotated[str | None, Header()] = None,
+		token: Annotated[str | None, Query()] = None,
 	) -> AuthContext:
+		auth = get_auth(authorization=authorization, x_tenant_id=x_tenant_id, token=token)
+		try:
+			auth.require(permission)
+		except PermissionError as exc:
+			raise HTTPException(403, str(exc)) from exc
 		try:
 			state = load_state(project_id)
 		except FileNotFoundError as exc:
 			raise HTTPException(404, "Project not found") from exc
-		if ctx.tenant_id != "*" and state.tenant_id != ctx.tenant_id and not ctx.user.is_platform_admin:
+		if auth.tenant_id != "*" and state.tenant_id != auth.tenant_id and not auth.user.is_platform_admin:
 			raise HTTPException(404, "Project not found")  # don't leak existence
-		return ctx
+		return auth
 
+	_dep.__name__ = f"require_project_{permission.replace(':', '_')}"
 	return _dep
 
 
