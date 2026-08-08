@@ -92,10 +92,25 @@ export function PreviewDrawer({
               <button
                 type="button"
                 className="approve-btn preview-deploy-btn"
-                disabled={busy || project?.deployed}
+                disabled={busy}
                 onClick={onDeploy}
               >
-                {project?.deployed ? "Deployed" : "Approve deploy"}
+                Ship
+              </button>
+            )}
+            {project?.deployed && (
+              <span className="source-chip source-prime">Shipped</span>
+            )}
+            {project?.deployed && previewUrl && (
+              <button
+                type="button"
+                className="ghost-btn quiet"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(previewUrl);
+                }}
+                title="Copy share URL"
+              >
+                Copy link
               </button>
             )}
             {previewUrl && tab === "preview" && (

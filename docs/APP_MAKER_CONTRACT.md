@@ -1,68 +1,79 @@
 # App Maker Contract
 
-**Product law for Simulacra as a consumer / prosumer app maker.**  
-Supersedes the slow “plan forever → Approve → maybe Prime → preview” harness for the maker loop.  
-Policy, gates, audit, and tenants still follow `PRODUCT_SPEC.md`.
+**Product law.** Simulacra is the **infra + scaffold**. The builder agent does the **building**. The user **drives the agent** in chat.
 
 ## One sentence
 
-User types intent → sees a **live preview they trust in under ~60s** for known data patterns → can **stop**, **refine**, or **deepen with Prime** → then **ship**. Never stuck. Never fake.
+User states intent → Simulacra scaffolds a **draft preview fast** → user **Builds** once so the agent customizes → user **chats to drive the agent** back and forth → user **Ships** an approved link. Never fake. Never silent heuristics dressed as builds.
 
-## Hard rules
+## Roles
 
-1. **Bootstrap first** — first preview does **not** wait on Prime.
-2. **One job, one truth** — UI busy iff a live in-process job exists (`GET …/job` `live:true`); ghost `state.job=running` after restart must heal.
-3. **Stop always works** — cancel is idempotent; UI unlocks in &lt;200ms even if Prime is still dying.
-4. **No silent heuristics** — chips must say `Template` / `Heuristic` / `Prime` / `Fallback` / `Stopped`. Never claim Prime built it when it did not.
-5. **Prime is deepen** — taste, layout, iteration under the design brief. Explicit user action (or clear auto-deepen later); not required for first preview.
-6. **Same-origin preview** — never hand the browser `127.0.0.1`. Built apps are served at `/projects/{id}/preview/`.
-7. **Deploy ≠ checkbox forever** — today `deployed=true` keeps the preview URL; call the control **Ship** / **Approve deploy**, not “we shipped to multi-region cloud.”
-8. **Plan before Build** — draft preview may be ready early, but the user reviews a **Plan** card and clicks **Build app** to leave plan mode.
+| Who | Owns |
+|-----|------|
+| **Simulacra** | Auth, tenants, sources, extract, gates, sandbox, template scaffold, preview URL, jobs, ship flag, audit |
+| **Builder agent** | All durable edits to `app/src/*` (layout, style, viz, copy) |
+| **User** | Intent, style chips, chat directions, Build, Ship |
 
-## Phases
+## Loop (memorize)
 
-| Phase | Owner | User sees |
-|-------|--------|-----------|
-| **Create** | API &lt;500ms | Project id, user prompt in chat, bootstrap job `live` |
-| **Bootstrap** | Simulacra | Scan → parquet → gates → template sync → preview URL → phase `ready`, source `template` |
-| **Refine** | Chat + design brief | Style chips, Q&A, no full rebuild |
-| **Deepen** | Prime (`build_run` / `iterate_run`) | “Improve with Prime”; honesty → `prime` or honest fallback |
-| **Ship** | Simulacra | Gates pass → `deployed` |
+```
+Create → Scaffold (draft) → Build app (agent customizes once from draft)
+       → Drive (every change chat → agent iterate, preview refreshes)
+       → Ship (approve this build + share URL)
+```
+
+| Step | What happens | User sees |
+|------|----------------|-----------|
+| **Scaffold** | Scan → parquet → gates → copy template → same-origin preview. **No agent file edits.** | Plan + **Draft** + Preview |
+| **Build app** | Re-sync craft template **once**, then agent rewrites app under the design brief | **Building…** → **Built** (or honest failure) |
+| **Drive** | Chat that asks for a change → `iterate_run` → agent edits existing app (**does not wipe** prior agent work) | Thinking → Preview updates → reply |
+| **Ask** | Pure questions only (`?` / what / why…) → short Q&A, **no file edits** | Answer in chat |
+| **Ship** | Gates pass → `deployed=true` + stable preview URL + chat receipt | **Shipped** + shareable link |
+| **Rebuild from draft** | Explicit escape hatch — wipe back to template, agent builds again | Same as Build app |
+
+## Chat rules (critical)
+
+1. **Plan phase** — chat refines plan / brief only. Does **not** edit app code. Styles chips apply tokens to the draft.
+2. **After Build** — default is **drive the agent**. Almost every send that is not a pure question starts an agent iterate job.
+3. **Never** pretend a heuristic rename was an agent build.
+4. **One job at a time** — Stop unlocks UI; last good preview kept.
+
+## What Ship is (and is not)
+
+- **Is:** Mark this preview **approved**, keep the same-origin URL, tell the user in chat, show **Shipped**.
+- **Is not:** Multi-region cloud deploy, CDN, custom domain (yet). Do not imply otherwise in UI copy.
+
+## Honesty chips
+
+| State | Chip |
+|-------|------|
+| Scaffold / plan / agent missed | **Draft** |
+| Agent customized successfully | **Built** |
+| User shipped | **Shipped** |
+| Stopped / error | **Stopped** / **Retry** |
 
 ## Job kinds
 
 | Kind | Role |
 |------|------|
-| `bootstrap` | Fast maker path — no Prime |
-| `plan_ask` | Optional plan Q&A (Prime ask or heuristic) |
-| `build_run` | Deepen / customize with Prime |
-| `iterate_run` | UI deltas with Prime |
-| `iterate_ask` | Short Q&A |
+| `bootstrap` | Scaffold only |
+| `plan_ask` | Plan Q&A |
+| `build_run` | First Build / Rebuild from draft (agent) |
+| `iterate_run` | Chat-driven agent edit (preserve prior work) |
+| `iterate_ask` | Question-only |
 
-## Edge cases (must)
+## Edge cases
 
 | Case | Behavior |
 |------|----------|
-| Stop anytime | UI idle immediately; last good preview kept |
-| Restart mid-job | Reopen → not Thinking; `live:false` clears busy |
-| Prime down | Bootstrap still ships preview; chip **Template**; CTA **Improve with Prime** |
-| Gates fail | No fake preview; clear failure message |
-| Empty sources | Create/bootstrap fails clearly |
-| Double deepen | `JobConflict` — one builder |
-| Cancel when idle | 200 + `already_idle`, never 409 strand |
+| Agent off / fail on Build | Draft kept; chip stays Draft; honest message; retry Build |
+| Agent fail on iterate | Last good preview kept; honest “builder didn’t finish”; no fake heuristic success |
+| Ship before gates pass | Blocked |
+| Ship then chat iterate | Allowed — agent keeps editing; still Shipped until they care |
+| Double job | Conflict — one builder |
 
-## Honesty vocabulary
+## Non-goals
 
-| `prime.source` / message `source` | Chip |
-|-----------------------------------|------|
-| `prime` | Prime |
-| `template` | Template |
-| `heuristic` | Heuristic |
-| `error` | Fallback |
-| `cancelled` | Stopped |
-
-## Non-goals (for this contract)
-
-- Multi-region cloud deploy
-- Replacing the filesystem run store (yet)
-- Silent Prime retries that look like success
+- Replacing the agent with Simulacra heuristics for UI work
+- Silent “success” when no files changed
+- Implying Ship = production multi-region

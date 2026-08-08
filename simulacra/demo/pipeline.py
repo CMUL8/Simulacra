@@ -5,10 +5,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .chat import apply_follow_up, infer_app_config
+from .chat import infer_app_config
 from .checkpoints import rollback as do_rollback
 from .checkpoints import save_checkpoint
-from .deploy import start_preview, stop_preview, sync_app
+from .deploy import refresh_app_data, start_preview, stop_preview, sync_app
 from .design_brief import (
 	apply_brief_css_tokens,
 	merge_notes_from_message,
@@ -22,7 +22,7 @@ from .jobs import JobConflictError, JobRecord, request_cancel, start_job
 from .plan import approve_plan, init_plan, plan_chat, start_plan_chat
 
 from .prime_builder import prime_build_app
-from .prime_hook import is_ui_change_request, prime_follow_up, prime_meta_dict
+from .prime_hook import is_question_only, prime_follow_up, prime_meta_dict
 from .runs import ChatMessage, ProjectState, file_hash, load_state, project_dir, save_state
 from .sandbox import prepare_project_sandbox
 from .tenants import get_tenant
@@ -265,8 +265,12 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 				f"{state.app_config.subtitle}\n\n"
 				f"**Sources:** {facts}\n"
 				f"{file_names}\n\n"
-				"**Draft preview** is ready — open it to check the layout against your data.\n\n"
-				"Adjust style below, refine in chat, then **Build app** when the plan looks right."
+				"**Draft preview** is ready — open it to check the scaffold against your data.\n\n"
+				"**How this works**\n"
+				"1. Tweak **Style** chips or ask about the plan in chat (no code edits yet)\n"
+				"2. **Build app** — the builder customizes the draft\n"
+				"3. After that, **chat drives the builder** — each change request edits the app\n"
+				"4. **Ship** when you want an approved share link"
 			),
 			source="template",
 		)
@@ -277,8 +281,8 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	return state
 
 
-def deepen_with_prime(project_id: str) -> ProjectState:
-	"""Build mode: customize existing draft (or full build if none)."""
+def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> ProjectState:
+	"""Agent customize. reset_scaffold=True for Build/Rebuild; False preserves agent edits."""
 	state = load_state(project_id)
 	pid = project_id
 	rows = _load_rows(pid)
@@ -291,8 +295,12 @@ def deepen_with_prime(project_id: str) -> ProjectState:
 	state.phase = "build"
 	save_state(state)
 	emit_event(pid, "phase", label="Building app", status="running")
-	# Re-sync craft template so Builds start from a polished base (not a broken draft)
-	app_dir = sync_app(pid, state.app_config, rows)
+	if reset_scaffold:
+		# Fresh craft template, then agent customizes
+		app_dir = sync_app(pid, state.app_config, rows)
+	else:
+		# Keep agent work — only refresh data/config/tokens
+		app_dir = refresh_app_data(pid, state.app_config, rows)
 	write_brief(pid, state.design_brief)
 	apply_brief_css_tokens(app_dir, state.design_brief)
 
@@ -314,18 +322,24 @@ def deepen_with_prime(project_id: str) -> ProjectState:
 		"steps": build_meta.get("events") or 0,
 	}
 	honesty = {
-		"prime": "Build finished — layout and style updated. Preview refreshed.",
-		"heuristic": "Styles from your brief were applied, but the layout was not rewritten. Preview refreshed — retry **Build app** for a deeper pass.",
-		"error": "Build did not finish. Styles may still be applied — retry **Build app**.",
+		"prime": (
+			"**Built.** The builder customized your draft.\n\n"
+			"From here, **chat drives the builder** — ask for layout, viz, or copy changes. "
+			"When it looks right, open Preview → **Ship**."
+		),
+		"heuristic": (
+			"Styles from your brief were applied, but the builder did **not** rewrite the layout. "
+			"Retry **Build app**, or describe the change in chat after a successful build."
+		),
+		"error": "Build did not finish. Draft preview kept — retry **Build app**.",
 		"template": "Draft unchanged.",
 	}.get(source, "Build finished.")
 
-	# If style_only, chip stays Draft-ish but message is clear
 	if build_meta.get("style_only") and source != "error":
 		source = "heuristic"
 		honesty = (
 			"Styles applied from your Style chips. "
-			"The builder did not rewrite the layout this time — retry **Build app**."
+			"The builder did not rewrite the layout — retry **Build app**."
 		)
 
 	state.prime["source"] = source
@@ -396,14 +410,14 @@ def approve_and_build(project_id: str) -> ProjectState:
 	return deepen_with_prime(project_id)
 
 
-def start_approve_build(project_id: str) -> dict[str, Any]:
-	"""Non-blocking: leave plan → build mode (or full build if no draft)."""
+def start_approve_build(project_id: str, *, reset_scaffold: bool = True) -> dict[str, Any]:
+	"""Non-blocking Build app / Rebuild from draft → agent customize."""
 	approve_plan(project_id)
 
 	def target(_job: JobRecord) -> None:
 		cur = load_state(project_id)
 		if cur.deploy_url and (project_dir(project_id) / "app").exists() and _load_rows(project_id):
-			deepen_with_prime(project_id)
+			deepen_with_prime(project_id, reset_scaffold=reset_scaffold)
 		else:
 			build_project(cur, run_prime=True)
 
@@ -425,32 +439,33 @@ def start_follow_up(project_id: str, message: str) -> dict[str, Any]:
 		start_plan_chat(project_id, message)
 		return project_snapshot(project_id)
 
-	if is_ui_change_request(message):
-		state.chat.append(ChatMessage(role="user", content=message, source="system"))
-		state.design_brief = merge_notes_from_message(state.design_brief, message)
-		write_brief(project_id, state.design_brief)
-		save_state(state)
+	# Default after Build: chat drives the agent. Pure questions → ask only.
+	if is_question_only(message):
+		_follow_up_qa(project_id, message)
+		return project_snapshot(project_id)
 
-		def target(_job: JobRecord) -> None:
-			_iterate_ui(project_id, message)
+	state.chat.append(ChatMessage(role="user", content=message, source="system"))
+	state.design_brief = merge_notes_from_message(state.design_brief, message)
+	write_brief(project_id, state.design_brief)
+	save_state(state)
 
-		try:
-			job = start_job(project_id, "iterate_run", label="Iterating app", target=target)
-		except JobConflictError as exc:
-			raise ValueError(str(exc)) from exc
-		return {"job_id": job.id, "status": "running", **project_snapshot(project_id)}
+	def target(_job: JobRecord) -> None:
+		_iterate_ui(project_id, message)
 
-	# Q&A — sync short ask
-	_follow_up_qa(project_id, message)
-	return project_snapshot(project_id)
+	try:
+		job = start_job(project_id, "iterate_run", label="Updating app", target=target)
+	except JobConflictError as exc:
+		raise ValueError(str(exc)) from exc
+	return {"job_id": job.id, "status": "running", **project_snapshot(project_id)}
 
 
 def _iterate_ui(project_id: str, message: str) -> None:
 	state = load_state(project_id)
 	save_checkpoint(state, f"Before: {message[:40]}")
-	emit_event(project_id, "phase", label="Processing UI iterate", detail=message[:120], status="running")
+	emit_event(project_id, "phase", label="Builder updating app", detail=message[:120], status="running")
 	rows = _load_rows(project_id)
-	app_dir = project_dir(project_id) / "app"
+	# Preserve prior agent work — never wipe scaffold on chat iterate
+	app_dir = refresh_app_data(project_id, state.app_config, rows)
 	write_brief(project_id, state.design_brief)
 	apply_brief_css_tokens(app_dir, state.design_brief)
 
@@ -463,11 +478,6 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		kind="iterate_run",
 	)
 	source = meta.get("source") or ("prime" if meta.get("ok") else "heuristic")
-	if not meta.get("used") or not meta.get("ok"):
-		apply_follow_up(state, message)
-		source = "heuristic" if not meta.get("used") else source
-		state = load_state(project_id)
-
 	state = load_state(project_id)
 	state.app_config = infer_app_config(message, state.app_config)
 	state.prime = {
@@ -475,9 +485,29 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		"source": source,
 		"last_error": meta.get("error"),
 		"status": "ok" if meta.get("ok") or not meta.get("used") else "error",
+		"style_only": bool(meta.get("style_only")),
 	}
-	honesty = "App updated." if source == "prime" else "Applied a quick refine — open Preview."
-	state.chat.append(ChatMessage(role="assistant", content=f"{honesty}", source=source))
+
+	if meta.get("ok") and meta.get("files_changed") and not meta.get("style_only"):
+		honesty = "**Updated.** Preview refreshed — keep chatting to drive the builder, or **Ship** when ready."
+		source = "prime"
+	elif meta.get("style_only") or (meta.get("files_changed") and not meta.get("ok")):
+		honesty = (
+			"Applied style tokens from your note, but the builder did **not** finish editing the layout. "
+			"Rephrase and send again."
+		)
+		source = "heuristic"
+	elif not meta.get("used"):
+		honesty = "Builder is offline — could not edit the app. Try again when the agent is available."
+		source = "error"
+	else:
+		honesty = (
+			"Builder did not finish this change. Last good preview kept — try a clearer instruction."
+		)
+		source = meta.get("source") or "error"
+
+	state.prime["source"] = source
+	state.chat.append(ChatMessage(role="assistant", content=honesty, source=source))
 	state.status = "updating"
 	save_state(state)
 	url = start_preview(state, rows, app_dir=app_dir)
@@ -497,13 +527,18 @@ def _follow_up_qa(project_id: str, message: str) -> ProjectState:
 	reply = prime_follow_up(project_dir(project_id), state, message, summary, project_id=project_id)
 	if reply:
 		state.chat.append(ChatMessage(role="assistant", content=reply, source="prime"))
-		state.prime["source"] = "prime"
+		state.prime["source"] = state.prime.get("source") or "prime"
 	else:
-		apply_follow_up(state, message)
-		state = load_state(project_id)
-		if state.chat and state.chat[-1].role == "assistant":
-			state.chat[-1].source = "heuristic"
-		state.prime["source"] = "heuristic"
+		state.chat.append(
+			ChatMessage(
+				role="assistant",
+				content=(
+					"I can answer questions here without editing the app. "
+					"To change the UI, send an instruction (e.g. “make the KPI strip denser”)."
+				),
+				source="system",
+			)
+		)
 	emit_event(project_id, "think", label="Follow-up answered", status="done")
 	save_state(state)
 	return state
@@ -511,14 +546,17 @@ def _follow_up_qa(project_id: str, message: str) -> ProjectState:
 
 def _follow_up_impl(project_id: str, message: str) -> ProjectState:
 	state = load_state(project_id)
-	if is_ui_change_request(message):
-		state.chat.append(ChatMessage(role="user", content=message, source="system"))
-		state.design_brief = merge_notes_from_message(state.design_brief, message)
-		write_brief(project_id, state.design_brief)
-		save_state(state)
-		_iterate_ui(project_id, message)
+	if state.phase == "plan":
+		start_plan_chat(project_id, message)
 		return load_state(project_id)
-	return _follow_up_qa(project_id, message)
+	if is_question_only(message):
+		return _follow_up_qa(project_id, message)
+	state.chat.append(ChatMessage(role="user", content=message, source="system"))
+	state.design_brief = merge_notes_from_message(state.design_brief, message)
+	write_brief(project_id, state.design_brief)
+	save_state(state)
+	_iterate_ui(project_id, message)
+	return load_state(project_id)
 
 
 def cancel_job(project_id: str) -> dict[str, Any]:
@@ -562,6 +600,21 @@ def approve_deploy(project_id: str) -> ProjectState:
 		state.deploy_url = preview_path(project_id)
 	elif not state.deploy_url or "127.0.0.1" in str(state.deploy_url):
 		state.deploy_url = preview_path(project_id)
+
+	path = state.deploy_url or preview_path(project_id)
+	state.chat.append(
+		ChatMessage(
+			role="assistant",
+			content=(
+				"## Shipped\n\n"
+				"This build is **approved** for your team.\n\n"
+				f"**Share path:** `{path}`\n\n"
+				"Open **Preview** → use the link control to copy the full URL. "
+				"You can keep chatting — the builder will keep iterating on this project."
+			),
+			source="system",
+		)
+	)
 	save_state(state)
 	return state
 

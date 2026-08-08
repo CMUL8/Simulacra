@@ -2110,6 +2110,13 @@ body {
   flex-direction: column;
   gap: 10px;
 }
+.agent-loop-hint {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
 
 .policy-whisper {
   margin: 0;

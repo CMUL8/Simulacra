@@ -27,6 +27,16 @@ def sync_app(project_id: str, config: AppConfig, data_rows: list[dict]) -> Path:
 	elif not (app_dir / "package.json").exists():
 		raise FileNotFoundError(f"Template missing: {TEMPLATE_APP}")
 
+	return refresh_app_data(project_id, config, data_rows)
+
+
+def refresh_app_data(project_id: str, config: AppConfig, data_rows: list[dict]) -> Path:
+	"""Update public data/config/brief without wiping agent edits to src/."""
+	root = project_dir(project_id)
+	app_dir = root / "app"
+	if not (app_dir / "package.json").exists():
+		return sync_app(project_id, config, data_rows)
+
 	(app_dir / "public" / "data.json").parent.mkdir(parents=True, exist_ok=True)
 	(app_dir / "public" / "data.json").write_text(json.dumps(data_rows, indent=2))
 	(app_dir / "public" / "analytics.json").write_text(

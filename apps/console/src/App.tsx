@@ -566,6 +566,7 @@ export default function App({
           onInput={setInput}
           onSend={mode === "plan" ? handlePlanSend : handleSend}
           onApprove={handleApprove}
+          onRebuild={handleApprove}
           onCancel={running ? handleCancel : undefined}
           onOpenPreview={() => setPreviewOpen(true)}
           onGovernance={() => openAccount("account")}

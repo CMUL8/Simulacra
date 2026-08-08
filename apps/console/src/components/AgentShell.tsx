@@ -26,6 +26,7 @@ type Props = {
   onInput: (v: string) => void;
   onSend: () => void;
   onApprove?: () => void;
+  onRebuild?: () => void;
   onCancel?: () => void;
   onOpenPreview: () => void;
   onGovernance: () => void;
@@ -106,7 +107,7 @@ function statusChip(
   project: Snapshot["project"],
   source?: string | null,
 ): { text: string; cls: string } | null {
-  if (project.deployed) return { text: "Deployed", cls: "source-prime" };
+  if (project.deployed) return { text: "Shipped", cls: "source-prime" };
   if (source === "prime") return { text: "Built", cls: "source-prime" };
   if (source === "cancelled") return { text: "Stopped", cls: "source-error" };
   if (source === "timeout" || source === "error") return { text: "Retry", cls: "source-error" };
@@ -173,7 +174,7 @@ function PlanSection({
           <Globe size={14} />
           {hasPreview ? "Open draft preview" : "Preparing draft…"}
         </button>
-        <span className="plan-section-hint">Then Build app when ready</span>
+        <span className="plan-section-hint">Then Build app — chat drives the builder after that</span>
       </div>
     </div>
   );
@@ -221,6 +222,7 @@ export function AgentShell({
   onInput,
   onSend,
   onApprove,
+  onRebuild,
   onCancel,
   onOpenPreview,
   onGovernance,
@@ -237,9 +239,10 @@ export function AgentShell({
     jobKind === "bootstrap" || (isPlan && waitingForOpen)
       ? "Preparing plan & draft…"
       : jobKind === "build_run"
-        ? "Building app…"
-        : "Working…";
-  const ctaLabel = isPlan ? "Build app" : hasPreview ? "Rebuild" : "Build app";
+        ? "Builder customizing app…"
+        : jobKind === "iterate_run"
+          ? "Builder updating app…"
+          : "Working…";
   const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
   const stage = statusChip(project, lastAssistant?.source ?? project.prime?.source);
   const showStyleBar = Boolean(designBrief && onSaveDesignBrief);
@@ -247,6 +250,11 @@ export function AgentShell({
   const showStandalonePlan =
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
   const liveTraces = traces.some((e) => e.status === "running");
+  const loopHint = isPlan
+    ? "Plan mode — chat refines the plan. Build app hands the draft to the builder."
+    : project.deployed
+      ? "Shipped — keep chatting to iterate; Preview has the share link."
+      : "Agent mode — each change request drives the builder. Questions ending in ? are Q&A only.";
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -280,10 +288,21 @@ export function AgentShell({
           <button type="button" className="topbar-link" onClick={onGovernance} title="Account, policy & admin">
             Account
           </button>
-          {onApprove && (
+          {isPlan && onApprove && (
             <button type="button" className="approve-btn" disabled={busy} onClick={onApprove}>
-              {ctaLabel}
+              Build app
               <ArrowRight size={14} />
+            </button>
+          )}
+          {!isPlan && onRebuild && (
+            <button
+              type="button"
+              className="ghost-btn quiet"
+              disabled={busy}
+              onClick={onRebuild}
+              title="Reset to scaffold and run the builder again"
+            >
+              Rebuild from draft
             </button>
           )}
         </div>
@@ -317,6 +336,7 @@ export function AgentShell({
         </div>
 
         <div className="agent-composer-wrap">
+          <p className="agent-loop-hint">{loopHint}</p>
           {showStyleBar && (
             <DesignBriefForm value={designBrief!} onSave={onSaveDesignBrief!} disabled={false} />
           )}
@@ -328,9 +348,13 @@ export function AgentShell({
             disabled={project.status === "failed"}
             busy={busy}
             files={files}
-            placeholder={isPlan ? "Refine the plan…" : "Ask for changes…"}
+            placeholder={
+              isPlan
+                ? "Ask about the plan or style…"
+                : "Tell the builder what to change…"
+            }
             submitLabel="Send"
-            modeTag={isPlan ? "Plan" : "Build"}
+            modeTag={isPlan ? "Plan" : "Agent"}
           />
         </div>
       </div>

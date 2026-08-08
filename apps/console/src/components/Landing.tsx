@@ -10,7 +10,7 @@ const PILLS = [
 ];
 
 function phaseLabel(p: Project): string {
-  if (p.deployed) return "Deployed";
+  if (p.deployed) return "Shipped";
   if (p.phase === "ready") return "Built";
   if (p.phase === "plan") return "Draft";
   return p.status || p.phase;

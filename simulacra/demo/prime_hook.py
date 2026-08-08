@@ -258,9 +258,12 @@ def prime_meta_dict(meta: PrimeBuildMeta) -> dict[str, Any]:
 	return out
 
 
-def is_ui_change_request(message: str) -> bool:
-	lower = message.lower()
-	ui_verbs = (
+def is_question_only(message: str) -> bool:
+	"""True when the user is asking, not directing the builder."""
+	lower = message.lower().strip()
+	if not lower:
+		return False
+	change_verbs = (
 		"add",
 		"remove",
 		"change",
@@ -268,6 +271,10 @@ def is_ui_change_request(message: str) -> bool:
 		"update",
 		"redesign",
 		"restyle",
+		"fix",
+		"improve",
+		"rebuild",
+		"replace",
 		"filter",
 		"layout",
 		"color",
@@ -287,10 +294,19 @@ def is_ui_change_request(message: str) -> bool:
 		"smaller",
 		"font",
 		"accent",
+		"rename",
+		"please edit",
+		"please change",
 	)
-	question = lower.strip().endswith("?") or lower.startswith(
-		("what", "why", "how many", "which", "who", "explain", "tell me")
-	)
-	if question and not any(v in lower for v in ("add", "change", "make", "update", "show")):
+	if any(v in lower for v in change_verbs):
 		return False
-	return any(v in lower for v in ui_verbs)
+	if lower.endswith("?"):
+		return True
+	return lower.startswith(
+		("what", "why", "how many", "how much", "which", "who", "explain", "tell me", "can you explain")
+	)
+
+
+def is_ui_change_request(message: str) -> bool:
+	"""Backward-compatible alias — prefer is_question_only inverted for routing."""
+	return not is_question_only(message)
