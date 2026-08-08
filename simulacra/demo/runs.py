@@ -145,12 +145,25 @@ def state_path(project_id: str) -> Path:
 
 
 def load_state(project_id: str) -> ProjectState:
-	return ProjectState.from_dict(json.loads(state_path(project_id).read_text()))
+	path = state_path(project_id)
+	raw = path.read_text().strip() if path.exists() else ""
+	if not raw:
+		raise FileNotFoundError(f"Empty or missing state for {project_id}")
+	try:
+		return ProjectState.from_dict(json.loads(raw))
+	except json.JSONDecodeError as exc:
+		raise ValueError(f"Corrupt state.json for {project_id}: {exc}") from exc
 
 
 def save_state(state: ProjectState) -> None:
+	"""Atomic write so concurrent readers never see empty/partial JSON."""
 	state.updated_at = datetime.now(UTC).isoformat()
-	state_path(state.id).write_text(json.dumps(state.to_dict(), indent=2))
+	path = state_path(state.id)
+	path.parent.mkdir(parents=True, exist_ok=True)
+	payload = json.dumps(state.to_dict(), indent=2)
+	tmp = path.with_suffix(".json.tmp")
+	tmp.write_text(payload)
+	tmp.replace(path)
 
 
 def create_project(

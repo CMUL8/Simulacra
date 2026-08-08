@@ -47,8 +47,9 @@ Create → Scaffold (draft) → Build app (agent customizes once from draft)
 
 | State | Chip |
 |-------|------|
-| Scaffold / plan / agent missed | **Draft** |
-| Agent customized successfully | **Built** |
+| Scaffold / plan / agent missed (styles only) | **Draft** |
+| Agent customized successfully (`source=prime`) | **Built** |
+| Craft fallback personalized layout (`source=craft`) | **Built** — chat says craft applied because agent wrote no files |
 | User shipped | **Shipped** |
 | Stopped / error | **Stopped** / **Retry** |
 
@@ -66,7 +67,8 @@ Create → Scaffold (draft) → Build app (agent customizes once from draft)
 
 | Case | Behavior |
 |------|----------|
-| Agent off / fail on Build | Draft kept; chip stays Draft; honest message; retry Build |
+| Agent off / fail on Build | Craft personalizer rewrites `App.tsx` from brief when possible → **Built** (`craft`); else Draft + retry |
+| Agent narrates, zero App.tsx diffs | One steered retry → then craft fallback (never claim prime) |
 | Agent fail on iterate | Last good preview kept; honest “builder didn’t finish”; no fake heuristic success |
 | Ship before gates pass | Blocked |
 | Ship then chat iterate | Allowed — agent keeps editing; still Shipped until they care |

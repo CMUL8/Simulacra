@@ -209,6 +209,8 @@ def _scaffold_and_preview(
 			"last_error": build_meta.get("error"),
 			"status": "ok" if build_meta.get("ok") or not build_meta.get("used") else "error",
 			"steps": build_meta.get("events") or 0,
+			"style_only": bool(build_meta.get("style_only")),
+			"layout_customized": bool(build_meta.get("layout_customized")),
 		}
 		emit_event(pid, "phase", label="Building app", status="done")
 	else:
@@ -327,6 +329,11 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 			"From here, **chat drives the builder** — ask for layout, viz, or copy changes. "
 			"When it looks right, open Preview → **Ship**."
 		),
+		"craft": (
+			"**Built.** Layout was personalized from your Style brief "
+			"(the agent did not finish file edits, so craft fallback applied).\n\n"
+			"Open **Preview**, then chat to refine — or **Ship** when ready."
+		),
 		"heuristic": (
 			"Styles from your brief were applied, but the builder did **not** rewrite the layout. "
 			"Retry **Build app**, or describe the change in chat after a successful build."
@@ -335,7 +342,7 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 		"template": "Draft unchanged.",
 	}.get(source, "Build finished.")
 
-	if build_meta.get("style_only") and source != "error":
+	if build_meta.get("style_only") and source not in ("error", "craft", "prime"):
 		source = "heuristic"
 		honesty = (
 			"Styles applied from your Style chips. "
@@ -344,6 +351,7 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 
 	state.prime["source"] = source
 	state.prime["style_only"] = bool(build_meta.get("style_only"))
+	state.prime["layout_customized"] = bool(build_meta.get("layout_customized"))
 
 	emit_event(pid, "phase", label="Publishing preview", status="running")
 	url = start_preview(state, rows, app_dir=app_dir)
@@ -490,7 +498,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 
 	if meta.get("ok") and meta.get("files_changed") and not meta.get("style_only"):
 		honesty = "**Updated.** Preview refreshed — keep chatting to drive the builder, or **Ship** when ready."
-		source = "prime"
+		source = "prime" if meta.get("source") == "prime" else (meta.get("source") or "craft")
 	elif meta.get("style_only") or (meta.get("files_changed") and not meta.get("ok")):
 		honesty = (
 			"Applied style tokens from your note, but the builder did **not** finish editing the layout. "
@@ -507,6 +515,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		source = meta.get("source") or "error"
 
 	state.prime["source"] = source
+	state.prime["layout_customized"] = bool(meta.get("layout_customized"))
 	state.chat.append(ChatMessage(role="assistant", content=honesty, source=source))
 	state.status = "updating"
 	save_state(state)
@@ -628,7 +637,7 @@ def rollback_project(project_id: str, checkpoint_id: str | None = None) -> Proje
 	return state
 
 
-def approve_deploy(project_id: str) -> ProjectState:
+def approve_deploy(project_id: str, *, public_base: str | None = None) -> ProjectState:
 	import os
 
 	state = load_state(project_id)
@@ -645,7 +654,11 @@ def approve_deploy(project_id: str) -> ProjectState:
 		state.deploy_url = preview_path(project_id)
 
 	path = state.deploy_url or preview_path(project_id)
-	public = (os.environ.get("SIMULACRA_PUBLIC_BASE") or os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+	public = (
+		(public_base or "").strip()
+		or (os.environ.get("SIMULACRA_PUBLIC_BASE") or "").strip()
+		or (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+	)
 	if public and not public.startswith("http"):
 		public = f"https://{public}"
 	share = f"{public.rstrip('/')}{path}" if public else path

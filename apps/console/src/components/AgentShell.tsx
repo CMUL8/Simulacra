@@ -48,9 +48,19 @@ function inlineFormat(text: string) {
   return html;
 }
 
+/** Make Ship share paths absolute when chat still has a relative preview URL. */
+function absolutizeShareUrls(text: string): string {
+  if (typeof window === "undefined") return text;
+  const origin = window.location.origin;
+  return text.replace(
+    /(\*\*Share URL:\*\*[^\n`]*`?)(\/projects\/[^\s`]+)/g,
+    (_m, prefix: string, path: string) => `${prefix}${origin}${path}`,
+  );
+}
+
 /** Document-style markdown — paragraphs, headings, lists (Cursor transcript feel). */
 function MarkdownBody({ text }: { text: string }) {
-  const blocks = text.replace(/\r\n/g, "\n").trim().split(/\n{2,}/);
+  const blocks = absolutizeShareUrls(text).replace(/\r\n/g, "\n").trim().split(/\n{2,}/);
   const nodes: ReactNode[] = [];
 
   blocks.forEach((block, bi) => {
@@ -108,7 +118,8 @@ function statusChip(
   source?: string | null,
 ): { text: string; cls: string } | null {
   if (project.deployed) return { text: "Shipped", cls: "source-prime" };
-  if (source === "prime") return { text: "Built", cls: "source-prime" };
+  // Agent edit OR craft personalizer (layout actually changed)
+  if (source === "prime" || source === "craft") return { text: "Built", cls: "source-prime" };
   if (source === "cancelled") return { text: "Stopped", cls: "source-error" };
   if (source === "timeout" || source === "error") return { text: "Retry", cls: "source-error" };
   // Plan / template / heuristic preview — not shipped

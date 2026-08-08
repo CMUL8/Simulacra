@@ -22,7 +22,7 @@ class TenantPolicy:
 	max_concurrent_jobs: int = 2
 	max_projects: int = 50
 	max_jobs_per_day: int = 100
-	allowed_models: list[str] = field(default_factory=lambda: ["anthropic/claude-3-haiku"])
+	allowed_models: list[str] = field(default_factory=lambda: ["deepseek/deepseek-v4-pro"])
 	retention_days: int = 30
 	require_approve: bool = True
 	sso_enforced: bool = False
@@ -55,7 +55,7 @@ class Tenant:
 				max_concurrent_jobs=int(pol.get("max_concurrent_jobs", 2)),
 				max_projects=int(pol.get("max_projects", 50)),
 				max_jobs_per_day=int(pol.get("max_jobs_per_day", 100)),
-				allowed_models=list(pol.get("allowed_models") or ["anthropic/claude-3-haiku"]),
+				allowed_models=list(pol.get("allowed_models") or ["deepseek/deepseek-v4-pro"]),
 				retention_days=int(pol.get("retention_days", 30)),
 				require_approve=bool(pol.get("require_approve", True)),
 				sso_enforced=bool(pol.get("sso_enforced", False)),
@@ -80,12 +80,31 @@ def _ensure_store() -> dict[str, Any]:
 		}
 		TENANTS_PATH.write_text(json.dumps(store, indent=2))
 		return store
-	return json.loads(TENANTS_PATH.read_text())
+	raw = TENANTS_PATH.read_text().strip()
+	if not raw:
+		# Intermittent empty read during concurrent create — recover store
+		tid = default_tenant_id()
+		store = {
+			"version": 1,
+			"tenants": [
+				Tenant(id=tid, name="Default", notes="Built-in tenant").to_dict(),
+			],
+		}
+		TENANTS_PATH.write_text(json.dumps(store, indent=2))
+		return store
+	try:
+		return json.loads(raw)
+	except json.JSONDecodeError:
+		# Corrupt / partial write — do not wipe existing tenants blindly
+		raise ValueError("tenants.json is corrupt; fix or restore before creating projects")
 
 
 def _save_store(store: dict[str, Any]) -> None:
 	TENANTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-	TENANTS_PATH.write_text(json.dumps(store, indent=2))
+	payload = json.dumps(store, indent=2)
+	tmp = TENANTS_PATH.with_suffix(".json.tmp")
+	tmp.write_text(payload)
+	tmp.replace(TENANTS_PATH)
 
 
 def _ensure_default_pg() -> None:

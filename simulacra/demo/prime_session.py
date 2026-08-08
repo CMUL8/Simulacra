@@ -17,6 +17,20 @@ from .runs import load_state, project_dir, save_state
 
 log = logging.getLogger("simulacra.prime_session")
 
+_WRITE_TOOL_HINTS = ("write", "edit", "replace", "patch", "create_file", "apply_diff", "str_replace")
+
+
+def _count_write_tools(events: list[dict[str, Any]]) -> int:
+	n = 0
+	for e in events:
+		kind = e.get("type") or ""
+		if kind not in ("tool_execution_end", "tool_execution_start", "tool_use"):
+			continue
+		tool = str(e.get("tool") or e.get("name") or e.get("toolName") or "").lower()
+		if any(h in tool for h in _WRITE_TOOL_HINTS):
+			n += 1
+	return n
+
 
 def _prime_enabled() -> bool:
 	from .prime_hook import prime_enabled
@@ -193,6 +207,9 @@ async def _run_async(
 		check_bounds(project_id)
 		result = await agent.run(prompt, RunOptions(timeout=timeout, collect_events=True))
 		meta["events"] = len(result.events)
+		meta["write_tools"] = _count_write_tools(result.events)
+		meta["tool_calls"] = len(result.tool_calls)
+		# Run completed — durable success is decided by builder via App.tsx fingerprint
 		meta["ok"] = True
 		meta["reply"] = (result.text or "")[:500]
 		_save_prime_meta(project_id, meta)

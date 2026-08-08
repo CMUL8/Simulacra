@@ -731,7 +731,11 @@ def post_deploy(
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:deploy"))],
 ) -> dict:
 	try:
-		approve_deploy(project_id)
+		# Prefer forwarded host (Railway / reverse proxy) so Ship chat is absolute
+		proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+		host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+		base = f"{proto}://{host}".rstrip("/") if host else str(request.base_url).rstrip("/")
+		approve_deploy(project_id, public_base=base)
 		audit_request(request, ctx, "project.deploy", project_id=project_id)
 		return project_snapshot(project_id)
 	except ValueError as exc:

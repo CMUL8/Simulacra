@@ -33,9 +33,17 @@ def prime_enabled() -> bool:
 
 def prime_kwargs() -> dict[str, Any]:
 	load_dotenv()
+	# OpenRouter + DeepSeek V4 Pro (coding/agent default).
+	# Override with SIMULACRA_PRIME_MODEL / SIMULACRA_BUILD_MODEL if needed.
+	# Auth is OPENROUTER_API_KEY — not the model id.
+	model = (
+		os.environ.get("SIMULACRA_BUILD_MODEL")
+		or os.environ.get("SIMULACRA_PRIME_MODEL")
+		or "deepseek/deepseek-v4-pro"
+	)
 	return {
 		"provider": os.environ.get("SIMULACRA_PRIME_PROVIDER", "openrouter"),
-		"model": os.environ.get("SIMULACRA_PRIME_MODEL", "anthropic/claude-3-haiku"),
+		"model": model,
 	}
 
 

@@ -32,6 +32,9 @@ COPY --from=console-build /src/apps/console/dist ./apps/console/dist
 RUN pip install --no-cache-dir -e ".[demo]"
 ENV SIMULACRA_AUTH_REQUIRED=1
 ENV SIMULACRA_USE_PRIME=1
+# OpenRouter model id (auth via OPENROUTER_API_KEY)
+ENV SIMULACRA_PRIME_PROVIDER=openrouter
+ENV SIMULACRA_PRIME_MODEL=deepseek/deepseek-v4-pro
 ENV SIMULACRA_SANDBOX=worktree
 ENV PYTHONPATH=/app
 ENV PORT=8000

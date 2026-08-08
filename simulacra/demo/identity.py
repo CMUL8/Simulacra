@@ -116,12 +116,23 @@ def _load(path: Path, default: Any) -> Any:
 	if not path.exists():
 		path.write_text(json.dumps(default, indent=2))
 		return default
-	return json.loads(path.read_text())
+	raw = path.read_text().strip()
+	if not raw:
+		path.write_text(json.dumps(default, indent=2))
+		return default
+	try:
+		return json.loads(raw)
+	except json.JSONDecodeError:
+		# Concurrent truncate — recover default rather than 500 the request
+		return default
 
 
 def _save(path: Path, data: Any) -> None:
 	DATA_DIR.mkdir(parents=True, exist_ok=True)
-	path.write_text(json.dumps(data, indent=2))
+	payload = json.dumps(data, indent=2)
+	tmp = path.with_suffix(path.suffix + ".tmp")
+	tmp.write_text(payload)
+	tmp.replace(path)
 
 
 def _users() -> dict[str, Any]:
