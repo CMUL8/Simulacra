@@ -1,4 +1,4 @@
-import { Building2, Shield } from "lucide-react";
+import { Building2, Shield, UserRound } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_DESIGN_BRIEF,
@@ -18,6 +18,7 @@ import {
   sendChat,
   sendPlanChat,
   setTenantId,
+  type AuthSession,
   type AuthUser,
   type DataRoomFile,
   type DesignBrief,
@@ -29,8 +30,8 @@ import { AdminPage } from "./components/AdminPage";
 import { AgentShell } from "./components/AgentShell";
 import { GovernancePage } from "./components/GovernancePage";
 import { Landing } from "./components/Landing";
-import { LoginPage } from "./components/LoginPage";
 import { PreviewDrawer } from "./components/PreviewDrawer";
+import { ProfileManageModal } from "./components/ProfileManageModal";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { useEventStream } from "./hooks/useEventStream";
@@ -70,6 +71,7 @@ export default function App({
   const [error, setError] = useState<string | null>(null);
   const [apiOk, setApiOk] = useState(true);
   const [govReturn, setGovReturn] = useState<AppMode>("landing");
+  const [profileOpen, setProfileOpen] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const projectId = snapshot?.project.id ?? null;
@@ -171,26 +173,69 @@ export default function App({
     }
   }, [traces, projectId, stopPolling]);
 
+  function handleSignOut() {
+    const clerkOut = (window as unknown as { __simulacraClerkSignOut?: () => Promise<void> })
+      .__simulacraClerkSignOut;
+    clearAuth();
+    setAuthed(false);
+    setUser(null);
+    setTenants([]);
+    setProfileOpen(false);
+    if (clerkOut) void clerkOut();
+  }
+
+  function handleAuthed(session: AuthSession) {
+    setUser(session.user);
+    setTenants(session.tenants || []);
+    setAuthed(true);
+    setProfileOpen(false);
+  }
+
   if (authed === null) {
     return (
-      <div className="login-page">
-        <div className="login-card">Loading…</div>
+      <div className="landing">
+        <div className="landing-bg" />
+        <div className="landing-content">
+          <p className="brand-mark">
+            Simu<em>lacra</em>
+          </p>
+          <p className="landing-sub">Loading…</p>
+        </div>
       </div>
     );
   }
 
   if (!authed) {
     return (
-      <LoginPage
-        clerkEnabled={clerkEnabled}
-        clerkAvailable={clerkAvailable}
-        onUseClerk={onUseClerk}
-        onAuthed={(session) => {
-          setUser(session.user);
-          setTenants(session.tenants || []);
-          setAuthed(true);
-        }}
-      />
+      <>
+        <Landing
+          goal={goal}
+          prompt={prompt}
+          busy
+          files={fixtureFiles}
+          dataAttached={dataAttached}
+          error={null}
+          designBrief={designBrief}
+          onGoal={setGoal}
+          onPrompt={setPrompt}
+          onDesignBrief={setDesignBrief}
+          onToggleData={() => setDataAttached((v) => !v)}
+          onBuild={() => undefined}
+          onDismissError={() => undefined}
+        />
+        <ProfileManageModal
+          open
+          locked
+          user={null}
+          tenants={[]}
+          clerkEnabled={clerkEnabled}
+          clerkAvailable={clerkAvailable}
+          onUseClerk={onUseClerk}
+          onAuthed={handleAuthed}
+          onSignOut={handleSignOut}
+          initialTab="auth"
+        />
+      </>
     );
   }
 
@@ -390,7 +435,6 @@ export default function App({
               ))}
             </select>
           )}
-          <span className="user-chip">{user?.email}</span>
           <button type="button" className="gov-fab" onClick={() => openGovernance("landing")}>
             <Shield size={14} />
             Governance
@@ -406,19 +450,8 @@ export default function App({
             <Building2 size={14} />
             Admin
           </button>
-          <button
-            type="button"
-            className="gov-fab"
-            onClick={() => {
-              const clerkOut = (window as unknown as { __simulacraClerkSignOut?: () => Promise<void> })
-                .__simulacraClerkSignOut;
-              clearAuth();
-              setAuthed(false);
-              setUser(null);
-              if (clerkOut) void clerkOut();
-            }}
-          >
-            Sign out
+          <button type="button" className="avatar-fab" onClick={() => setProfileOpen(true)} title={user?.email}>
+            <UserRound size={16} />
           </button>
         </div>
         <Landing
@@ -435,6 +468,17 @@ export default function App({
           onToggleData={() => setDataAttached((v) => !v)}
           onBuild={handleStartPlanning}
           onDismissError={() => setError(null)}
+        />
+        <ProfileManageModal
+          open={profileOpen}
+          onClose={() => setProfileOpen(false)}
+          user={user}
+          tenants={tenants}
+          clerkEnabled={clerkEnabled}
+          clerkAvailable={clerkAvailable}
+          onUseClerk={onUseClerk}
+          onAuthed={handleAuthed}
+          onSignOut={handleSignOut}
         />
       </>
     );
