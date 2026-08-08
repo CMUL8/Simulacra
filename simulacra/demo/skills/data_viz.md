@@ -13,9 +13,17 @@ Use this when customizing Simulacra apps. The goal is not a generic dashboard �
 
 - Prefer **position + length** (bars, ranked lists) over pie charts for comparisons.
 - Encode risk with a **single hue family** (e.g. red→amber→green) on a dark or light ground — never neon purple glow.
-- Dense ops: hairline borders, tight padding, mono for IDs/scores; Editorial: more whitespace, stronger display type.
-- No emoji. No rounded-full pill spam. Cards only when they hold an interaction.
-- Accent color from the design brief is for **focus** (selected tab, primary action, key bar) — not every border.
+- Dense ops: hairline borders, tight but even padding (≥14px inside panels), mono for IDs/scores.
+- Editorial: more whitespace, stronger display type.
+- No emoji. No rounded-full pill spam. Do not flood one KPI with a bright fill while siblings stay dark — keep the strip even; use color on the **number** or a thin left rail only.
+- Accent from the design brief is for **focus** (selected tab, primary action, key bar fill) — not every border and not a whole card background.
+
+## Contrast & tracks (non-negotiable)
+
+- `--text` must clearly contrast with `--bg` / `--panel`.
+- `--muted` must stay readable (never near-black on black).
+- `--panel-2` must **differ** from `--panel` so bar tracks and meters are visible. Same color = empty-looking charts.
+- Labels and values need breathing room — never kiss panel edges.
 
 ## Data wiring
 
@@ -25,4 +33,4 @@ Use this when customizing Simulacra apps. The goal is not a generic dashboard �
 
 ## Impress bar
 
-Before finishing, ask: would a risk lead screenshot this for a weekly review? If it still looks like a stock template, push further on typography, spacing, and the hero viz.
+Before finishing, ask: would a risk lead screenshot this for a weekly review? If risk bars look empty, theme text is illegible, or one KPI glows while the rest are dead, you are not done — edit `src/styles.css` and `src/App.tsx` until it holds up.

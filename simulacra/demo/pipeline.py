@@ -291,6 +291,8 @@ def deepen_with_prime(project_id: str) -> ProjectState:
 	state.phase = "build"
 	save_state(state)
 	emit_event(pid, "phase", label="Building app", status="running")
+	# Re-sync craft template so Builds start from a polished base (not a broken draft)
+	app_dir = sync_app(pid, state.app_config, rows)
 	write_brief(pid, state.design_brief)
 	apply_brief_css_tokens(app_dir, state.design_brief)
 

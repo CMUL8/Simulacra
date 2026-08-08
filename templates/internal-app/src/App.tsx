@@ -127,7 +127,7 @@ export default function App() {
         <main className="grid-overview">
           <section className="kpi-row">
             <Kpi label="Findings" value={k.total_findings} sub="across data room" />
-            <Kpi label="Vendors" value={k.unique_vendors} sub={`${k.critical_vendors} critical`} accent />
+            <Kpi label="Vendors" value={k.unique_vendors} sub={`${k.critical_vendors} critical`} />
             <Kpi label="High risk" value={k.high_risk} sub={`${k.medium_risk} medium · ${k.low_risk} low`} warn />
             <Kpi label="Avg score" value={k.avg_score} sub={`peak ${k.max_score}`} />
             <Kpi label="Sources" value={k.source_files} sub="files ingested" />
@@ -323,9 +323,9 @@ export default function App() {
   );
 }
 
-function Kpi({ label, value, sub, accent, warn }: { label: string; value: number; sub: string; accent?: boolean; warn?: boolean }) {
+function Kpi({ label, value, sub, warn }: { label: string; value: number; sub: string; warn?: boolean }) {
   return (
-    <div className={`kpi ${accent ? "accent" : ""} ${warn ? "warn" : ""}`}>
+    <div className={`kpi ${warn ? "warn" : ""}`}>
       <span className="kpi-label">{label}</span>
       <span className="kpi-value">{value}</span>
       <span className="kpi-sub">{sub}</span>

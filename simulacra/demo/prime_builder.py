@@ -33,15 +33,16 @@ BUILD_TASK = """You are building an internal data app. Taste and visualization a
 {viz_skill}
 
 ## Your job (all required)
-1. Read analytics.json + design brief + current App.tsx
-2. Edit `src/styles.css` so palette/tokens match the brief exactly (replace stock cyan)
-3. Edit `src/App.tsx` so layout + hero viz feel bespoke — not the stock template
-4. Update `public/config.json` title/subtitle from the brief if needed
-5. Keep valid React/TypeScript; stay in this directory
-6. Do NOT start servers or npm install
-7. Make durable file edits — narration without diffs is a failed build
+1. Read analytics.json + design brief + current App.tsx / styles.css
+2. Edit `src/styles.css` so palette tokens match the brief — including --muted, --border, --panel-2 (panel-2 MUST differ from panel so bar tracks show)
+3. Edit `src/App.tsx` so layout + hero viz feel bespoke — not stock cyan / not one loud accent KPI card
+4. Fix contrast: body text readable, theme/vendor labels not black-on-black
+5. Update `public/config.json` title/subtitle from the brief if needed
+6. Keep valid React/TypeScript; stay in this directory
+7. Do NOT start servers or npm install
+8. Make durable file edits — narration without diffs is a failed build
 
-Impress the user. If it still looks like a generic cyan dashboard, you are not done.
+Impress the user. If risk bars have empty middles, text sticks to edges, or one KPI is flood-filled, you are not done.
 """
 
 

@@ -108,8 +108,43 @@ def merge_brief(current: dict[str, Any] | None, patch: dict[str, Any] | None) ->
 	return _deep_merge(base, patch)
 
 
+def _hex_to_rgb(value: str) -> tuple[int, int, int] | None:
+	raw = value.strip().lstrip("#")
+	if len(raw) != 6:
+		return None
+	try:
+		return int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16)
+	except ValueError:
+		return None
+
+
+def _rgb_to_hex(r: int, g: int, b: int) -> str:
+	return f"#{max(0, min(255, r)):02x}{max(0, min(255, g)):02x}{max(0, min(255, b)):02x}"
+
+
+def _mix(a: str, b: str, t: float) -> str:
+	"""Mix hex color a toward b by t (0..1)."""
+	ra = _hex_to_rgb(a)
+	rb = _hex_to_rgb(b)
+	if not ra or not rb:
+		return a
+	return _rgb_to_hex(
+		int(ra[0] + (rb[0] - ra[0]) * t),
+		int(ra[1] + (rb[1] - ra[1]) * t),
+		int(ra[2] + (rb[2] - ra[2]) * t),
+	)
+
+
+def _luminance(value: str) -> float:
+	rgb = _hex_to_rgb(value)
+	if not rgb:
+		return 0.0
+	r, g, b = [c / 255.0 for c in rgb]
+	return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
 def resolve_palette(brief: dict[str, Any]) -> dict[str, str]:
-	"""Complete palette from direction + explicit overrides (accent wins)."""
+	"""Complete palette from direction + overrides, with readable derived chrome."""
 	aes = brief.get("aesthetic") or {}
 	direction = str(aes.get("direction") or "dense-ops")
 	base = dict(DIRECTION_PALETTES.get(direction) or DIRECTION_PALETTES["dense-ops"])
@@ -122,6 +157,33 @@ def resolve_palette(brief: dict[str, Any]) -> dict[str, str]:
 	for key in ("background", "surface", "text", "accent", "danger"):
 		if user.get(key):
 			base[key] = str(user[key])
+
+	bg = base["background"]
+	surface = base["surface"]
+	text = base["text"]
+	dark = _luminance(bg) < 0.45
+
+	# Never allow unreadable text-on-bg (style chips / mixed briefs)
+	if abs(_luminance(text) - _luminance(bg)) < 0.28:
+		text = "#E8EEE9" if dark else "#1C1917"
+		base["text"] = text
+
+	# panel elevated from bg; panel-2 distinct for bar tracks (CRITICAL)
+	if dark:
+		panel = _mix(bg, text, 0.07) if _luminance(surface) - _luminance(bg) < 0.02 else surface
+		panel_2 = _mix(panel, text, 0.12)
+		muted = _mix(text, bg, 0.42)
+		border = _mix(panel, text, 0.16)
+	else:
+		panel = surface if surface != bg else _mix(bg, text, 0.04)
+		panel_2 = _mix(panel, text, 0.08)
+		muted = _mix(text, bg, 0.38)
+		border = _mix(panel, text, 0.14)
+
+	base["panel"] = panel
+	base["panel_2"] = panel_2
+	base["muted"] = muted
+	base["border"] = border
 	return base
 
 
@@ -191,11 +253,13 @@ def apply_brief_css_tokens(app_dir: Path, brief: dict[str, Any]) -> bool:
 		"  /* design_brief tokens */\n"
 		f"  --bg: {palette['background']};\n"
 		f"  --surface: {palette['surface']};\n"
-		f"  --panel: {palette['surface']};\n"
-		f"  --panel-2: {palette['surface']};\n"
+		f"  --panel: {palette.get('panel', palette['surface'])};\n"
+		f"  --panel-2: {palette.get('panel_2', palette['surface'])};\n"
+		f"  --border: {palette.get('border', '#2a3430')};\n"
 		f"  --text: {palette['text']};\n"
+		f"  --muted: {palette.get('muted', '#8a9a92')};\n"
 		f"  --accent: {palette['accent']};\n"
-		f"  --accent-dim: color-mix(in srgb, {palette['accent']} 18%, transparent);\n"
+		f"  --accent-dim: color-mix(in srgb, {palette['accent']} 16%, transparent);\n"
 		f"  --danger: {palette['danger']};\n"
 		f"  --pad: {pad};\n"
 	)
@@ -233,11 +297,16 @@ def apply_brief_to_dist(app_dir: Path, brief: dict[str, Any]) -> bool:
 		for var, key in (
 			("--bg:", "background"),
 			("--surface:", "surface"),
-			("--panel:", "surface"),
+			("--panel:", "panel"),
+			("--panel-2:", "panel_2"),
+			("--border:", "border"),
 			("--text:", "text"),
+			("--muted:", "muted"),
 			("--accent:", "accent"),
 			("--danger:", "danger"),
 		):
+			if key not in palette:
+				continue
 			text = re.sub(
 				rf"({re.escape(var)}\s*)([^;]+)(;)",
 				rf"\g<1>{palette[key]}\g<3>",
@@ -306,12 +375,20 @@ def brief_to_prime_block(brief: dict[str, Any], *, delta_note: str = "") -> str:
 	aes = brief.get("aesthetic") or {}
 	ia = brief.get("information_architecture") or {}
 	lines.append(
+		"## Hard anti-patterns (instant fail)\n"
+		"- Flooding one KPI card with accent fill while siblings stay dark\n"
+		"- Setting --panel and --panel-2 to the same color (bars disappear)\n"
+		"- Dark text on dark ground or light text on light ground\n"
+		"- Labels/numbers kissing panel edges — use ≥14px padding\n"
+		"- Empty middle in risk rows (pills left, numbers right, no visible track)\n"
+		"- Pill spam, neon glow, emoji, Inter-on-white stock look\n"
 		"## Done when\n"
-		f"- CSS vars + hardcoded accents match palette ({palette.get('accent')})\n"
+		f"- CSS vars match palette incl. muted/border/panel-2 ({palette.get('accent')})\n"
 		f"- Density/chrome match ({aes.get('color_mode')}, {aes.get('density')}, chrome={aes.get('chrome')})\n"
 		f"- must_have present: {', '.join(ia.get('must_have') or [])}\n"
 		f"- must_not absent: {', '.join(ia.get('must_not') or [])}\n"
-		"- Hero viz + KPI strip feel custom (not the stock cyan template)\n"
+		"- KPI strip even; hero viz readable; bar tracks contrast with panel\n"
+		"- Would a risk lead screenshot this for a weekly review? If no, keep editing.\n"
 		"- App stays interactive (filters/tabs/detail), TypeScript valid, stay inside app/"
 	)
 	return "\n".join(lines)
