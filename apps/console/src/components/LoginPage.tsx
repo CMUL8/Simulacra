@@ -1,11 +1,13 @@
+import { SignIn } from "@clerk/clerk-react";
 import { useState } from "react";
 import { login, register, type AuthSession } from "../api";
 
 type Props = {
   onAuthed: (session: AuthSession) => void;
+  clerkEnabled?: boolean;
 };
 
-export function LoginPage({ onAuthed }: Props) {
+export function LoginPage({ onAuthed, clerkEnabled = false }: Props) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("admin@localhost");
   const [password, setPassword] = useState("simulacra-admin-change-me");
@@ -29,6 +31,28 @@ export function LoginPage({ onAuthed }: Props) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (clerkEnabled) {
+    return (
+      <div className="login-page">
+        <div className="login-card clerk-card">
+          <h1>Simulacra</h1>
+          <p className="login-sub">Sign in with your CMUL8 Clerk account</p>
+          <SignIn
+            routing="hash"
+            fallbackRedirectUrl="/"
+            forceRedirectUrl="/"
+            appearance={{
+              elements: {
+                rootBox: "clerk-root",
+                card: "clerk-inner-card",
+              },
+            }}
+          />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -92,9 +116,6 @@ export function LoginPage({ onAuthed }: Props) {
             {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
         </form>
-        <p className="login-hint">
-          Default bootstrap: admin@localhost / simulacra-admin-change-me (change in production)
-        </p>
       </div>
     </div>
   );

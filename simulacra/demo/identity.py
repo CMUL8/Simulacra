@@ -413,6 +413,23 @@ def resolve_auth(
 		raise PermissionError("Authentication required")
 
 	token = authorization.split(" ", 1)[1].strip()
+	# Clerk session JWTs (when CMUL8 Clerk is configured)
+	if not token.startswith("sst_") and not token.startswith("ska_"):
+		from .clerk_auth import clerk_enabled, ensure_clerk_user, resolve_tenant_id, verify_clerk_jwt
+
+		if clerk_enabled():
+			claims = verify_clerk_jwt(token)
+			user, tid_from_org = ensure_clerk_user(claims)
+			tid = (tenant_header or "").strip() or tid_from_org
+			if tid == "*":
+				if not user.is_platform_admin:
+					raise PermissionError("Platform admin required for cross-tenant access")
+				return AuthContext(user=user, tenant_id="*", role="owner", auth_via="clerk")
+			assert_tenant_active(tid)
+			membership = get_membership(tid, user.id)
+			role: Role = "owner" if user.is_platform_admin else (membership.role if membership else "member")
+			return AuthContext(user=user, tenant_id=tid, role=role, auth_via="clerk")
+
 	found = _user_from_token(token)
 	if not found:
 		raise PermissionError("Invalid or expired credentials")

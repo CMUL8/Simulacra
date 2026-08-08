@@ -42,7 +42,7 @@ function jobRunning(snap: Snapshot | null): boolean {
   return status === "running" || status === "settling" || snap?.project.phase === "build";
 }
 
-export default function App() {
+export default function App({ clerkEnabled = false }: { clerkEnabled?: boolean }) {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -174,6 +174,7 @@ export default function App() {
   if (!authed) {
     return (
       <LoginPage
+        clerkEnabled={clerkEnabled}
         onAuthed={(session) => {
           setUser(session.user);
           setTenants(session.tenants || []);
@@ -399,9 +400,12 @@ export default function App() {
             type="button"
             className="gov-fab"
             onClick={() => {
+              const clerkOut = (window as unknown as { __simulacraClerkSignOut?: () => Promise<void> })
+                .__simulacraClerkSignOut;
               clearAuth();
               setAuthed(false);
               setUser(null);
+              if (clerkOut) void clerkOut();
             }}
           >
             Sign out

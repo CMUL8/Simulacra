@@ -148,6 +148,7 @@ class ApiKeyBody(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+	from simulacra.demo.clerk_auth import clerk_enabled
 	from simulacra.demo.prime_hook import prime_enabled
 
 	sb = sandbox_status()
@@ -159,6 +160,7 @@ def health() -> dict[str, Any]:
 		"auth_required": auth_required(),
 		"identity": db_health(),
 		"siem": siem_status(),
+		"clerk": clerk_enabled(),
 		"version": "0.7.0",
 	}
 

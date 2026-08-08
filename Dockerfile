@@ -4,6 +4,8 @@ WORKDIR /src/apps/console
 COPY apps/console/package.json apps/console/package-lock.json ./
 RUN npm ci
 COPY apps/console/ ./
+ARG VITE_CLERK_PUBLISHABLE_KEY=""
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
 RUN npm run build
 
 FROM python:3.12-slim-bookworm

@@ -31,3 +31,4 @@ tenants/
 data/
 
 
+.railway-secrets.env
