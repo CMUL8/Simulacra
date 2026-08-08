@@ -5,12 +5,19 @@ import { login, register, type AuthSession } from "../api";
 type Props = {
   onAuthed: (session: AuthSession) => void;
   clerkEnabled?: boolean;
+  clerkAvailable?: boolean;
+  onUseClerk?: () => void;
 };
 
-export function LoginPage({ onAuthed, clerkEnabled = false }: Props) {
+export function LoginPage({
+  onAuthed,
+  clerkEnabled = false,
+  clerkAvailable = false,
+  onUseClerk,
+}: Props) {
   const [mode, setMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("admin@localhost");
-  const [password, setPassword] = useState("simulacra-admin-change-me");
+  const [email, setEmail] = useState("admin@cmul8.com");
+  const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [tenantName, setTenantName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -50,6 +57,14 @@ export function LoginPage({ onAuthed, clerkEnabled = false }: Props) {
               },
             }}
           />
+          <button
+            type="button"
+            className="ghost-btn"
+            style={{ marginTop: 16, width: "100%" }}
+            onClick={() => window.location.reload()}
+          >
+            Back to password login
+          </button>
         </div>
       </div>
     );
@@ -116,6 +131,11 @@ export function LoginPage({ onAuthed, clerkEnabled = false }: Props) {
             {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
         </form>
+        {clerkAvailable && onUseClerk && (
+          <button type="button" className="ghost-btn" style={{ marginTop: 14, width: "100%" }} onClick={onUseClerk}>
+            Sign in with CMUL8 Clerk
+          </button>
+        )}
       </div>
     </div>
   );

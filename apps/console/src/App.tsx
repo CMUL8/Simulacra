@@ -42,7 +42,15 @@ function jobRunning(snap: Snapshot | null): boolean {
   return status === "running" || status === "settling" || snap?.project.phase === "build";
 }
 
-export default function App({ clerkEnabled = false }: { clerkEnabled?: boolean }) {
+export default function App({
+  clerkEnabled = false,
+  clerkAvailable = false,
+  onUseClerk,
+}: {
+  clerkEnabled?: boolean;
+  clerkAvailable?: boolean;
+  onUseClerk?: () => void;
+}) {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -175,6 +183,8 @@ export default function App({ clerkEnabled = false }: { clerkEnabled?: boolean }
     return (
       <LoginPage
         clerkEnabled={clerkEnabled}
+        clerkAvailable={clerkAvailable}
+        onUseClerk={onUseClerk}
         onAuthed={(session) => {
           setUser(session.user);
           setTenants(session.tenants || []);

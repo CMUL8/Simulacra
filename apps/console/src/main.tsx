@@ -33,18 +33,10 @@ function ClerkSignOutBridge({ signOut }: { signOut: () => Promise<void> }) {
   return null;
 }
 
-function ClerkBridge({ children, onGiveUp }: { children: ReactNode; onGiveUp: () => void }) {
+/** Only mounts when user opted into Clerk — never blocks the password login path. */
+function ClerkSessionSync({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken, signOut } = useClerkAuth();
   const { user } = useUser();
-  const [ready, setReady] = useState(false);
-
-  // Never hang forever if Clerk JS / getToken / domain allowlist fails
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      if (!ready) onGiveUp();
-    }, 8000);
-    return () => window.clearTimeout(t);
-  }, [ready, onGiveUp]);
 
   useEffect(() => {
     let cancelled = false;
@@ -52,58 +44,29 @@ function ClerkBridge({ children, onGiveUp }: { children: ReactNode; onGiveUp: ()
       if (!isLoaded) return;
       if (!isSignedIn) {
         clearAuth();
-        if (!cancelled) setReady(true);
         return;
       }
       try {
         const token = await Promise.race([
           getToken(),
-          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 5000)),
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 4000)),
         ]);
-        if (token) setToken(token);
-        if (token) {
-          const me = await Promise.race([
-            fetchMe(),
-            new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 5000)),
-          ]);
-          if (me && typeof me === "object" && "tenant_id" in me && me.tenant_id) {
-            setTenantId(me.tenant_id);
-          }
-        }
+        if (cancelled || !token) return;
+        setToken(token);
+        const me = await fetchMe().catch(() => null);
+        if (me?.tenant_id) setTenantId(me.tenant_id);
+        // Force a reload so App picks up the session token
+        window.location.hash = "";
+        window.location.reload();
       } catch {
-        /* continue to app shell / login */
+        /* stay on login */
       }
-      if (!cancelled) setReady(true);
     }
     void sync();
-    const id = window.setInterval(async () => {
-      if (!isSignedIn) return;
-      try {
-        const token = await getToken({ skipCache: true });
-        if (token) setToken(token);
-      } catch {
-        /* ignore */
-      }
-    }, 50_000);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
     };
   }, [isLoaded, isSignedIn, getToken, user?.id]);
-
-  if (!isLoaded || !ready) {
-    return (
-      <div className="login-page">
-        <div className="login-card">
-          <p>Loading CMUL8 auth…</p>
-          <p className="login-hint">If this takes more than a few seconds, Clerk may need this domain allow-listed.</p>
-          <button type="button" className="ghost-btn" style={{ marginTop: 12 }} onClick={onGiveUp}>
-            Continue with password login
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <>
@@ -115,12 +78,12 @@ function ClerkBridge({ children, onGiveUp }: { children: ReactNode; onGiveUp: ()
 
 function Root() {
   const [config, setConfig] = useState<AuthConfig | null>(null);
-  const [clerkFailed, setClerkFailed] = useState(false);
+  const [wantClerk, setWantClerk] = useState(false);
 
   useEffect(() => {
-    loadAuthConfig().then(setConfig).catch(() =>
-      setConfig({ clerk_enabled: false, clerk_publishable_key: null }),
-    );
+    loadAuthConfig()
+      .then(setConfig)
+      .catch(() => setConfig({ clerk_enabled: false, clerk_publishable_key: null }));
   }, []);
 
   if (!config) {
@@ -132,19 +95,26 @@ function Root() {
   }
 
   const pk = config.clerk_publishable_key;
-  const useClerk = Boolean(pk) && config.clerk_enabled && !clerkFailed;
+  const clerkAvailable = Boolean(pk) && config.clerk_enabled;
 
-  if (useClerk && pk) {
+  // Default path: password login immediately (no Clerk hang)
+  if (!wantClerk || !pk || !clerkAvailable) {
     return (
-      <ClerkProvider publishableKey={pk} afterSignOutUrl="/">
-        <ClerkBridge onGiveUp={() => setClerkFailed(true)}>
-          <App clerkEnabled />
-        </ClerkBridge>
-      </ClerkProvider>
+      <App
+        clerkEnabled={false}
+        clerkAvailable={clerkAvailable}
+        onUseClerk={() => setWantClerk(true)}
+      />
     );
   }
 
-  return <App clerkEnabled={false} />;
+  return (
+    <ClerkProvider publishableKey={pk} afterSignOutUrl="/">
+      <ClerkSessionSync>
+        <App clerkEnabled clerkAvailable onUseClerk={() => setWantClerk(true)} />
+      </ClerkSessionSync>
+    </ClerkProvider>
+  );
 }
 
 createRoot(document.getElementById("root")!).render(
