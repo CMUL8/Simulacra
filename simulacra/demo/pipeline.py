@@ -47,11 +47,28 @@ def _write_policy_snapshot(project_id: str) -> None:
 		"prime_bounded": True,
 		"human_approve_before_build": True,
 		"integration_control_layer": True,
+		"bootstrap_first": True,
 	}
 	(root / "audit" / "policy_snapshot.json").write_text(json.dumps(payload, indent=2))
 
 
-def build_project(state: ProjectState) -> ProjectState:
+def _collect_sources(root: Path, data_room: Path) -> list[dict[str, Any]]:
+	sources: list[dict[str, Any]] = []
+	if data_room.exists():
+		for p in data_room.rglob("*"):
+			if p.is_file():
+				sources.append(
+					{
+						"type": "folder",
+						"uri": str(p.relative_to(root)),
+						"content_hash": file_hash(p),
+					}
+				)
+	return sources
+
+
+def _prepare_data_and_gates(state: ProjectState) -> tuple[ProjectState, list[dict[str, Any]], list[dict[str, Any]]]:
+	"""Extract → parquet → manifest → gates. Returns (state, rows, sources) or failed state with empty rows."""
 	root = project_dir(state.id)
 	pid = state.id
 	data_room = root / "inputs" / "data-room"
@@ -63,6 +80,19 @@ def build_project(state: ProjectState) -> ProjectState:
 	rows = extract_data_room(data_room)
 	emit_event(pid, "phase", label="Reading data room", detail=f"{len(rows)} findings", status="done")
 
+	if not rows:
+		state.status = "failed"
+		state.phase = "plan"
+		state.chat.append(
+			ChatMessage(
+				role="assistant",
+				content="No rows extracted from the data room — attach sources and try again.",
+				source="system",
+			)
+		)
+		save_state(state)
+		return state, [], []
+
 	emit_event(pid, "phase", label="Extracting structured data", status="running")
 	parquet = root / "outputs" / "table.parquet"
 	rows_to_parquet(rows, parquet)
@@ -70,20 +100,8 @@ def build_project(state: ProjectState) -> ProjectState:
 	(root / "outputs" / "summary.md").write_text(summary_text)
 	emit_event(pid, "phase", label="Extracting structured data", detail=f"{len(rows)} rows → parquet", status="done")
 
-	sources = []
-	if data_room.exists():
-		for p in data_room.rglob("*"):
-			if p.is_file():
-				sources.append(
-					{
-						"type": "folder",
-						"uri": str(p.relative_to(root)),
-						"content_hash": file_hash(p),
-					}
-				)
-
-	state.app_config = infer_app_config(state.prompt)
-	# Config comes from heuristic + optional title from brief; Prime owns app code in one build_run
+	sources = _collect_sources(root, data_room)
+	state.app_config = infer_app_config(state.prompt, state.app_config)
 	if state.design_brief.get("product_name"):
 		state.app_config.title = str(state.design_brief["product_name"])[:80]
 	if state.design_brief.get("one_liner"):
@@ -125,18 +143,29 @@ def build_project(state: ProjectState) -> ProjectState:
 
 	if audit["status"] != "pass":
 		state.status = "failed"
+		state.phase = "plan"
 		state.chat.append(
 			ChatMessage(
 				role="assistant",
-				content="Gates failed — build blocked. Fix data issues or adjust policy, then approve again.",
+				content="Gates failed — preview blocked. Fix data issues or adjust policy, then try again.",
 				source="system",
 			)
 		)
 		save_state(state)
-		return state
+		return state, [], sources
 
-	state.status = "building_app"
-	save_state(state)
+	return state, rows, sources
+
+
+def _scaffold_and_preview(
+	state: ProjectState,
+	rows: list[dict[str, Any]],
+	*,
+	run_prime: bool,
+) -> ProjectState:
+	"""Sandbox → template sync → optional Prime → preview. Sets phase ready."""
+	pid = state.id
+	root = project_dir(pid)
 
 	try:
 		tenant = get_tenant(state.tenant_id)
@@ -151,14 +180,107 @@ def build_project(state: ProjectState) -> ProjectState:
 		detail=state.sandbox.get("trust_model", ""),
 		status="done",
 	)
+	state.status = "building_app"
 	save_state(state)
 
 	emit_event(pid, "phase", label="Syncing app template", status="running")
 	write_brief(pid, state.design_brief)
 	app_dir = sync_app(state.id, state.app_config, rows)
 	apply_brief_css_tokens(app_dir, state.design_brief)
-	write_brief(pid, state.design_brief)  # ensure public/ after sync
+	write_brief(pid, state.design_brief)
 	emit_event(pid, "phase", label="Syncing app template", status="done")
+
+	source = "template"
+	if run_prime:
+		build_meta = prime_build_app(
+			app_dir, state.prompt, project_id=pid, row_count=len(rows), kind="build_run"
+		)
+		source = build_meta.get("source") or ("prime" if build_meta.get("ok") else "heuristic")
+		if build_meta.get("used") and not build_meta.get("ok"):
+			source = build_meta.get("source") or "error"
+			emit_event(pid, "think", label="Using template (Prime build skipped)", status="done")
+		state.prime = {
+			**state.prime,
+			"session_id": build_meta.get("session_id") or state.prime.get("session_id"),
+			"model": build_meta.get("model") or state.prime.get("model"),
+			"source": source,
+			"last_error": build_meta.get("error"),
+			"status": "ok" if build_meta.get("ok") or not build_meta.get("used") else "error",
+			"steps": build_meta.get("events") or 0,
+		}
+	else:
+		state.prime = {
+			**state.prime,
+			"source": "template",
+			"status": "ok",
+			"last_error": None,
+		}
+		emit_event(pid, "phase", label="Template preview ready", status="done")
+
+	sources = _collect_sources(root, root / "inputs" / "data-room")
+	write_manifest(state, rows, sources[:20], prime=prime_meta_dict_from_state(state))
+
+	emit_event(pid, "phase", label="Starting preview server", status="running")
+	url = start_preview(state, rows, app_dir=app_dir)
+	emit_event(pid, "phase", label="Starting preview server", detail=url, status="done")
+	state.deploy_url = url
+	state.phase = "ready"
+	state.status = "ready"
+	state.plan_approved = True
+	return state
+
+
+def bootstrap_project(state: ProjectState) -> ProjectState:
+	"""Fast path: data + gates + template + preview. No Prime. APP_MAKER_CONTRACT."""
+	pid = state.id
+	state, rows, _sources = _prepare_data_and_gates(state)
+	if not rows:
+		return state
+
+	state = _scaffold_and_preview(state, rows, run_prime=False)
+	preview = state.plan_preview or {}
+	files = list(preview.get("files") or [])
+	vendors = list(preview.get("vendors") or [])
+	high = int(preview.get("high_risk") or 0)
+	state.chat.append(
+		ChatMessage(
+			role="assistant",
+			content=(
+				f"**{state.app_config.title}** is live as a **template** preview "
+				f"({len(rows)} rows"
+				+ (f", {high} high risk" if high else "")
+				+ (f", {len(vendors)} vendors" if vendors else "")
+				+ "). "
+				f"{'Sources: ' + ', '.join(f['name'] for f in files[:4]) + '. ' if files else ''}"
+				"Refine style or chat — then **Improve with Prime** for taste and depth. "
+				"**Stop** always unlocks if a job hangs."
+			),
+			source="template",
+		)
+	)
+	save_checkpoint(state, "Bootstrap preview")
+	emit_event(pid, "done", label="Preview ready", detail=state.deploy_url or "", status="done")
+	save_state(state)
+	return state
+
+
+def deepen_with_prime(project_id: str) -> ProjectState:
+	"""Prime customize on an existing preview (or full build if none)."""
+	state = load_state(project_id)
+	pid = project_id
+	rows = _load_rows(pid)
+	app_dir = project_dir(pid) / "app"
+
+	if not rows or not app_dir.exists():
+		# Fall back to full Prime build path
+		return build_project(state, run_prime=True)
+
+	state.status = "building_app"
+	state.phase = "build"
+	save_state(state)
+	emit_event(pid, "phase", label="Prime deepening app", status="running")
+	write_brief(pid, state.design_brief)
+	apply_brief_css_tokens(app_dir, state.design_brief)
 
 	build_meta = prime_build_app(
 		app_dir, state.prompt, project_id=pid, row_count=len(rows), kind="build_run"
@@ -166,8 +288,8 @@ def build_project(state: ProjectState) -> ProjectState:
 	source = build_meta.get("source") or ("prime" if build_meta.get("ok") else "heuristic")
 	if build_meta.get("used") and not build_meta.get("ok"):
 		source = build_meta.get("source") or "error"
-		emit_event(pid, "think", label="Using template (Prime build skipped)", status="done")
 
+	state = load_state(pid)
 	state.prime = {
 		**state.prime,
 		"session_id": build_meta.get("session_id") or state.prime.get("session_id"),
@@ -177,25 +299,46 @@ def build_project(state: ProjectState) -> ProjectState:
 		"status": "ok" if build_meta.get("ok") or not build_meta.get("used") else "error",
 		"steps": build_meta.get("events") or 0,
 	}
-	write_manifest(
-		state,
-		rows,
-		sources[:20],
-		prime=prime_meta_dict_from_state(state),
-	)
+	honesty = {
+		"prime": "Deepened with **Prime** under your design brief.",
+		"heuristic": "Prime unavailable — keeping the **template** preview.",
+		"error": "Prime did not finish — keeping **last good** preview.",
+		"template": "Template preview unchanged.",
+	}.get(source, "Deepen complete.")
 
-	emit_event(pid, "phase", label="Starting preview server", status="running")
+	emit_event(pid, "phase", label="Refreshing preview", status="running")
 	url = start_preview(state, rows, app_dir=app_dir)
-	emit_event(pid, "phase", label="Starting preview server", detail=url, status="done")
 	state.deploy_url = url
 	state.phase = "ready"
 	state.status = "ready"
+	state.chat.append(
+		ChatMessage(
+			role="assistant",
+			content=f"{honesty} Open **Preview** or keep refining.",
+			source=source,
+		)
+	)
+	save_checkpoint(state, "Prime deepen")
+	emit_event(pid, "done", label="Deepen complete", detail=url, status="done")
+	save_state(state)
+	return state
 
+
+def build_project(state: ProjectState, *, run_prime: bool = True) -> ProjectState:
+	"""Full extract → gates → scaffold → optional Prime → preview."""
+	pid = state.id
+	state, rows, _sources = _prepare_data_and_gates(state)
+	if not rows:
+		return state
+
+	state = _scaffold_and_preview(state, rows, run_prime=run_prime)
+	source = state.prime.get("source") or ("prime" if run_prime else "template")
 	honesty = {
 		"prime": "Built with **Prime** under your design brief.",
 		"heuristic": "Built with the **template + heuristics** (Prime off or unavailable).",
 		"error": "Prime did not finish — shipping **last good template**. You can retry or refine.",
-	}.get(source, "Build complete.")
+		"template": "Built as a **template** preview — use **Improve with Prime** for depth.",
+	}.get(str(source), "Build complete.")
 	state.chat.append(
 		ChatMessage(
 			role="assistant",
@@ -203,11 +346,11 @@ def build_project(state: ProjectState) -> ProjectState:
 				f"Built **{state.app_config.title}** with {len(rows)} findings. {honesty} "
 				f"Open **Preview** when ready — or keep chatting to refine. Use **Stop** if a job hangs."
 			),
-			source=source,
+			source=str(source),
 		)
 	)
 	save_checkpoint(state, "Initial build")
-	emit_event(pid, "done", label="Build complete", detail=url, status="done")
+	emit_event(pid, "done", label="Build complete", detail=state.deploy_url or "", status="done")
 	save_state(state)
 	return state
 
@@ -225,21 +368,24 @@ def prime_meta_dict_from_state(state: ProjectState) -> dict[str, Any]:
 
 
 def approve_and_build(project_id: str) -> ProjectState:
-	"""Synchronous approve+build (tests / CLI). Prefer start_approve_build for API."""
-	state = approve_plan(project_id)
-	return build_project(state)
+	"""Synchronous deepen (tests / CLI). Prefer start_approve_build for API."""
+	approve_plan(project_id)
+	return deepen_with_prime(project_id)
 
 
 def start_approve_build(project_id: str) -> dict[str, Any]:
-	"""Non-blocking: approve then build in background job."""
-	state = approve_plan(project_id)
-	save_state(state)
+	"""Non-blocking: deepen with Prime (or full build if no preview yet)."""
+	approve_plan(project_id)
 
 	def target(_job: JobRecord) -> None:
-		build_project(load_state(project_id))
+		cur = load_state(project_id)
+		if cur.deploy_url and (project_dir(project_id) / "app").exists() and _load_rows(project_id):
+			deepen_with_prime(project_id)
+		else:
+			build_project(cur, run_prime=True)
 
 	try:
-		job = start_job(project_id, "build_run", label="Approve & Build", target=target)
+		job = start_job(project_id, "build_run", label="Improve with Prime", target=target)
 	except JobConflictError as exc:
 		raise ValueError(str(exc)) from exc
 	return {"job_id": job.id, "status": "running", **project_snapshot(project_id)}
@@ -355,7 +501,7 @@ def _follow_up_impl(project_id: str, message: str) -> ProjectState:
 def cancel_job(project_id: str) -> dict[str, Any]:
 	result = request_cancel(project_id)
 	state = load_state(project_id)
-	if result.get("ok"):
+	if result.get("ok") and not result.get("already_idle"):
 		state.chat.append(
 			ChatMessage(
 				role="assistant",
@@ -364,8 +510,10 @@ def cancel_job(project_id: str) -> dict[str, Any]:
 			)
 		)
 		state.prime["status"] = "cancelled"
+		state.prime["source"] = "cancelled"
 		save_state(state)
-	return {**result, "project": state.to_dict()}
+	# Always return a full snapshot so the console can unlock
+	return {**result, **project_snapshot(project_id)}
 
 
 def rollback_project(project_id: str, checkpoint_id: str | None = None) -> ProjectState:

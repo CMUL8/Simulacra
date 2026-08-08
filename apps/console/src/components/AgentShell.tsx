@@ -49,6 +49,17 @@ function renderMarkdownLite(text: string) {
   });
 }
 
+function honestyLabel(source?: string | null): { text: string; cls: string } | null {
+  if (!source || source === "system") return null;
+  if (source === "prime") return { text: "Prime", cls: "source-prime" };
+  if (source === "template") return { text: "Template", cls: "source-heuristic" };
+  if (source === "cancelled") return { text: "Stopped", cls: "source-error" };
+  if (source === "timeout") return { text: "Timed out", cls: "source-error" };
+  if (source === "error") return { text: "Fallback", cls: "source-error" };
+  if (source === "heuristic") return { text: "Heuristic", cls: "source-heuristic" };
+  return null;
+}
+
 function ThinkingLoader({ label, onStop }: { label: string; onStop?: () => void }) {
   return (
     <div className="cursor-thinking" aria-live="polite" aria-busy="true">
@@ -92,7 +103,18 @@ export function AgentShell({
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
-  const waitingForOpen = isPlan && busy && !project.chat.some((m) => m.role === "assistant");
+  const waitingForOpen = busy && !project.chat.some((m) => m.role === "assistant");
+  const jobKind = snapshot.job?.kind ?? project.job?.kind;
+  const thinkingLabel =
+    jobKind === "bootstrap" || (isPlan && waitingForOpen)
+      ? "Building your preview…"
+      : jobKind === "build_run"
+        ? "Prime is customizing…"
+        : "Working…";
+  const deepenLabel = hasPreview ? "Improve with Prime" : "Approve & Build";
+  const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
+  const honesty = honestyLabel(lastAssistant?.source ?? project.prime?.source);
+  const showStyleBar = Boolean(designBrief && onSaveDesignBrief);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -109,10 +131,11 @@ export function AgentShell({
             Simu<em>lacra</em>
           </span>
           <span className="project-name">{project.app_config.title}</span>
+          {honesty && <span className={`source-chip ${honesty.cls}`}>{honesty.text}</span>}
           {project.deployed && <span className="deployed-pill">live</span>}
         </div>
         <div className="agent-topbar-right">
-          {!isPlan && hasPreview && (
+          {hasPreview && (
             <button type="button" className="ghost-btn quiet" onClick={onOpenPreview}>
               <Globe size={14} />
               Preview
@@ -126,16 +149,16 @@ export function AgentShell({
           <button type="button" className="topbar-link" onClick={onGovernance} title="Account, policy & admin">
             Account
           </button>
-          {isPlan && onApprove && (
+          {onApprove && (
             <button type="button" className="approve-btn" disabled={busy} onClick={onApprove}>
-              Approve & Build
+              {deepenLabel}
               <ArrowRight size={14} />
             </button>
           )}
         </div>
       </header>
 
-      {isPlan && (
+      {(isPlan || !hasPreview) && (
         <p className="policy-whisper">
           Sources stay behind Simulacra’s control layer — apps never talk to systems directly.
         </p>
@@ -162,19 +185,16 @@ export function AgentShell({
             <TracePanel events={traces} onCancel={busy ? onCancel : undefined} />
           )}
 
-          {busy && (isPlan || traces.length === 0) && (
-            <ThinkingLoader
-              label={waitingForOpen ? "Prime is planning…" : "Prime is thinking…"}
-              onStop={onCancel}
-            />
+          {busy && (isPlan || traces.length === 0 || waitingForOpen) && (
+            <ThinkingLoader label={thinkingLabel} onStop={onCancel} />
           )}
 
           <div ref={endRef} />
         </div>
 
         <div className="agent-composer-wrap">
-          {isPlan && designBrief && onSaveDesignBrief && (
-            <DesignBriefForm value={designBrief} onSave={onSaveDesignBrief} disabled={false} />
+          {showStyleBar && (
+            <DesignBriefForm value={designBrief!} onSave={onSaveDesignBrief!} disabled={false} />
           )}
           <PromptComposer
             value={input}
@@ -184,9 +204,9 @@ export function AgentShell({
             disabled={project.status === "failed"}
             busy={busy}
             files={files}
-            placeholder={isPlan ? "Send follow-up" : "Ask for changes…"}
+            placeholder={isPlan && !hasPreview ? "Send follow-up" : "Ask for changes…"}
             submitLabel="Send"
-            modeTag={isPlan ? "Plan" : "Agent"}
+            modeTag={hasPreview ? "Maker" : "Plan"}
           />
         </div>
       </div>

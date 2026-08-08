@@ -16,8 +16,9 @@ from .runs import load_state, save_state
 
 log = logging.getLogger("simulacra.jobs")
 
-# PRODUCT_SPEC §3A.6 defaults
+# APP_MAKER_CONTRACT + PRODUCT_SPEC §3A.6 defaults
 BOUNDS: dict[str, dict[str, float | int]] = {
+	"bootstrap": {"timeout": 180, "max_steps": 20, "stall": 90},
 	"plan_ask": {"timeout": 120, "max_steps": 12, "stall": 60},
 	"build_run": {"timeout": 240, "max_steps": 40, "stall": 45},
 	"iterate_run": {"timeout": 180, "max_steps": 25, "stall": 45},
@@ -142,9 +143,21 @@ def check_bounds(project_id: str) -> None:
 
 
 def request_cancel(project_id: str) -> dict[str, Any]:
+	"""Request cancel of a live job. Idempotent when nothing is running."""
 	job = get_job(project_id)
 	if not job or job.status not in ("running", "settling"):
-		return {"ok": False, "error": "no_running_job"}
+		# Heal persisted ghost "running" so clients unlock
+		try:
+			state = load_state(project_id)
+			job_state = dict(state.job or {})
+			if job_state.get("status") in ("running", "settling"):
+				job_state["status"] = "idle"
+				job_state["cancel_requested"] = False
+				state.job = job_state
+				save_state(state)
+		except FileNotFoundError:
+			pass
+		return {"ok": True, "already_idle": True, "error": None}
 	job.cancel_requested = True
 	emit_event(project_id, "phase", label="Stop requested", status="running")
 	_persist(job)
@@ -155,7 +168,8 @@ def request_cancel(project_id: str) -> dict[str, Any]:
 			abort()
 		except Exception as exc:  # noqa: BLE001
 			log.warning("abort hook failed: %s", exc)
-	return {"ok": True, "job_id": job.id}
+	return {"ok": True, "already_idle": False, "job_id": job.id}
+
 
 
 _abort_hooks: dict[str, Callable[[], None]] = {}

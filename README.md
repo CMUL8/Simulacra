@@ -11,6 +11,7 @@ Simulacra turns **data rooms, tables, and (later) warehouses** into **verified a
 | Doc | Purpose |
 | --- | --- |
 | [Product spec](docs/PRODUCT_SPEC.md) | Brand, architecture, data plane, run contract, gates |
+| [App maker contract](docs/APP_MAKER_CONTRACT.md) | Bootstrap-first preview + Prime deepen (product law) |
 | [Roadmap](docs/ROADMAP.md) | Phased plan (Foundation → Data rooms → Tabular → Warehouse → Apps) |
 
 ## How it fits together

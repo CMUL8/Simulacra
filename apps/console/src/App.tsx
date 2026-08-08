@@ -401,11 +401,19 @@ export default function App({
     try {
       const snap = await cancelProjectJob(snapshot.project.id);
       setSnapshot(snap);
+    } catch (err) {
+      // Soft-fail: still unlock UI even if cancel races with an already-idle job
+      setError(err instanceof Error ? err.message : "Stop failed");
+      try {
+        const snap = await getProject(snapshot.project.id);
+        setSnapshot(snap);
+      } catch {
+        /* ignore */
+      }
+    } finally {
       stopPolling();
       setBusy(false);
       setJobLive(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Stop failed");
     }
   }
 
@@ -530,7 +538,7 @@ export default function App({
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onInput={setInput}
           onSend={mode === "plan" ? handlePlanSend : handleSend}
-          onApprove={mode === "plan" ? handleApprove : undefined}
+          onApprove={handleApprove}
           onCancel={running ? handleCancel : undefined}
           onOpenPreview={() => setPreviewOpen(true)}
           onGovernance={() => openAccount("account")}

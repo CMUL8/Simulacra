@@ -1,4 +1,4 @@
-"""Plan mode — scan sources, then open with Prime in a bounded job."""
+"""Plan + bootstrap entry — scan sources, then fast preview (Prime deepen is separate)."""
 
 from __future__ import annotations
 
@@ -111,21 +111,30 @@ def run_plan_open(project_id: str) -> ProjectState:
 
 
 def init_plan(state: ProjectState) -> ProjectState:
-	"""Scan immediately, then fire Prime in a background job so the UI can show a loader."""
-	# Show the user ask in chat immediately (Cursor-style), then load while Prime answers
+	"""Scan immediately, then bootstrap a live preview (no Prime wait). See APP_MAKER_CONTRACT."""
 	if not any(m.role == "user" for m in state.chat):
 		state.chat.append(ChatMessage(role="user", content=state.prompt, source="system"))
 		save_state(state)
 	state = explore_plan_scan(state)
 	pid = state.id
 
+	# Infer title early so the shell isn't blank while bootstrap runs
+	state.app_config = infer_app_config(state.prompt, state.app_config)
+	if state.app_config.title:
+		state.design_brief["product_name"] = state.app_config.title
+	if state.app_config.subtitle:
+		state.design_brief["one_liner"] = state.app_config.subtitle
+	write_brief(pid, state.design_brief)
+	save_state(state)
+
 	def target(_job):
-		return run_plan_open(pid)
+		from .pipeline import bootstrap_project
+
+		return bootstrap_project(load_state(pid))
 
 	try:
-		start_job(pid, "plan_ask", label="Prime planning", target=target)
+		start_job(pid, "bootstrap", label="Building preview", target=target)
 	except JobConflictError:
-		# Another open already in flight
 		pass
 	return load_state(pid)
 
@@ -190,18 +199,19 @@ def _plan_chat_reply(project_id: str, message: str) -> ProjectState:
 
 def approve_plan(project_id: str) -> ProjectState:
 	state = load_state(project_id)
-	if state.phase != "plan":
-		raise ValueError("Project is not in plan phase")
+	if state.phase not in ("plan", "ready", "build"):
+		raise ValueError("Project cannot be deepened from this phase")
 	state.plan_approved = True
-	state.phase = "build"
-	state.status = "approved"
-	state.chat.append(
-		ChatMessage(
-			role="assistant",
-			content="Plan approved. Building through Simulacra’s control layer…",
-			source="system",
+	if state.phase == "plan":
+		state.phase = "build"
+		state.status = "approved"
+		state.chat.append(
+			ChatMessage(
+				role="assistant",
+				content="Deepening with **Prime** under your design brief…",
+				source="system",
+			)
 		)
-	)
 	save_state(state)
 	return state
 
@@ -227,7 +237,7 @@ def _open_reply(
 		f"I have {len(files)} source files ready"
 		+ (f" ({rows} rows across {len(vendors)} vendors)" if rows else "")
 		+ ".\n\n"
-		"Refine the idea below, pick a style, then **Approve & Build** when you’re ready."
+		"Refine the idea below, pick a style, then **Improve with Prime** when you want taste and depth."
 	)
 
 
@@ -255,5 +265,5 @@ def _heuristic_plan_reply(state: ProjectState, message: str) -> str:
 
 	return (
 		f"Noted for **{state.app_config.title}**. "
-		f"I’ll fold that into the build. Approve when ready, or keep refining."
+		f"I’ll fold that into the next deepen. Preview stays live — or hit **Improve with Prime**."
 	)

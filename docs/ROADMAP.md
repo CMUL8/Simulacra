@@ -1,6 +1,6 @@
 # Simulacra — Roadmap & Execution Plan
 
-**Companion to:** [PRODUCT_SPEC.md](./PRODUCT_SPEC.md)  
+**Companion to:** [PRODUCT_SPEC.md](./PRODUCT_SPEC.md) · **Maker law:** [APP_MAKER_CONTRACT.md](./APP_MAKER_CONTRACT.md)  
 **North star:** Governed vibe coding for internal data apps — NL → production analytics apps, with persistent execution, eval gates, and audit trails.  
 **Engine:** Prime Agent (pure). Simulacra = brand + policy + run contract + gates + deploy.
 
@@ -12,7 +12,7 @@ Ship the **same loop** four times with richer sources and sinks:
 **(A) folder research → gated tables** → **(B) local tabular/DuckDB** → **(C) warehouse read** → **(D) deployable internal app**.  
 Do not build warehouse or multi-template deploy before the run contract and gates are real.
 
-**UX north star (see PRODUCT_SPEC §3A):** prompt → plan (read-only) → approve → bounded Prime `run` builds the app → iterate with Prime `run` deltas. Simulacra owns rails/gates/job bounds; Prime owns judgment and code. User taste travels as `design_brief`. Console stays interactive (cancel, SSE, one job at a time).
+**UX north star:** prompt → **bootstrap preview (template)** → refine → **Improve with Prime** → iterate → ship. See APP_MAKER_CONTRACT. Simulacra owns rails/gates/job bounds; Prime owns taste and code. Console stays interactive (cancel, SSE, one job at a time).
 
 ---
 

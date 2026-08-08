@@ -638,11 +638,16 @@ def post_cancel(
 	request: Request,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 ) -> dict:
+	"""Stop a running Prime job. Idempotent if already idle — always unlocks the UI."""
 	result = cancel_job(project_id)
-	if not result.get("ok"):
-		raise HTTPException(409, result.get("error") or "no_running_job")
-	audit_request(request, ctx, "project.cancel", project_id=project_id)
-	return {**project_snapshot(project_id), "cancelled": True}
+	if result.get("ok") and not result.get("already_idle"):
+		audit_request(request, ctx, "project.cancel", project_id=project_id)
+	# Never 409 for "nothing to cancel" — console treats Stop as always safe
+	return {
+		**project_snapshot(project_id),
+		"cancelled": bool(result.get("ok") and not result.get("already_idle")),
+		"already_idle": bool(result.get("already_idle")),
+	}
 
 
 @app.patch("/projects/{project_id}/design-brief")

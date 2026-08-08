@@ -69,13 +69,14 @@ Simulacra:
 
 ## 3A. Prompt → app → iterate (canonical UX loop)
 
-This is the product. Everything else (CLI, connectors, deploy) exists to make this loop feel inevitable.
+> **Maker loop (current product law):** see **[APP_MAKER_CONTRACT.md](./APP_MAKER_CONTRACT.md)** — bootstrap template preview first, Prime deepen second.  
+> The table below retains policy/rails detail; where it conflicts with the contract on *when* preview appears, the contract wins.
 
 ```text
-Landing          Plan (read-only)         Approve          Build                 Ready → Iterate
-─────────        ────────────────         ───────          ─────                 ───────────────
-empty prompt  →  scan + explore chat  →  human gate  →  extract→gates→app  →  preview + refine
-@ files          no writes to app/        intentional      Prime does hard work   Prime re-enters
+Landing          Bootstrap (fast)           Ready → Refine          Improve with Prime       Ship
+─────────        ────────────────           ──────────────          ──────────────────       ────
+empty prompt  →  scan→gates→template→preview → style + chat      →  bounded Prime run     → deploy flag
+@ files          source=template               no fake Prime          honesty chips            gates pass
 ```
 
 ### 3A.1 Experience principles
@@ -83,12 +84,12 @@ empty prompt  →  scan + explore chat  →  human gate  →  extract→gates→
 | Principle | Meaning |
 | --- | --- |
 | **Chat is the IDE** | Centered conversation; preview opens on demand — not a busy dashboard on first paint. |
-| **Plan before commit** | Nothing mutable (parquet rewrite, app scaffold, preview process) until **Approve & Build**. |
+| **Bootstrap before deepen** | First preview is Simulacra template + data bind; Prime customize is an explicit deepen (see APP_MAKER_CONTRACT). |
 | **Simulacra owns the rails** | Sources, extract contract, gates, audit, deploy keys, template jail. Deterministic where possible. |
-| **Prime owns the hard stuff** | Understanding messy intent, exploring data in context, writing/editing app code, multi-step refinement. |
-| **One continuous session** | Same Prime session across plan → build → iterate whenever possible (compaction OK; cold restart is a failure mode). |
+| **Prime owns taste & depth** | Layout judgment, writing/editing app code, multi-step refinement under `design_brief`. |
+| **One continuous session** | Same Prime session across deepen → iterate whenever possible (compaction OK; cold restart is a failure mode). |
 | **Show the work** | Stream Prime tool/think events into the UI (SSE). Silence feels broken; traces feel like an agent. |
-| **Never fake competence** | If Prime is off or fails, say so and fall back honestly — do not narrate changes that did not happen. |
+| **Never fake competence** | If Prime is off or fails, say so (`Template` / `Heuristic` / `Fallback`) — do not narrate changes that did not happen. |
 | **Iterate = rebuild delta** | Follow-ups must change artifacts (code/config/data views), not only chat text. |
 | **Stay interactive** | Builds never lock the console; Stop works; one builder job per project. |
 | **Taste travels as data** | Aesthetics and IA choices live in `design_brief` and are passed into every Prime build. |
