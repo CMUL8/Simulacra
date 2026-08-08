@@ -1,6 +1,6 @@
 import { ExternalLink, PanelRightClose, RefreshCw, Table2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { getTenantId, getToken, type Snapshot } from "../api";
+import type { Snapshot } from "../api";
 
 type Tab = "preview" | "data";
 
@@ -11,22 +11,16 @@ type Props = {
   onRefresh: () => void;
 };
 
-/** Resolve preview to a browser-reachable URL (same-origin path + auth query). */
-export function resolvePreviewSrc(raw: string | null | undefined): string | null {
+/** Same-origin preview path (no localhost, no auth query needed for static assets). */
+export function resolvePreviewSrc(raw: string | null | undefined, bust = 0): string | null {
   if (!raw) return null;
-  // Legacy broken localhost URLs from pre-proxy deploys
-  if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(raw)) {
-    const id = (typeof window !== "undefined" && window.location.pathname) || "";
-    void id;
-    return null;
-  }
+  if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(raw)) return null;
   const apiBase = import.meta.env.VITE_API_BASE ?? (import.meta.env.PROD ? "" : "http://127.0.0.1:8000");
   let href: string;
   if (raw.startsWith("http://") || raw.startsWith("https://")) {
     href = raw;
   } else {
     const base = String(apiBase).replace(/\/$/, "");
-    // In local vite, API is often "/api" with rewrite — preview is mounted on API host root
     const origin =
       base === "" || base === "/api"
         ? import.meta.env.PROD
@@ -36,12 +30,7 @@ export function resolvePreviewSrc(raw: string | null | undefined): string | null
     href = `${origin}${raw.startsWith("/") ? raw : `/${raw}`}`;
   }
   const u = new URL(href, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-  const token = getToken();
-  const tenant = getTenantId();
-  if (token) u.searchParams.set("token", token);
-  if (tenant) u.searchParams.set("tenant", tenant);
-  // cache-bust rebuilds
-  u.searchParams.set("v", String(Date.now() % 1_000_000));
+  u.searchParams.set("v", String(bust || Date.now() % 1_000_000));
   return u.toString();
 }
 
@@ -49,8 +38,7 @@ export function PreviewDrawer({ open, snapshot, onClose, onRefresh }: Props) {
   const [tab, setTab] = useState<Tab>("preview");
   const [frameKey, setFrameKey] = useState(0);
   const previewUrl = useMemo(
-    () => resolvePreviewSrc(snapshot?.preview_url),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh via frameKey
+    () => resolvePreviewSrc(snapshot?.preview_url, frameKey),
     [snapshot?.preview_url, frameKey],
   );
 
@@ -115,7 +103,7 @@ export function PreviewDrawer({ open, snapshot, onClose, onRefresh }: Props) {
               <div className="preview-drawer-empty">
                 <p>
                   {snapshot?.preview_url?.includes("127.0.0.1")
-                    ? "This draft used an old local preview link. Hit Build app again to publish a shareable preview."
+                    ? "This project still points at an old local preview. Start a new project or hit Build app again."
                     : "Preview will appear when the draft is ready."}
                 </p>
               </div>

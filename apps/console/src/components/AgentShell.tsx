@@ -234,11 +234,23 @@ export function AgentShell({
 
       <div className="agent-center">
         <div className="agent-thread cursor-thread">
-          {project.chat.map((m: ChatMessage, i: number) => (
-            <article key={i} className={`cursor-msg ${m.role}`}>
-              <div className="cursor-msg-body">{renderMarkdownLite(m.content)}</div>
-            </article>
-          ))}
+          {project.chat.map((m: ChatMessage, i: number) => {
+            const kind =
+              m.role === "user"
+                ? "user"
+                : m.source === "system"
+                  ? "status"
+                  : m.source === "template" || m.source === "heuristic"
+                    ? "draft"
+                    : "assistant";
+            return (
+              <article key={i} className={`cursor-msg ${kind}`}>
+                {kind === "user" && <div className="cursor-msg-label">You</div>}
+                {kind === "status" && <div className="cursor-msg-label">Status</div>}
+                <div className="cursor-msg-body">{renderMarkdownLite(m.content)}</div>
+              </article>
+            );
+          })}
 
           {showPlanCard && !busy && <PlanCard snapshot={snapshot} onOpenPreview={onOpenPreview} />}
 

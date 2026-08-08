@@ -312,11 +312,11 @@ def deepen_with_prime(project_id: str) -> ProjectState:
 		"steps": build_meta.get("events") or 0,
 	}
 	honesty = {
-		"prime": "Build complete — open **Preview** to review.",
-		"heuristic": "Build used the draft scaffold — open **Preview** to review.",
-		"error": "Build did not finish — keeping the last good draft. You can retry.",
+		"prime": "Build finished — preview refreshed with the new version.",
+		"heuristic": "Build kept the draft scaffold (no durable code changes). Preview still shows the draft.",
+		"error": "Build did not finish — keeping the last good draft. You can retry **Build app**.",
 		"template": "Draft unchanged.",
-	}.get(source, "Build complete.")
+	}.get(source, "Build finished.")
 
 	emit_event(pid, "phase", label="Publishing preview", status="running")
 	url = start_preview(state, rows, app_dir=app_dir)
@@ -327,7 +327,7 @@ def deepen_with_prime(project_id: str) -> ProjectState:
 	state.chat.append(
 		ChatMessage(
 			role="assistant",
-			content=f"{honesty}",
+			content=honesty,
 			source=source,
 		)
 	)

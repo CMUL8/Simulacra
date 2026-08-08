@@ -760,14 +760,20 @@ async def upload_files(
 @app.get("/projects/{project_id}/preview/{full_path:path}")
 def serve_project_preview(
 	project_id: str,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 	full_path: str = "",
 ) -> FileResponse:
-	"""Serve built app dist over the public API (not localhost)."""
+	"""Serve built app dist same-origin.
+
+	Unauthenticated on purpose: iframe JS/CSS/JSON fetches cannot attach
+	Bearer headers. Project ids are unguessable; listing stays behind auth.
+	"""
+	try:
+		load_state(project_id)
+	except FileNotFoundError as exc:
+		raise HTTPException(404, "Preview not ready") from exc
 	dist = project_dir(project_id) / "app" / "dist"
 	if not dist.is_dir():
 		raise HTTPException(404, "Preview not ready")
-	# Path traversal guard
 	target = (dist / (full_path or "index.html")).resolve()
 	try:
 		target.relative_to(dist.resolve())

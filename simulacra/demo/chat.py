@@ -8,9 +8,10 @@ from .runs import AppConfig, ChatMessage, ProjectState
 def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfig:
 	cfg = existing or AppConfig()
 	lower = prompt.lower()
+	placeholder = existing is None or existing.title in ("", "Data Explorer", "Data App")
 
 	if any(w in lower for w in ("game", "quiz", "flashcard", "learn", "learning", "training", "tutorial")):
-		if not existing or existing.title in ("", "Data Explorer"):
+		if placeholder:
 			cfg.title = "Learning Game"
 		cfg.subtitle = "Practice with your source material"
 	elif "vendor" in lower or "risk" in lower or "diligence" in lower:
@@ -19,8 +20,11 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 	elif "sales" in lower or "revenue" in lower:
 		cfg.title = "Sales Analytics"
 		cfg.subtitle = "Internal revenue view"
-	elif not existing or existing.title in ("", "Data Explorer"):
-		# Prefer a short title from the prompt instead of generic explorer
+	elif "analytics" in lower or "dashboard" in lower or "explore" in lower:
+		if placeholder:
+			cfg.title = "Analytics Explorer"
+		cfg.subtitle = "Explore your sources"
+	elif placeholder:
 		clause = prompt.strip().split("\n")[0].strip()[:60]
 		cfg.title = clause[:1].upper() + clause[1:] if clause else "Custom App"
 		cfg.subtitle = "Built from your sources"

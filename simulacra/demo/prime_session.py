@@ -134,7 +134,7 @@ async def _ask_async(
 	except Exception as exc:  # noqa: BLE001
 		meta["error"] = str(exc)[:300]
 		meta["source"] = "error"
-		emit_event(project_id, "error", label="Prime error", detail=meta["error"], status="fail")
+		emit_event(project_id, "error", label="Ask failed", detail=meta["error"], status="fail")
 		_save_prime_meta(project_id, meta)
 		return None, meta
 	finally:
@@ -200,7 +200,7 @@ async def _run_async(
 	except Exception as exc:  # noqa: BLE001
 		meta["error"] = str(exc)[:300]
 		meta["source"] = "error"
-		emit_event(project_id, "error", label="Prime build failed", detail=meta["error"], status="fail")
+		emit_event(project_id, "error", label="Build failed", detail=meta["error"], status="fail")
 		_save_prime_meta(project_id, meta)
 		return meta
 	finally:

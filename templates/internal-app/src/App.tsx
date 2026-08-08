@@ -44,17 +44,31 @@ export default function App() {
   const [q, setQ] = useState("");
   const [riskFilter, setRiskFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Row | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
+    const base = import.meta.env.BASE_URL || "/";
+    const asset = (name: string) => `${base}${name.replace(/^\//, "")}`;
     Promise.all([
-      fetch("/config.json").then((r) => r.json()),
-      fetch("/data.json").then((r) => r.json()),
-      fetch("/analytics.json").then((r) => r.json()),
-    ]).then(([cfg, data, stats]) => {
-      setConfig(cfg);
-      setRows(data);
-      setAnalytics(stats);
-    });
+      fetch(asset("config.json")).then((r) => {
+        if (!r.ok) throw new Error(`config ${r.status}`);
+        return r.json();
+      }),
+      fetch(asset("data.json")).then((r) => {
+        if (!r.ok) throw new Error(`data ${r.status}`);
+        return r.json();
+      }),
+      fetch(asset("analytics.json")).then((r) => {
+        if (!r.ok) throw new Error(`analytics ${r.status}`);
+        return r.json();
+      }),
+    ])
+      .then(([cfg, data, stats]) => {
+        setConfig(cfg);
+        setRows(data);
+        setAnalytics(stats);
+      })
+      .catch((err) => setBootError(String(err?.message || err)));
   }, []);
 
   const filtered = useMemo(() => {
@@ -75,8 +89,12 @@ export default function App() {
     return out;
   }, [rows, q, riskFilter, config]);
 
+  if (bootError) {
+    return <div className="boot">Could not load app data ({bootError}).</div>;
+  }
+
   if (!config || !analytics) {
-    return <div className="boot">Loading command center…</div>;
+    return <div className="boot">Loading…</div>;
   }
 
   const k = analytics.kpis;
