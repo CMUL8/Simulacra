@@ -191,7 +191,7 @@ function MessageTurn({
   const kind = turnKind(message);
 
   return (
-    <article className={`cursor-turn cursor-turn-${kind}`}>
+    <article className={`cursor-turn cursor-turn-${kind}`} data-role={kind}>
       {kind === "status" ? (
         <div className="cursor-status-line">{message.content.replace(/\*\*/g, "")}</div>
       ) : kind === "plan" ? (
