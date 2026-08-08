@@ -101,12 +101,6 @@ function turnKind(m: ChatMessage): TurnKind {
   return "assistant";
 }
 
-function roleLabel(kind: TurnKind): string | null {
-  if (kind === "user") return "You";
-  if (kind === "assistant" || kind === "plan") return "Simulacra";
-  return null;
-}
-
 function stageLabel(source?: string | null): { text: string; cls: string } | null {
   if (!source || source === "system") return null;
   if (source === "prime") return { text: "Built", cls: "source-prime" };
@@ -188,11 +182,9 @@ function MessageTurn({
   onOpenPreview: () => void;
 }) {
   const kind = turnKind(message);
-  const label = roleLabel(kind);
 
   return (
     <article className={`cursor-turn cursor-turn-${kind}`}>
-      {label && <div className="cursor-turn-role">{label}</div>}
       {kind === "status" ? (
         <div className="cursor-status-line">{message.content.replace(/\*\*/g, "")}</div>
       ) : kind === "plan" ? (
@@ -308,7 +300,6 @@ export function AgentShell({
 
           {showStandalonePlan && (
             <article className="cursor-turn cursor-turn-plan">
-              <div className="cursor-turn-role">Simulacra</div>
               <PlanSection snapshot={snapshot} onOpenPreview={onOpenPreview} />
             </article>
           )}

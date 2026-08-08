@@ -1,42 +1,55 @@
-"""Builder — customize the scaffolded app under design brief + bounds."""
+"""Builder — customize the scaffolded app under design brief + data-viz craft."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
-from .design_brief import brief_to_prime_block
+from .design_brief import apply_brief_css_tokens, brief_to_prime_block, resolve_palette
 from .events import emit_event
 from .prime_hook import prime_enabled
 from .prime_session import prime_run
 from .runs import load_state
 
-BUILD_TASK = """You are building an internal data app for enterprise users.
+_SKILL_PATH = Path(__file__).resolve().parent / "skills" / "data_viz.md"
+
+BUILD_TASK = """You are building an internal data app. Taste and visualization are the product.
 
 ## User goal
 {prompt}
 
 ## Data already prepared
 - `public/data.json` — extracted findings ({row_count} rows)
-- `public/analytics.json` — pre-computed KPIs and charts data
-- `public/config.json` — app metadata
-- `public/design_brief.json` — aesthetics & IA (OBEY)
-- `src/App.tsx` + `src/styles.css` — React dashboard scaffold
+- `public/analytics.json` — KPIs / charts
+- `public/config.json` — title/subtitle
+- `public/design_brief.json` — aesthetics (OBEY)
+- `src/App.tsx` + `src/styles.css` — current app (edit these)
 
 {design_block}
 
-## Your job
-1. Read the data files and design brief
-2. You MUST edit `src/App.tsx` and/or `src/styles.css` (and `public/config.json` title/subtitle if needed) so the app matches the user goal
-3. Improve titles, KPI labels, filters, and layout — bespoke, not generic
-4. Keep valid React/TypeScript — do not break the build
-5. Stay inside this directory only
-6. Do NOT start preview servers or install packages
-7. Do NOT re-read the same file more than twice; stop when brief is satisfied
+## Visualization craft (memorize and apply)
+{viz_skill}
 
-Make real file edits. Narration without edits is a failed build.
+## Your job (all required)
+1. Read analytics.json + design brief + current App.tsx
+2. Edit `src/styles.css` so palette/tokens match the brief exactly (replace stock cyan)
+3. Edit `src/App.tsx` so layout + hero viz feel bespoke — not the stock template
+4. Update `public/config.json` title/subtitle from the brief if needed
+5. Keep valid React/TypeScript; stay in this directory
+6. Do NOT start servers or npm install
+7. Make durable file edits — narration without diffs is a failed build
+
+Impress the user. If it still looks like a generic cyan dashboard, you are not done.
 """
+
+
+def _load_viz_skill() -> str:
+	try:
+		return _SKILL_PATH.read_text()[:3500]
+	except OSError:
+		return "Prefer ranked bars and KPI strips; encode risk with one hue family; no emoji."
 
 
 def _src_fingerprint(app_dir: Path) -> str:
@@ -47,6 +60,46 @@ def _src_fingerprint(app_dir: Path) -> str:
 			h.update(rel.encode())
 			h.update(path.read_bytes())
 	return h.hexdigest()
+
+
+def _force_style_pass(app_dir: Path, project_id: str) -> bool:
+	"""Guaranteed aesthetic write from brief when the agent leaves files untouched."""
+	state = load_state(project_id)
+	brief = state.design_brief or {}
+	changed = apply_brief_css_tokens(app_dir, brief)
+	palette = resolve_palette(brief)
+	cfg_path = app_dir / "public" / "config.json"
+	if cfg_path.is_file():
+		try:
+			data = json.loads(cfg_path.read_text())
+		except json.JSONDecodeError:
+			data = {}
+		before = json.dumps(data, sort_keys=True)
+		if brief.get("product_name"):
+			data["title"] = str(brief["product_name"])[:80]
+		if brief.get("one_liner"):
+			data["subtitle"] = str(brief["one_liner"])[:120]
+		data["accent"] = palette.get("accent")
+		after = json.dumps(data, sort_keys=True)
+		if after != before:
+			cfg_path.write_text(json.dumps(data, indent=2))
+			changed = True
+	# Stamp styles.css so fingerprint always moves when we intend a style pass
+	css_path = app_dir / "src" / "styles.css"
+	if css_path.is_file():
+		css = css_path.read_text()
+		stamp = f"/* style_pass:{palette.get('accent', '')} */\n"
+		if stamp not in css:
+			css_path.write_text(stamp + css)
+			changed = True
+		elif "/* style_pass:" in css:
+			import re
+
+			new_css = re.sub(r"/\* style_pass:[^*]*\*/\n?", stamp, css, count=1)
+			if new_css != css:
+				css_path.write_text(new_css)
+				changed = True
+	return changed
 
 
 def prime_build_app(
@@ -60,21 +113,37 @@ def prime_build_app(
 ) -> dict[str, Any]:
 	"""Customize the scaffolded app. Returns metadata; never raises."""
 	if not prime_enabled():
-		return {"used": False, "ok": False, "source": "heuristic", "error": "builder_off"}
+		# Still apply styles so the user sees brief take effect
+		forced = _force_style_pass(app_dir, project_id)
+		return {
+			"used": False,
+			"ok": False,
+			"source": "heuristic",
+			"error": "builder_off",
+			"files_changed": forced,
+			"style_only": True,
+		}
 
 	state = load_state(project_id)
 	design_block = brief_to_prime_block(state.design_brief or {}, delta_note=delta_note)
-	task = BUILD_TASK.format(prompt=prompt, row_count=row_count, design_block=design_block)
-	timeout = 240.0 if kind == "build_run" else 180.0
+	task = BUILD_TASK.format(
+		prompt=prompt,
+		row_count=row_count,
+		design_block=design_block,
+		viz_skill=_load_viz_skill(),
+	)
+	timeout = 300.0 if kind == "build_run" else 200.0
 
 	emit_event(
 		project_id,
 		"phase",
 		label="Building app",
-		detail="Customizing under your design brief",
+		detail="Customizing layout, style, and charts",
 		status="running",
 	)
 
+	# Apply tokens first so the agent starts on-brand
+	apply_brief_css_tokens(app_dir, state.design_brief or {})
 	before = _src_fingerprint(app_dir)
 	meta = prime_run(
 		project_id,
@@ -87,9 +156,11 @@ def prime_build_app(
 	changed = before != after
 	meta["files_changed"] = changed
 
-	if meta.get("error"):
+	if meta.get("error") and not changed:
+		_force_style_pass(app_dir, project_id)
 		meta["ok"] = False
-		meta["source"] = meta.get("source") or "error"
+		meta["source"] = "error"
+		meta["style_only"] = True
 		emit_event(
 			project_id,
 			"think",
@@ -98,19 +169,22 @@ def prime_build_app(
 			status="fail",
 		)
 	elif not changed:
-		# Agent ran but left scaffold untouched — not a successful customize
+		forced = _force_style_pass(app_dir, project_id)
 		meta["ok"] = False
 		meta["source"] = "heuristic"
-		meta["error"] = meta.get("error") or "no_file_changes"
+		meta["error"] = "no_file_changes"
+		meta["style_only"] = True
+		meta["files_changed"] = forced
 		emit_event(
 			project_id,
 			"think",
-			label="Keeping draft (no code changes)",
-			detail="Builder finished without editing the app",
+			label="Styles applied — layout unchanged",
+			detail="Builder did not edit App.tsx; brief styles were applied",
 			status="done",
 		)
 	elif meta.get("ok"):
 		meta["source"] = "prime"
+		meta["style_only"] = False
 		emit_event(
 			project_id,
 			"phase",
@@ -123,7 +197,7 @@ def prime_build_app(
 		emit_event(
 			project_id,
 			"think",
-			label="Keeping draft (build incomplete)",
+			label="Build incomplete",
 			detail=meta.get("error") or "incomplete",
 			status="done",
 		)

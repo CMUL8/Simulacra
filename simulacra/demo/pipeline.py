@@ -312,11 +312,22 @@ def deepen_with_prime(project_id: str) -> ProjectState:
 		"steps": build_meta.get("events") or 0,
 	}
 	honesty = {
-		"prime": "Build finished — preview refreshed with the new version.",
-		"heuristic": "Build kept the draft scaffold (no durable code changes). Preview still shows the draft.",
-		"error": "Build did not finish — keeping the last good draft. You can retry **Build app**.",
+		"prime": "Build finished — layout and style updated. Preview refreshed.",
+		"heuristic": "Styles from your brief were applied, but the layout was not rewritten. Preview refreshed — retry **Build app** for a deeper pass.",
+		"error": "Build did not finish. Styles may still be applied — retry **Build app**.",
 		"template": "Draft unchanged.",
 	}.get(source, "Build finished.")
+
+	# If style_only, chip stays Draft-ish but message is clear
+	if build_meta.get("style_only") and source != "error":
+		source = "heuristic"
+		honesty = (
+			"Styles applied from your Style chips. "
+			"The builder did not rewrite the layout this time — retry **Build app**."
+		)
+
+	state.prime["source"] = source
+	state.prime["style_only"] = bool(build_meta.get("style_only"))
 
 	emit_event(pid, "phase", label="Publishing preview", status="running")
 	url = start_preview(state, rows, app_dir=app_dir)

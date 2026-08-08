@@ -59,6 +59,7 @@ export default function App({
   const [mode, setMode] = useState<AppMode>("landing");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewRefresh, setPreviewRefresh] = useState(0);
   const [projects, setProjects] = useState<Project[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [fixtureFiles, setFixtureFiles] = useState<DataRoomFile[]>([]);
@@ -335,6 +336,11 @@ export default function App({
     const snap = await patchDesignBrief(snapshot.project.id, next);
     setSnapshot(snap);
     if (snap.project.design_brief) setDesignBrief(snap.project.design_brief);
+    // Style chips patch live dist — reload iframe so user sees the change now
+    if (snap.preview_url) {
+      setPreviewOpen(true);
+      setPreviewRefresh((n) => n + 1);
+    }
   }
 
   async function handlePlanSend() {
@@ -557,15 +563,10 @@ export default function App({
         snapshot={snapshot}
         onClose={() => setPreviewOpen(false)}
         onRefresh={() => loadProject(snapshot.project.id)}
+        onDeploy={handleDeploy}
+        busy={running}
+        refreshToken={previewRefresh}
       />
-
-      {snapshot.project.gates_status === "pass" && !snapshot.project.deployed && previewOpen && (
-        <div className="deploy-float">
-          <button type="button" className="deploy-btn" disabled={running} onClick={handleDeploy}>
-            Approve deploy
-          </button>
-        </div>
-      )}
 
       <ProfileManageModal
         open={profileOpen}

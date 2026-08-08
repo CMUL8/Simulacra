@@ -1,5 +1,5 @@
 import { ExternalLink, PanelRightClose, RefreshCw, Table2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Snapshot } from "../api";
 
 type Tab = "preview" | "data";
@@ -9,9 +9,13 @@ type Props = {
   snapshot: Snapshot | null;
   onClose: () => void;
   onRefresh: () => void;
+  onDeploy?: () => void;
+  busy?: boolean;
+  /** Bump to force iframe reload after style apply */
+  refreshToken?: number;
 };
 
-/** Same-origin preview path (no localhost, no auth query needed for static assets). */
+/** Same-origin preview path (no localhost). */
 export function resolvePreviewSrc(raw: string | null | undefined, bust = 0): string | null {
   if (!raw) return null;
   if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(raw)) return null;
@@ -34,12 +38,30 @@ export function resolvePreviewSrc(raw: string | null | undefined, bust = 0): str
   return u.toString();
 }
 
-export function PreviewDrawer({ open, snapshot, onClose, onRefresh }: Props) {
+export function PreviewDrawer({
+  open,
+  snapshot,
+  onClose,
+  onRefresh,
+  onDeploy,
+  busy,
+  refreshToken = 0,
+}: Props) {
   const [tab, setTab] = useState<Tab>("preview");
   const [frameKey, setFrameKey] = useState(0);
+  const project = snapshot?.project;
+  const canDeploy =
+    Boolean(onDeploy) &&
+    project?.gates_status === "pass" &&
+    !project?.deployed;
+
+  useEffect(() => {
+    if (refreshToken) setFrameKey((k) => k + 1);
+  }, [refreshToken]);
+
   const previewUrl = useMemo(
-    () => resolvePreviewSrc(snapshot?.preview_url, frameKey),
-    [snapshot?.preview_url, frameKey],
+    () => resolvePreviewSrc(snapshot?.preview_url, frameKey + refreshToken),
+    [snapshot?.preview_url, frameKey, refreshToken],
   );
 
   if (!open) return null;
@@ -66,6 +88,16 @@ export function PreviewDrawer({ open, snapshot, onClose, onRefresh }: Props) {
             </button>
           </div>
           <div className="preview-drawer-actions">
+            {canDeploy && (
+              <button
+                type="button"
+                className="approve-btn preview-deploy-btn"
+                disabled={busy || project?.deployed}
+                onClick={onDeploy}
+              >
+                {project?.deployed ? "Deployed" : "Approve deploy"}
+              </button>
+            )}
             {previewUrl && tab === "preview" && (
               <>
                 <button

@@ -24,7 +24,13 @@ const PRESETS: Preset[] = [
       chrome: "cards-ok-for-interaction-only",
       shape: "rounded",
       motion: "subtle",
-      palette: { accent: "#3D8B6E" },
+      palette: {
+        background: "#F4F1EC",
+        surface: "#FFFcf8",
+        text: "#1C1917",
+        accent: "#3D8B6E",
+        danger: "#B91C1C",
+      },
     },
   },
   {
@@ -37,7 +43,13 @@ const PRESETS: Preset[] = [
       chrome: "no-cards",
       shape: "sharp",
       motion: "subtle",
-      palette: { accent: "#3D8B6E" },
+      palette: {
+        background: "#0B0F0E",
+        surface: "#141A18",
+        text: "#E8EEE9",
+        accent: "#3D8B6E",
+        danger: "#C44B4B",
+      },
     },
   },
   {
@@ -50,7 +62,13 @@ const PRESETS: Preset[] = [
       chrome: "no-cards",
       shape: "sharp",
       motion: "subtle",
-      palette: { accent: "#1a1a1a" },
+      palette: {
+        background: "#F7F6F2",
+        surface: "#FFFFFF",
+        text: "#111111",
+        accent: "#1A1A1A",
+        danger: "#8B1E1E",
+      },
     },
   },
   {
@@ -63,7 +81,13 @@ const PRESETS: Preset[] = [
       chrome: "cards-ok-for-interaction-only",
       shape: "rounded",
       motion: "playful",
-      palette: { accent: "#FF6B4A" },
+      palette: {
+        background: "#FFF8F4",
+        surface: "#FFFFFF",
+        text: "#1A1210",
+        accent: "#FF6B4A",
+        danger: "#C44B4B",
+      },
     },
   },
 ];
@@ -170,8 +194,8 @@ export function DesignBriefForm({ value, onSave, disabled }: Props) {
             }}
           />
         </label>
-        {status === "saved" && <span className="style-status ok">Saved</span>}
-        {status === "saving" && <span className="style-status">Saving</span>}
+        {status === "saved" && <span className="style-status ok">Applied to preview</span>}
+        {status === "saving" && <span className="style-status">Applying…</span>}
         {status === "error" && (
           <span className="style-status err" title={err}>
             Retry
