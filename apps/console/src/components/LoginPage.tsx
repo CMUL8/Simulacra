@@ -9,6 +9,8 @@ type Props = {
   onUseClerk?: () => void;
   /** Render without full-page chrome (inside profile modal) */
   embedded?: boolean;
+  /** Prefer sign-up when opened from the landing guest gate */
+  initialMode?: "login" | "register";
 };
 
 export function LoginPage({
@@ -17,9 +19,12 @@ export function LoginPage({
   clerkAvailable = false,
   onUseClerk,
   embedded = false,
+  initialMode = "login",
 }: Props) {
-  const [mode, setMode] = useState<"login" | "register">("login");
-  const [clerkMode, setClerkMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [mode, setMode] = useState<"login" | "register">(initialMode);
+  const [clerkMode, setClerkMode] = useState<"sign-in" | "sign-up">(
+    initialMode === "register" ? "sign-up" : "sign-in",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");

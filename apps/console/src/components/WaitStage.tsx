@@ -20,7 +20,7 @@ const CREATE_STAGES = [
 ];
 const ITERATE_STAGES = ["Reading your note", "Editing the artifact", "Refreshing preview"];
 const TIPS = [
-  "Good decks take a minute — we’re writing real UI, not a mock.",
+  "This takes a minute — we’re writing real UI, not a mock.",
   "Scaffold stays behind the scenes; you only see the Built result.",
   "You can Stop anytime — last good preview is kept.",
   "After this, chat drives every change.",

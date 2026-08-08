@@ -40,11 +40,59 @@ import { useEventStream } from "./hooks/useEventStream";
 
 type AppMode = "landing" | "plan" | "workspace";
 
+const LANDING_DRAFT_KEY = "simulacra.landingDraft";
+
+type LandingDraft = {
+  prompt: string;
+  artifactKind: ArtifactKind;
+  dataAttached: boolean;
+  resumeBuild: boolean;
+};
+
 function jobRunning(snap: Snapshot | null, live = true): boolean {
   const status = snap?.job?.status ?? snap?.project.job?.status;
   // After deploy/restart, state.job can linger as "running" with no live worker
   if (!live && (status === "running" || status === "settling")) return false;
   return status === "running" || status === "settling";
+}
+
+function readLandingDraft(): LandingDraft | null {
+  try {
+    const raw = sessionStorage.getItem(LANDING_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LandingDraft>;
+    if (typeof parsed.prompt !== "string") return null;
+    return {
+      prompt: parsed.prompt,
+      artifactKind:
+        parsed.artifactKind === "report" ||
+        parsed.artifactKind === "slides" ||
+        parsed.artifactKind === "one_pager" ||
+        parsed.artifactKind === "data_app"
+          ? parsed.artifactKind
+          : "data_app",
+      dataAttached: parsed.dataAttached !== false,
+      resumeBuild: Boolean(parsed.resumeBuild),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeLandingDraft(draft: LandingDraft) {
+  try {
+    sessionStorage.setItem(LANDING_DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function clearLandingDraft() {
+  try {
+    sessionStorage.removeItem(LANDING_DRAFT_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 export default function App({
@@ -79,9 +127,14 @@ export default function App({
   const [apiOk, setApiOk] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileTab, setProfileTab] = useState<ProfileTab>("account");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [guestGateOpen, setGuestGateOpen] = useState(false);
+  const [resumeBuild, setResumeBuild] = useState(false);
   const [jobLive, setJobLive] = useState(false);
   const pollRef = useRef<number | null>(null);
   const [waitStartedAt, setWaitStartedAt] = useState<number | null>(null);
+  const draftBootstrapped = useRef(false);
+  const resumeStarted = useRef(false);
 
   const projectId = snapshot?.project.id ?? null;
   const { events: traces } = useEventStream(projectId);
@@ -94,6 +147,20 @@ export default function App({
       setWaitStartedAt(null);
     }
   }, [running]);
+
+  useEffect(() => {
+    if (draftBootstrapped.current) return;
+    draftBootstrapped.current = true;
+    const draft = readLandingDraft();
+    if (!draft) return;
+    setPrompt(draft.prompt);
+    setArtifactKind(draft.artifactKind);
+    setDataAttached(draft.dataAttached);
+    if (draft.resumeBuild) {
+      setResumeBuild(true);
+      setGuestGateOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     const token = getToken();
@@ -233,6 +300,10 @@ export default function App({
     setUser(null);
     setTenants([]);
     setProfileOpen(false);
+    setGuestGateOpen(false);
+    setResumeBuild(false);
+    resumeStarted.current = false;
+    clearLandingDraft();
     if (clerkOut) void clerkOut();
   }
 
@@ -241,101 +312,41 @@ export default function App({
     setTenants(session.tenants || []);
     setAuthed(true);
     setProfileOpen(false);
+    setGuestGateOpen(false);
   }
 
-  if (authed === null) {
-    return (
-      <div className="landing">
-        <div className="landing-bg" />
-        <div className="landing-content">
-          <p className="brand-mark">
-            Simu<em>lacra</em>
-          </p>
-          <p className="landing-sub">Loading…</p>
-        </div>
-      </div>
-    );
+  function openGuestAuth(mode: "login" | "register") {
+    setAuthMode(mode);
+    setProfileTab("auth");
+    setProfileOpen(true);
   }
 
-  if (!authed) {
-    return (
-      <>
-        <Landing
-          prompt={prompt}
-          artifactKind={artifactKind}
-          busy={false}
-          files={fixtureFiles}
-          pendingFiles={pendingFiles}
-          dataAttached={dataAttached}
-          error={null}
-          authed={false}
-          projects={[]}
-          onPrompt={setPrompt}
-          onArtifactKind={setArtifactKind}
-          onToggleData={() => setDataAttached((v) => !v)}
-          onPickPending={(files) =>
-            setPendingFiles((prev) => {
-              const names = new Set(prev.map((f) => f.name));
-              return [...prev, ...files.filter((f) => !names.has(f.name))];
-            })
-          }
-          onClearPending={(name) => setPendingFiles((prev) => prev.filter((f) => f.name !== name))}
-          onBuild={() => setProfileOpen(true)}
-          onLogin={() => setProfileOpen(true)}
-          onDismissError={() => undefined}
-        />
-        <ProfileManageModal
-          open={profileOpen}
-          locked={false}
-          onClose={() => setProfileOpen(false)}
-          user={null}
-          tenants={[]}
-          clerkEnabled={clerkEnabled}
-          clerkAvailable={clerkAvailable}
-          onUseClerk={onUseClerk}
-          onAuthed={handleAuthed}
-          onSignOut={handleSignOut}
-          initialTab="auth"
-        />
-      </>
-    );
+  function saveGuestDraft(resume: boolean) {
+    writeLandingDraft({
+      prompt,
+      artifactKind,
+      dataAttached,
+      resumeBuild: resume,
+    });
   }
 
-  function buildPrompt(): string {
-    const parts: string[] = [];
-    if (goal.trim()) parts.push(`Goal: ${goal.trim()}`);
-    if (prompt.trim()) parts.push(prompt.trim());
-    return parts.join("\n\n");
-  }
-
-  async function loadProject(id: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      const snap = await getProject(id);
-      setSnapshot(snap);
-      if (snap.project.design_brief) setDesignBrief(snap.project.design_brief);
-      setMode(snap.project.phase === "plan" ? "plan" : "workspace");
-      setPreviewOpen(false);
-      setInput("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load project");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleStartPlanning() {
+  const handleStartPlanning = useCallback(async () => {
     const hasSources = dataAttached || pendingFiles.length > 0;
     if (!hasSources) {
       setError("Add sources (sample pack and/or uploads) before planning.");
       return;
     }
-    const text = buildPrompt();
+    const parts: string[] = [];
+    if (goal.trim()) parts.push(`Goal: ${goal.trim()}`);
+    if (prompt.trim()) parts.push(prompt.trim());
+    const text = parts.join("\n\n");
     if (text.length < 3) return;
 
     setBusy(true);
     setError(null);
+    setResumeBuild(false);
+    setGuestGateOpen(false);
+    clearLandingDraft();
     try {
       const brief = {
         ...designBrief,
@@ -365,6 +376,124 @@ export default function App({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start plan");
+      setBusy(false);
+    }
+  }, [
+    artifactKind,
+    dataAttached,
+    designBrief,
+    goal,
+    pendingFiles,
+    pollUntilIdle,
+    prompt,
+    refreshProjects,
+  ]);
+
+  // After guest send → login, continue into the create flow with preserved draft.
+  useEffect(() => {
+    if (authed !== true || !resumeBuild || busy) return;
+    if (resumeStarted.current) return;
+    if (prompt.trim().length < 3) {
+      setResumeBuild(false);
+      clearLandingDraft();
+      return;
+    }
+    if (!(dataAttached || pendingFiles.length > 0)) {
+      setResumeBuild(false);
+      clearLandingDraft();
+      return;
+    }
+    resumeStarted.current = true;
+    void handleStartPlanning();
+  }, [authed, busy, dataAttached, handleStartPlanning, pendingFiles.length, prompt, resumeBuild]);
+
+  if (authed === null) {
+    return (
+      <div className="landing">
+        <div className="landing-bg" />
+        <div className="landing-content">
+          <p className="brand-mark">
+            Simu<em>lacra</em>
+          </p>
+          <p className="landing-sub">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authed) {
+    return (
+      <>
+        <Landing
+          prompt={prompt}
+          artifactKind={artifactKind}
+          busy={false}
+          files={fixtureFiles}
+          pendingFiles={pendingFiles}
+          dataAttached={dataAttached}
+          error={null}
+          authed={false}
+          projects={[]}
+          guestGateOpen={guestGateOpen}
+          clerkEnabled={clerkEnabled}
+          onPrompt={setPrompt}
+          onArtifactKind={setArtifactKind}
+          onToggleData={() => setDataAttached((v) => !v)}
+          onPickPending={(files) =>
+            setPendingFiles((prev) => {
+              const names = new Set(prev.map((f) => f.name));
+              return [...prev, ...files.filter((f) => !names.has(f.name))];
+            })
+          }
+          onClearPending={(name) => setPendingFiles((prev) => prev.filter((f) => f.name !== name))}
+          onBuild={() => {
+            resumeStarted.current = false;
+            setGuestGateOpen(true);
+            setResumeBuild(true);
+            saveGuestDraft(true);
+          }}
+          onLogin={() => openGuestAuth("login")}
+          onGuestCreateAccount={() => openGuestAuth("register")}
+          onGuestSignIn={() => openGuestAuth("login")}
+          onGuestGateDismiss={() => {
+            setGuestGateOpen(false);
+            setResumeBuild(false);
+            resumeStarted.current = false;
+            clearLandingDraft();
+          }}
+          onDismissError={() => undefined}
+        />
+        <ProfileManageModal
+          open={profileOpen}
+          locked={false}
+          onClose={() => setProfileOpen(false)}
+          user={null}
+          tenants={[]}
+          clerkEnabled={clerkEnabled}
+          clerkAvailable={clerkAvailable}
+          onUseClerk={onUseClerk}
+          onAuthed={handleAuthed}
+          onSignOut={handleSignOut}
+          initialTab="auth"
+          authMode={authMode}
+        />
+      </>
+    );
+  }
+
+  async function loadProject(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const snap = await getProject(id);
+      setSnapshot(snap);
+      if (snap.project.design_brief) setDesignBrief(snap.project.design_brief);
+      setMode(snap.project.phase === "plan" ? "plan" : "workspace");
+      setPreviewOpen(false);
+      setInput("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load project");
+    } finally {
       setBusy(false);
     }
   }
@@ -510,6 +639,10 @@ export default function App({
     setPreviewOpen(false);
     setSidebarOpen(false);
     setBusy(false);
+    clearLandingDraft();
+    setResumeBuild(false);
+    setGuestGateOpen(false);
+    resumeStarted.current = false;
   }
 
   function openAccount(tab: ProfileTab = "account") {

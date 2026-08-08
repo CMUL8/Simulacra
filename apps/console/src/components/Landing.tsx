@@ -1,6 +1,7 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactKind, DataRoomFile, Project } from "../api";
+import { GuestAuthGate } from "./GuestAuthGate";
 import { SourcesPanel } from "./SourcesPanel";
 
 /** Prompt chips — three shown; set rotates each UTC day. */
@@ -75,6 +76,8 @@ type Props = {
   error: string | null;
   authed?: boolean;
   projects?: Project[];
+  guestGateOpen?: boolean;
+  clerkEnabled?: boolean;
   onPrompt: (v: string) => void;
   onArtifactKind: (k: ArtifactKind) => void;
   onToggleData: () => void;
@@ -83,6 +86,9 @@ type Props = {
   onBuild: () => void;
   onOpenProject?: (id: string) => void;
   onLogin?: () => void;
+  onGuestCreateAccount?: () => void;
+  onGuestSignIn?: () => void;
+  onGuestGateDismiss?: () => void;
   onDismissError: () => void;
 };
 
@@ -96,6 +102,8 @@ export function Landing({
   error,
   authed = true,
   projects = [],
+  guestGateOpen = false,
+  clerkEnabled = false,
   onPrompt,
   onArtifactKind,
   onToggleData,
@@ -104,20 +112,26 @@ export function Landing({
   onBuild,
   onOpenProject,
   onLogin,
+  onGuestCreateAccount,
+  onGuestSignIn,
+  onGuestGateDismiss,
   onDismissError,
 }: Props) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const projectsRef = useRef<HTMLElement>(null);
   const sourceCount = (dataAttached ? files.length : 0) + pendingFiles.length;
-  const canBuild = prompt.trim().length >= 3 && sourceCount > 0 && !busy;
+  // Guests may send with sample pack checked even before fixture list loads.
+  const sourcesReady = sourceCount > 0 || (!authed && dataAttached);
+  const canBuild = prompt.trim().length >= 3 && sourcesReady && !busy && !guestGateOpen;
   const recent = projects.slice(0, 12);
   const pills = useMemo(() => pillsForDay(utcDayIndex()), []);
   const activeFormat = FORMAT_OPTIONS.find((f) => f.kind === artifactKind) || FORMAT_OPTIONS[0]!;
+  const gated = !authed && guestGateOpen;
 
   useEffect(() => {
-    promptRef.current?.focus();
-  }, []);
+    if (!gated) promptRef.current?.focus();
+  }, [gated]);
 
   function scrollToProjects() {
     projectsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -179,7 +193,7 @@ export function Landing({
               key={f.kind}
               type="button"
               className={f.kind === artifactKind ? "format-chip on" : "format-chip"}
-              disabled={busy}
+              disabled={busy || gated}
               title={f.hint}
               onClick={() => onArtifactKind(f.kind)}
             >
@@ -188,14 +202,14 @@ export function Landing({
           ))}
         </div>
 
-        <div className="anything-prompt">
+        <div className={`anything-prompt${gated ? " gated" : ""}`}>
           <textarea
             ref={promptRef}
             value={prompt}
             onChange={(e) => onPrompt(e.target.value)}
             placeholder={activeFormat.hint}
             rows={4}
-            disabled={busy}
+            disabled={busy || gated}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canBuild) onBuild();
             }}
@@ -203,13 +217,19 @@ export function Landing({
           <div className="prompt-footer">
             <button
               type="button"
-              className={`data-chip ${sourceCount > 0 ? "on" : ""}`}
+              className={`data-chip ${sourceCount > 0 || (!authed && dataAttached) ? "on" : ""}`}
               onClick={() => setSourcesOpen(true)}
-              disabled={busy}
-              title="Manage data sources"
+              disabled={busy || gated}
+              title="Manage sources"
             >
               <Database size={15} strokeWidth={1.75} />
-              <span>{sourceCount > 0 ? `Sources · ${sourceCount}` : "Add sources"}</span>
+              <span>
+                {sourceCount > 0
+                  ? `Sources · ${sourceCount}`
+                  : !authed && dataAttached
+                    ? "Sources · sample"
+                    : "Add sources"}
+              </span>
             </button>
             <button
               type="button"
@@ -223,13 +243,26 @@ export function Landing({
           </div>
         </div>
 
-        <div className="landing-pills">
-          {pills.map((p) => (
-            <button key={p} type="button" onClick={() => onPrompt(p)} disabled={busy}>
-              {p}
-            </button>
-          ))}
-        </div>
+        {gated && (
+          <GuestAuthGate
+            prompt={prompt}
+            artifactKind={artifactKind}
+            clerkEnabled={clerkEnabled}
+            onCreateAccount={() => onGuestCreateAccount?.()}
+            onSignIn={() => onGuestSignIn?.()}
+            onEdit={() => onGuestGateDismiss?.()}
+          />
+        )}
+
+        {!gated && (
+          <div className="landing-pills">
+            {pills.map((p) => (
+              <button key={p} type="button" onClick={() => onPrompt(p)} disabled={busy}>
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
 
         {authed && recent.length > 0 && (
           <section className="landing-projects" ref={projectsRef} id="projects" aria-label="Your projects">

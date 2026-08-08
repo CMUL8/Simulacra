@@ -52,14 +52,14 @@ export function SourcesPanel({
   const nuances = profile?.nuance_notes?.slice(0, 4) || [];
 
   return (
-    <div className="sources-overlay" role="dialog" aria-label="Data sources">
+    <div className="sources-overlay" role="dialog" aria-label="Sources">
       <div className="sources-panel">
         <header className="sources-head">
           <div>
             <h2>
-              <Database size={16} strokeWidth={1.75} /> Data sources
+              <Database size={16} strokeWidth={1.75} /> Sources
             </h2>
-            <p>Ingest files the app and builder will design around.</p>
+            <p>Add the files this build should work from.</p>
           </div>
           <button type="button" className="sources-close" onClick={onClose} aria-label="Close">
             <X size={16} />
@@ -76,8 +76,8 @@ export function SourcesPanel({
                 onChange={() => onToggleFixture?.()}
               />
               <span>
-                Include sample diligence pack
-                <em>vendor research · notes · supplement CSV</em>
+                Include sample pack
+                <em>vendor research · notes · CSV</em>
               </span>
             </label>
           )}
@@ -118,7 +118,7 @@ export function SourcesPanel({
           </div>
 
           <p className="sources-hint">
-            Extractable: .md .txt .csv .json · Max 8&nbsp;MB each · Other types stay in inventory
+            Readable now: .md .txt .csv .json · Max 8&nbsp;MB each · Other types are kept as files
           </p>
 
           {pendingFiles.length > 0 && (

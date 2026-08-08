@@ -22,6 +22,8 @@ type Props = {
   onAuthed: (session: AuthSession) => void;
   onSignOut: () => void;
   initialTab?: ProfileTab;
+  /** Prefer register when guest gate asks to create an account */
+  authMode?: "login" | "register";
 };
 
 export function ProfileManageModal({
@@ -38,6 +40,7 @@ export function ProfileManageModal({
   onAuthed,
   onSignOut,
   initialTab,
+  authMode = "login",
 }: Props) {
   const [tab, setTab] = useState<ProfileTab>(initialTab || (user ? "account" : "auth"));
 
@@ -56,51 +59,58 @@ export function ProfileManageModal({
 
   if (!open) return null;
 
+  const isGuestAuth = !user && tab === "auth";
   const title =
     tab === "policy" ? "Policy" : tab === "admin" ? "Admin" : tab === "auth" ? (user ? "Session" : "Sign in") : "Account";
 
   return (
     <div className="acct-backdrop" role="dialog" aria-modal="true" aria-label="Account">
-      <div className={`acct-modal ${tab === "policy" || tab === "admin" ? "acct-modal-wide" : ""}`}>
-        <aside className="acct-rail">
-          <div className="acct-rail-head">
-            <span className="acct-brand">
-              Simu<em>lacra</em>
-            </span>
-            <p className="acct-rail-sub">Workspace controls</p>
-          </div>
+      <div
+        className={`acct-modal ${isGuestAuth ? "acct-modal-auth" : ""} ${
+          tab === "policy" || tab === "admin" ? "acct-modal-wide" : ""
+        }`}
+      >
+        {!isGuestAuth && (
+          <aside className="acct-rail">
+            <div className="acct-rail-head">
+              <span className="acct-brand">
+                Simu<em>lacra</em>
+              </span>
+              <p className="acct-rail-sub">Workspace controls</p>
+            </div>
 
-          <nav className="acct-nav" aria-label="Account sections">
-            {user ? (
-              <>
-                <button type="button" className={tab === "account" ? "active" : ""} onClick={() => setTab("account")}>
+            <nav className="acct-nav" aria-label="Account sections">
+              {user ? (
+                <>
+                  <button type="button" className={tab === "account" ? "active" : ""} onClick={() => setTab("account")}>
+                    <UserRound size={15} strokeWidth={1.75} />
+                    Account
+                  </button>
+                  <button type="button" className={tab === "policy" ? "active" : ""} onClick={() => setTab("policy")}>
+                    <Shield size={15} strokeWidth={1.75} />
+                    Policy
+                  </button>
+                  <button type="button" className={tab === "admin" ? "active" : ""} onClick={() => setTab("admin")}>
+                    <Building2 size={15} strokeWidth={1.75} />
+                    Admin
+                  </button>
+                </>
+              ) : (
+                <button type="button" className={tab === "auth" ? "active" : ""} onClick={() => setTab("auth")}>
                   <UserRound size={15} strokeWidth={1.75} />
-                  Account
+                  Sign in
                 </button>
-                <button type="button" className={tab === "policy" ? "active" : ""} onClick={() => setTab("policy")}>
-                  <Shield size={15} strokeWidth={1.75} />
-                  Policy
-                </button>
-                <button type="button" className={tab === "admin" ? "active" : ""} onClick={() => setTab("admin")}>
-                  <Building2 size={15} strokeWidth={1.75} />
-                  Admin
-                </button>
-              </>
-            ) : (
-              <button type="button" className={tab === "auth" ? "active" : ""} onClick={() => setTab("auth")}>
-                <UserRound size={15} strokeWidth={1.75} />
-                Sign in
+              )}
+            </nav>
+
+            {user && (
+              <button type="button" className="acct-signout" onClick={onSignOut}>
+                <LogOut size={15} strokeWidth={1.75} />
+                Sign out
               </button>
             )}
-          </nav>
-
-          {user && (
-            <button type="button" className="acct-signout" onClick={onSignOut}>
-              <LogOut size={15} strokeWidth={1.75} />
-              Sign out
-            </button>
-          )}
-        </aside>
+          </aside>
+        )}
 
         <section className={`acct-main ${tab === "policy" || tab === "admin" ? "acct-main-wide" : ""}`}>
           {!locked && onClose && (
@@ -175,19 +185,26 @@ export function ProfileManageModal({
 
           {tab === "auth" && (
             <div className="acct-pane acct-pane-auth">
-              <h1 className="acct-title">{user ? "Session" : "Welcome"}</h1>
+              {isGuestAuth && (
+                <div className="acct-auth-brand">
+                  Simu<em>lacra</em>
+                </div>
+              )}
+              <h1 className="acct-title">{user ? "Session" : "Sign in"}</h1>
               <p className="acct-sub">
                 {user
                   ? "You’re signed in. Use Sign out to end this session."
-                  : "Sign in to plan and build governed internal apps."}
+                  : "Continue to your workspace."}
               </p>
               {!user && (
                 <LoginPage
+                  key={authMode}
                   embedded
                   clerkEnabled={clerkEnabled}
                   clerkAvailable={clerkAvailable}
                   onUseClerk={onUseClerk}
                   onAuthed={onAuthed}
+                  initialMode={authMode}
                 />
               )}
               {user && (
