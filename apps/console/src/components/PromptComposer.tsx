@@ -1,4 +1,4 @@
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, Square } from "lucide-react";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import type { DataRoomFile } from "../api";
 
@@ -18,7 +18,7 @@ export function PromptComposer({
   value,
   onChange,
   onSubmit,
-  placeholder = "Describe what people should see…",
+  placeholder = "Send follow-up",
   disabled,
   busy,
   files = [],
@@ -34,7 +34,7 @@ export function PromptComposer({
     const el = areaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [value]);
 
   const filtered = files.filter((f) =>
@@ -56,6 +56,10 @@ export function PromptComposer({
       el.focus();
       el.selectionStart = el.selectionEnd = atPos + tag.length;
     });
+  }
+
+  function trySubmit() {
+    if (!busy && !disabled && value.trim()) onSubmit();
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -80,9 +84,9 @@ export function PromptComposer({
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey && (e.metaKey || e.ctrlKey)) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!busy && value.trim()) onSubmit();
+      trySubmit();
     }
   }
 
@@ -107,7 +111,7 @@ export function PromptComposer({
       className="prompt-composer"
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        onSubmit();
+        trySubmit();
       }}
     >
       {mentionOpen && filtered.length > 0 && (
@@ -130,29 +134,52 @@ export function PromptComposer({
           ))}
         </ul>
       )}
-      <textarea
-        ref={areaRef}
-        value={value}
-        onChange={(e) => onInputChange(e.target.value)}
-        onKeyDown={onKey}
-        placeholder={placeholder}
-        disabled={disabled || busy}
-        rows={2}
-      />
-      <div className="composer-bar">
-        <span className="model-tag">
-          <span className="dot" /> {modeTag} · read-only
-        </span>
-        <div className="composer-actions">
-          <span className="kbd-hint">⌘↵</span>
-          <button
-            type="submit"
-            className="send-btn"
-            disabled={disabled || busy || !value.trim()}
-            aria-label={submitLabel || "Send"}
-          >
-            <ArrowUp size={16} strokeWidth={2.5} />
-          </button>
+
+      <div className="composer-inner">
+        <button
+          type="button"
+          className="composer-attach"
+          disabled={disabled || busy || files.length === 0}
+          title={files.length ? "Insert @source" : "No sources"}
+          onClick={() => {
+            onChange(value + (value && !value.endsWith(" ") ? " @" : "@"));
+            areaRef.current?.focus();
+            setMentionOpen(true);
+            setMentionFilter("");
+          }}
+        >
+          <AtSign size={15} strokeWidth={1.75} />
+        </button>
+
+        <textarea
+          ref={areaRef}
+          value={value}
+          onChange={(e) => onInputChange(e.target.value)}
+          onKeyDown={onKey}
+          placeholder={placeholder}
+          disabled={disabled || busy}
+          rows={1}
+        />
+
+        <div className="composer-trailing">
+          <span className="model-tag" title={`${modeTag} mode`}>
+            {modeTag}
+            <ChevronDown size={12} strokeWidth={2} />
+          </span>
+          {busy ? (
+            <button type="button" className="send-btn stop" disabled aria-label="Working">
+              <Square size={11} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="send-btn"
+              disabled={disabled || !value.trim()}
+              aria-label={submitLabel || "Send"}
+            >
+              <ArrowUp size={16} strokeWidth={2.5} />
+            </button>
+          )}
         </div>
       </div>
     </form>

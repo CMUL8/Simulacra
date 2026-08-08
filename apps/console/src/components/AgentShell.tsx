@@ -214,11 +214,7 @@ export function AgentShell({
             disabled={project.status === "failed"}
             busy={busy}
             files={files}
-            placeholder={
-              isPlan
-                ? "Refine the idea, tag sources with @…"
-                : "Ask for changes to your app…"
-            }
+            placeholder={isPlan ? "Send follow-up" : "Ask for changes…"}
             submitLabel="Send"
             modeTag={isPlan ? "Plan" : "Agent"}
           />
