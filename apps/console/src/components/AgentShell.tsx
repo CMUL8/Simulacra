@@ -101,12 +101,19 @@ function turnKind(m: ChatMessage): TurnKind {
   return "assistant";
 }
 
-function stageLabel(source?: string | null): { text: string; cls: string } | null {
-  if (!source || source === "system") return null;
+/** One status chip — never Draft + Deployed at once. */
+function statusChip(
+  project: Snapshot["project"],
+  source?: string | null,
+): { text: string; cls: string } | null {
+  if (project.deployed) return { text: "Deployed", cls: "source-prime" };
   if (source === "prime") return { text: "Built", cls: "source-prime" };
-  if (source === "template" || source === "heuristic") return { text: "Draft", cls: "source-heuristic" };
   if (source === "cancelled") return { text: "Stopped", cls: "source-error" };
   if (source === "timeout" || source === "error") return { text: "Retry", cls: "source-error" };
+  // Plan / template / heuristic preview — not shipped
+  if (project.phase === "plan" || source === "template" || source === "heuristic" || !source || source === "none") {
+    return { text: "Draft", cls: "source-heuristic" };
+  }
   return null;
 }
 
@@ -234,7 +241,7 @@ export function AgentShell({
         : "Working…";
   const ctaLabel = isPlan ? "Build app" : hasPreview ? "Rebuild" : "Build app";
   const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
-  const stage = stageLabel(lastAssistant?.source ?? project.prime?.source);
+  const stage = statusChip(project, lastAssistant?.source ?? project.prime?.source);
   const showStyleBar = Boolean(designBrief && onSaveDesignBrief);
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const showStandalonePlan =
@@ -257,7 +264,6 @@ export function AgentShell({
           </span>
           <span className="project-name">{project.app_config.title}</span>
           {stage && <span className={`source-chip ${stage.cls}`}>{stage.text}</span>}
-          {project.deployed && <span className="deployed-pill">live</span>}
         </div>
         <div className="agent-topbar-right">
           {hasPreview && (
