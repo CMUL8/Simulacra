@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import queue
-from typing import Annotated, Any
-
 from pathlib import Path
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -182,6 +182,23 @@ def ready() -> dict[str, Any]:
 
 
 # ── Auth ─────────────────────────────────────────────────────────────
+
+
+@app.get("/auth/config")
+def auth_config() -> dict:
+	"""Public auth bootstrap for the console (publishable Clerk key is not secret)."""
+	from simulacra.demo.clerk_auth import clerk_enabled
+
+	pk = (
+		os.environ.get("VITE_CLERK_PUBLISHABLE_KEY")
+		or os.environ.get("CLERK_PUBLISHABLE_KEY")
+		or ""
+	).strip()
+	return {
+		"clerk_enabled": clerk_enabled() and bool(pk),
+		"clerk_publishable_key": pk or None,
+		"clerk_frontend_api": os.environ.get("CLERK_FRONTEND_API", "https://clerk.platform.cmul8.com"),
+	}
 
 
 @app.post("/auth/register")
@@ -747,7 +764,21 @@ if _CONSOLE_DIST.is_dir():
 
 	@app.get("/{full_path:path}")
 	def console_spa(full_path: str) -> FileResponse:
-		# Do not shadow API routes already registered above
+		# Never steal API/auth/admin paths if routing order ever regresses
+		api_prefixes = (
+			"auth/",
+			"admin/",
+			"projects/",
+			"tenants/",
+			"governance",
+			"fixtures/",
+			"health",
+			"ready",
+			"docs",
+			"openapi",
+		)
+		if full_path == "health" or full_path.startswith(api_prefixes):
+			raise HTTPException(404, "Not found")
 		candidate = _CONSOLE_DIST / full_path
 		if candidate.is_file():
 			return FileResponse(candidate)
