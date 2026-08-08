@@ -1,4 +1,3 @@
-import { Building2, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_DESIGN_BRIEF,
@@ -426,39 +425,6 @@ export default function App({
   if (mode === "landing") {
     return (
       <>
-        <div className="landing-fabs">
-          {tenants.length > 1 && (
-            <select
-              className="tenant-select"
-              value={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id || "default"}
-              onChange={(e) => {
-                setTenantId(e.target.value);
-                refreshProjects();
-              }}
-            >
-              {tenants.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <button type="button" className="gov-fab" onClick={() => openGovernance("landing")}>
-            <Shield size={14} />
-            Policy
-          </button>
-          <button
-            type="button"
-            className="gov-fab"
-            onClick={() => {
-              setGovReturn("landing");
-              setMode("admin");
-            }}
-          >
-            <Building2 size={14} />
-            Admin
-          </button>
-        </div>
         <Landing
           prompt={prompt}
           busy={busy}
@@ -466,10 +432,21 @@ export default function App({
           dataAttached={dataAttached}
           error={error}
           authed
+          tenants={tenants}
+          tenantId={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id}
           onPrompt={setPrompt}
           onToggleData={() => setDataAttached((v) => !v)}
           onBuild={handleStartPlanning}
           onLogin={() => setProfileOpen(true)}
+          onPolicy={() => openGovernance("landing")}
+          onAdmin={() => {
+            setGovReturn("landing");
+            setMode("admin");
+          }}
+          onTenant={(id) => {
+            setTenantId(id);
+            refreshProjects();
+          }}
           onDismissError={() => setError(null)}
         />
         <ProfileManageModal
