@@ -1,20 +1,21 @@
-"""Plan mode — read-only exploration before build. Prime owns the first reply."""
+"""Plan mode — scan sources, then open with Prime in a bounded job."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from .chat import infer_app_config
+from .design_brief import write_brief
 from .extract import extract_data_room, write_summary
 from .events import emit_event
+from .jobs import JobConflictError, start_job
 from .prime_hook import prime_open_plan, prime_plan_chat
 from .runs import ChatMessage, ProjectState, load_state, project_dir, save_state
 
 
-def explore_plan_data(state: ProjectState) -> ProjectState:
-	"""Scan sources, then hand the user request to Prime for the opening plan."""
+def explore_plan_scan(state: ProjectState) -> ProjectState:
+	"""Read-only extract for plan preview — does not talk to the user yet."""
 	root = project_dir(state.id)
 	pid = state.id
 	data_room = root / "inputs" / "data-room"
@@ -36,7 +37,6 @@ def explore_plan_data(state: ProjectState) -> ProjectState:
 
 	vendors = sorted({r["vendor"] for r in rows})
 	high = sum(1 for r in rows if r["risk_level"] == "high")
-	sample = rows[:5]
 
 	state.plan_preview = {
 		"row_count": len(rows),
@@ -44,31 +44,49 @@ def explore_plan_data(state: ProjectState) -> ProjectState:
 		"vendors": vendors,
 		"files": files,
 		"summary": summary,
-		"sample_rows": sample,
+		"sample_rows": rows[:5],
 	}
 	state.row_count = len(rows)
 	state.status = "planning"
+	state.prime = {**state.prime, "status": "starting", "source": "pending"}
 	(root / "work" / "plan_preview.json").write_text(json.dumps(state.plan_preview, indent=2))
 	emit_event(pid, "phase", label="Scanning sources", detail=f"{len(rows)} rows", status="done")
+	save_state(state)
+	return state
 
-	emit_event(pid, "think", label="Prime planning", detail="Opening plan with Prime", status="running")
-	cfg, reply, meta = prime_open_plan(root, state, summary=summary, project_id=pid)
-	source = "prime" if reply and meta.source == "prime" else ("heuristic" if not reply else meta.source)
+
+def run_plan_open(project_id: str) -> ProjectState:
+	"""Hand the opening turn to Prime. Called from a background job."""
+	state = load_state(project_id)
+	root = project_dir(project_id)
+	preview = state.plan_preview or {}
+	summary = str(preview.get("summary") or "")
+	files = list(preview.get("files") or [])
+	rows = int(preview.get("row_count") or 0)
+	high = int(preview.get("high_risk") or 0)
+	vendors = list(preview.get("vendors") or [])
+
+	# Avoid duplicate opening replies on retry
+	if any(m.role == "assistant" for m in state.chat):
+		return state
+
+	emit_event(project_id, "think", label="Prime planning", detail="Opening plan with Prime", status="running")
+	cfg, reply, meta = prime_open_plan(root, state, summary=summary, project_id=project_id)
+	source = "prime" if reply and meta.source == "prime" else ("error" if meta.error else "heuristic")
 
 	if cfg and cfg.title:
 		state.app_config = cfg
 	else:
 		state.app_config = infer_app_config(state.prompt, state.app_config)
 
-	# Keep design brief product fields aligned with the proposed app
 	if state.app_config.title:
 		state.design_brief["product_name"] = state.app_config.title
 	if state.app_config.subtitle:
 		state.design_brief["one_liner"] = state.app_config.subtitle
 
 	if not reply:
-		reply = _heuristic_open_reply(state, files=files, rows=len(rows), high=high, vendors=vendors)
-		source = "heuristic"
+		reply = _open_reply(state, files=files, rows=rows, high=high, vendors=vendors)
+		source = "heuristic" if not meta.error else "error"
 
 	state.chat.append(ChatMessage(role="assistant", content=reply, source=source))
 	state.prime = {
@@ -80,28 +98,68 @@ def explore_plan_data(state: ProjectState) -> ProjectState:
 		"last_error": meta.error,
 	}
 	emit_event(
-		pid,
+		project_id,
 		"think",
 		label="Plan ready",
 		detail=f"{source}: {state.app_config.title}",
 		status="done",
 	)
-	emit_event(pid, "done", label="Plan ready", detail="Approve when ready to build", status="done")
-	from .design_brief import write_brief
-
-	write_brief(pid, state.design_brief)
+	emit_event(project_id, "done", label="Plan ready", detail="Approve when ready to build", status="done")
+	write_brief(project_id, state.design_brief)
 	save_state(state)
 	return state
 
 
+def init_plan(state: ProjectState) -> ProjectState:
+	"""Scan immediately, then fire Prime in a background job so the UI can show a loader."""
+	state = explore_plan_scan(state)
+	pid = state.id
+
+	def target(_job):
+		return run_plan_open(pid)
+
+	try:
+		start_job(pid, "plan_ask", label="Prime planning", target=target)
+	except JobConflictError:
+		# Another open already in flight
+		pass
+	return load_state(pid)
+
+
 def plan_chat(project_id: str, message: str) -> ProjectState:
+	"""Synchronous plan turn (tests / scripts). Prefer start_plan_chat for the API."""
 	state = load_state(project_id)
 	if state.phase != "plan":
 		raise ValueError("Project is not in plan phase")
 
 	state.chat.append(ChatMessage(role="user", content=message))
 	state.prompt = _merge_prompt_update(state.prompt, message)
+	save_state(state)
+	return _plan_chat_reply(project_id, message)
 
+
+def start_plan_chat(project_id: str, message: str) -> ProjectState:
+	"""Append the user turn immediately, then answer with Prime in a background job."""
+	state = load_state(project_id)
+	if state.phase != "plan":
+		raise ValueError("Project is not in plan phase")
+
+	state.chat.append(ChatMessage(role="user", content=message))
+	state.prompt = _merge_prompt_update(state.prompt, message)
+	save_state(state)
+
+	def target(_job):
+		return _plan_chat_reply(project_id, message)
+
+	try:
+		start_job(project_id, "plan_ask", label="Prime planning", target=target)
+	except JobConflictError as exc:
+		raise ValueError(str(exc)) from exc
+	return load_state(project_id)
+
+
+def _plan_chat_reply(project_id: str, message: str) -> ProjectState:
+	state = load_state(project_id)
 	emit_event(project_id, "think", label="Planning", detail=message[:200], status="running")
 	reply = prime_plan_chat(project_dir(project_id), state, message, project_id=project_id)
 	source = "prime"
@@ -114,12 +172,11 @@ def plan_chat(project_id: str, message: str) -> ProjectState:
 	state.prime["source"] = source
 	prev_title, prev_sub = state.app_config.title, state.app_config.subtitle
 	state.app_config = infer_app_config(state.prompt, state.app_config)
-	# Keep Prime's proposed product name unless the user explicitly renames
 	lower = message.lower()
 	if "call it" not in lower and "rename to" not in lower and prev_title:
 		state.app_config.title = prev_title
 		state.app_config.subtitle = prev_sub
-	from .design_brief import merge_notes_from_message, write_brief
+	from .design_brief import merge_notes_from_message
 
 	state.design_brief = merge_notes_from_message(state.design_brief, message)
 	write_brief(project_id, state.design_brief)
@@ -152,7 +209,7 @@ def _merge_prompt_update(prompt: str, message: str) -> str:
 	return prompt
 
 
-def _heuristic_open_reply(
+def _open_reply(
 	state: ProjectState,
 	*,
 	files: list[dict[str, Any]],
@@ -160,14 +217,13 @@ def _heuristic_open_reply(
 	high: int,
 	vendors: list[str],
 ) -> str:
+	"""Clean opening when Prime cannot answer — no harness confession in the chat."""
 	return (
-		f"Here’s a plan for **{state.app_config.title}** — {state.app_config.subtitle}\n\n"
-		f"I scanned **{len(files)}** source files"
-		+ (f" ({rows} structured rows, {high} high-risk, {len(vendors)} vendors)" if rows else "")
+		f"**{state.app_config.title}** — {state.app_config.subtitle}\n\n"
+		f"I have {len(files)} source files ready"
+		+ (f" ({rows} rows across {len(vendors)} vendors)" if rows else "")
 		+ ".\n\n"
-		"Refine the idea in chat, set Look & feel and **Save**, then click **Approve & Build** "
-		"when you’re ready.\n\n"
-		"_Prime was unavailable for this opening reply — using a local fallback._"
+		"Refine the idea below, pick a style, then **Approve & Build** when you’re ready."
 	)
 
 
@@ -180,10 +236,7 @@ def _heuristic_plan_reply(state: ProjectState, message: str) -> str:
 	if "@" in message:
 		tags = [t.strip() for t in message.split() if t.startswith("@")]
 		if tags:
-			return (
-				f"Tagged {', '.join(tags)}. In plan mode I only **read** these sources — "
-				f"the built app will draw from them through Simulacra’s control layer."
-			)
+			return f"Tagged {', '.join(tags)}. I’ll use those sources in the build."
 
 	if any(w in lower for w in ("how many", "count", "rows", "findings")):
 		return f"The sources contain **{rows}** extracted rows ({preview.get('high_risk', 0)} high risk)."
@@ -195,12 +248,6 @@ def _heuristic_plan_reply(state: ProjectState, message: str) -> str:
 		files = preview.get("files", [])
 		names = ", ".join(f["name"] for f in files[:6])
 		return f"Source files: {names}."
-
-	if any(w in lower for w in ("security", "access", "direct")):
-		return (
-			"**Control layer:** generated apps never access business systems directly. "
-			"Simulacra mediates reads with auth, audit, and eval gates."
-		)
 
 	return (
 		f"Noted for **{state.app_config.title}**. "

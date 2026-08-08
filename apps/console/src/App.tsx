@@ -26,17 +26,15 @@ import {
   type Snapshot,
   type Tenant,
 } from "./api";
-import { AdminPage } from "./components/AdminPage";
 import { AgentShell } from "./components/AgentShell";
-import { GovernancePage } from "./components/GovernancePage";
 import { Landing } from "./components/Landing";
 import { PreviewDrawer } from "./components/PreviewDrawer";
-import { ProfileManageModal } from "./components/ProfileManageModal";
+import { ProfileManageModal, type ProfileTab } from "./components/ProfileManageModal";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { useEventStream } from "./hooks/useEventStream";
 
-type AppMode = "landing" | "plan" | "workspace" | "governance" | "admin";
+type AppMode = "landing" | "plan" | "workspace";
 
 function jobRunning(snap: Snapshot | null): boolean {
   const status = snap?.job?.status ?? snap?.project.job?.status;
@@ -70,8 +68,8 @@ export default function App({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiOk, setApiOk] = useState(true);
-  const [govReturn, setGovReturn] = useState<AppMode>("landing");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileTab, setProfileTab] = useState<ProfileTab>("account");
   const pollRef = useRef<number | null>(null);
 
   const projectId = snapshot?.project.id ?? null;
@@ -163,6 +161,11 @@ export default function App({
       getProject(projectId)
         .then((snap) => {
           setSnapshot(snap);
+          const status = snap.job?.status ?? snap.project.job?.status ?? "idle";
+          if (status === "idle" || status === "failed" || status === "cancelled") {
+            setBusy(false);
+            stopPolling();
+          }
           if (snap.project.phase === "ready") {
             setMode("workspace");
             setBusy(false);
@@ -284,9 +287,13 @@ export default function App({
       setInput("");
       setSidebarOpen(false);
       await refreshProjects();
+      if (snap.job?.status === "running" || snap.project.job?.status === "running") {
+        pollUntilIdle(snap.project.id);
+      } else {
+        setBusy(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start plan");
-    } finally {
       setBusy(false);
     }
   }
@@ -308,10 +315,14 @@ export default function App({
     try {
       const snap = await sendPlanChat(snapshot.project.id, text);
       setSnapshot(snap);
-      await refreshProjects();
+      if (snap.job?.status === "running" || snap.project.job?.status === "running") {
+        pollUntilIdle(snapshot.project.id);
+      } else {
+        setBusy(false);
+        await refreshProjects();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Plan chat failed");
-    } finally {
       setBusy(false);
     }
   }
@@ -409,17 +420,9 @@ export default function App({
     setBusy(false);
   }
 
-  function openGovernance(from: AppMode = mode) {
-    setGovReturn(from);
-    setMode("governance");
-  }
-
-  if (mode === "governance") {
-    return <GovernancePage onBack={() => setMode(govReturn)} />;
-  }
-
-  if (mode === "admin") {
-    return <AdminPage onBack={() => setMode(govReturn)} />;
+  function openAccount(tab: ProfileTab = "account") {
+    setProfileTab(tab);
+    setProfileOpen(true);
   }
 
   if (mode === "landing") {
@@ -432,21 +435,10 @@ export default function App({
           dataAttached={dataAttached}
           error={error}
           authed
-          tenants={tenants}
-          tenantId={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id}
           onPrompt={setPrompt}
           onToggleData={() => setDataAttached((v) => !v)}
           onBuild={handleStartPlanning}
-          onLogin={() => setProfileOpen(true)}
-          onPolicy={() => openGovernance("landing")}
-          onAdmin={() => {
-            setGovReturn("landing");
-            setMode("admin");
-          }}
-          onTenant={(id) => {
-            setTenantId(id);
-            refreshProjects();
-          }}
+          onLogin={() => openAccount("account")}
           onDismissError={() => setError(null)}
         />
         <ProfileManageModal
@@ -454,11 +446,17 @@ export default function App({
           onClose={() => setProfileOpen(false)}
           user={user}
           tenants={tenants}
+          tenantId={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id}
+          onTenant={(id) => {
+            setTenantId(id);
+            refreshProjects();
+          }}
           clerkEnabled={clerkEnabled}
           clerkAvailable={clerkAvailable}
           onUseClerk={onUseClerk}
           onAuthed={handleAuthed}
           onSignOut={handleSignOut}
+          initialTab={profileTab}
         />
       </>
     );
@@ -501,7 +499,7 @@ export default function App({
           onApprove={mode === "plan" ? handleApprove : undefined}
           onCancel={running ? handleCancel : undefined}
           onOpenPreview={() => setPreviewOpen(true)}
-          onGovernance={() => openGovernance(mode)}
+          onGovernance={() => openAccount("account")}
           onRollback={mode === "workspace" ? handleRollback : undefined}
           onDismissError={() => setError(null)}
         />
@@ -522,6 +520,24 @@ export default function App({
           </button>
         </div>
       )}
+
+      <ProfileManageModal
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        user={user}
+        tenants={tenants}
+        tenantId={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id}
+        onTenant={(id) => {
+          setTenantId(id);
+          refreshProjects();
+        }}
+        clerkEnabled={clerkEnabled}
+        clerkAvailable={clerkAvailable}
+        onUseClerk={onUseClerk}
+        onAuthed={handleAuthed}
+        onSignOut={handleSignOut}
+        initialTab={profileTab}
+      />
     </div>
   );
 }

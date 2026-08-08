@@ -11,9 +11,10 @@ import { fetchGovernance, type GovernanceOverview } from "../api";
 
 type Props = {
   onBack: () => void;
+  embedded?: boolean;
 };
 
-export function GovernancePage({ onBack }: Props) {
+export function GovernancePage({ onBack, embedded = false }: Props) {
   const [data, setData] = useState<GovernanceOverview | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -25,17 +26,19 @@ export function GovernancePage({ onBack }: Props) {
   }, []);
 
   return (
-    <div className="gov-shell">
-      <header className="gov-header">
-        <button type="button" className="back-btn" onClick={onBack}>
-          <ArrowLeft size={16} />
-          Back
-        </button>
-        <div>
-          <h1>Governance & Control</h1>
-          <p>IT control plane for AI-generated internal apps</p>
-        </div>
-      </header>
+    <div className={embedded ? "gov-shell gov-embedded" : "gov-shell"}>
+      {!embedded && (
+        <header className="gov-header">
+          <button type="button" className="back-btn" onClick={onBack}>
+            <ArrowLeft size={16} />
+            Back
+          </button>
+          <div>
+            <h1>Governance & Control</h1>
+            <p>IT control plane for AI-generated internal apps</p>
+          </div>
+        </header>
+      )}
 
       <div className="integration-banner gov-banner">
         <Shield size={20} />
@@ -48,7 +51,7 @@ export function GovernancePage({ onBack }: Props) {
         </div>
       </div>
 
-      {loading && <p className="gov-loading">Loading governance data…</p>}
+      {loading && <p className="gov-loading">Loading policy data…</p>}
 
       {data && (
         <>

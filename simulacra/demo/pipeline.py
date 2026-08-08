@@ -19,7 +19,8 @@ from .events import emit_event
 from .extract import extract_data_room, write_summary
 from .gates import run_gates, write_manifest
 from .jobs import JobConflictError, JobRecord, request_cancel, start_job
-from .plan import approve_plan, explore_plan_data, plan_chat
+from .plan import approve_plan, init_plan, plan_chat, start_plan_chat
+
 from .prime_builder import prime_build_app
 from .prime_hook import is_ui_change_request, prime_follow_up, prime_meta_dict
 from .runs import ChatMessage, ProjectState, file_hash, load_state, project_dir, save_state
@@ -36,10 +37,6 @@ def _load_rows(project_id: str) -> list[dict[str, Any]]:
 	if not path.exists():
 		return []
 	return pq.read_table(path).to_pylist()
-
-
-def init_plan(state: ProjectState) -> ProjectState:
-	return explore_plan_data(state)
 
 
 def _write_policy_snapshot(project_id: str) -> None:
@@ -256,7 +253,7 @@ def follow_up(project_id: str, message: str) -> ProjectState:
 def start_follow_up(project_id: str, message: str) -> dict[str, Any]:
 	state = load_state(project_id)
 	if state.phase == "plan":
-		plan_chat(project_id, message)
+		start_plan_chat(project_id, message)
 		return project_snapshot(project_id)
 
 	if is_ui_change_request(message):

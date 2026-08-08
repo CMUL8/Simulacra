@@ -1,6 +1,6 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { DataRoomFile, Tenant } from "../api";
+import type { DataRoomFile } from "../api";
 import { FileTypeIcon } from "./FileTypeIcon";
 
 const PILLS = [
@@ -16,15 +16,10 @@ type Props = {
   dataAttached: boolean;
   error: string | null;
   authed?: boolean;
-  tenants?: Tenant[];
-  tenantId?: string;
   onPrompt: (v: string) => void;
   onToggleData: () => void;
   onBuild: () => void;
   onLogin?: () => void;
-  onPolicy?: () => void;
-  onAdmin?: () => void;
-  onTenant?: (id: string) => void;
   onDismissError: () => void;
 };
 
@@ -35,15 +30,10 @@ export function Landing({
   dataAttached,
   error,
   authed = true,
-  tenants = [],
-  tenantId,
   onPrompt,
   onToggleData,
   onBuild,
   onLogin,
-  onPolicy,
-  onAdmin,
-  onTenant,
   onDismissError,
 }: Props) {
   const [dataOpen, setDataOpen] = useState(false);
@@ -66,30 +56,6 @@ export function Landing({
           </span>
 
           <nav className="landing-nav-links" aria-label="Primary">
-            {tenants.length > 1 && onTenant && (
-              <select
-                className="landing-nav-select"
-                value={tenantId || tenants[0]?.id}
-                onChange={(e) => onTenant(e.target.value)}
-                aria-label="Workspace"
-              >
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            )}
-            {authed && onPolicy && (
-              <button type="button" onClick={onPolicy}>
-                Policy
-              </button>
-            )}
-            {authed && onAdmin && (
-              <button type="button" onClick={onAdmin}>
-                Admin
-              </button>
-            )}
             <button type="button" onClick={() => onLogin?.()}>
               {authed ? "Account" : "Login"}
             </button>

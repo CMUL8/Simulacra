@@ -10,7 +10,17 @@ RUN npm run build
 
 FROM python:3.12-slim-bookworm
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+	&& curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+	&& apt-get install -y --no-install-recommends nodejs \
+	&& rm -rf /var/lib/apt/lists/*
+# Prime Agent needs a writable npm prefix (installer uses npm install -g)
+ENV NPM_CONFIG_PREFIX=/opt/prime
+ENV PATH="/opt/prime/bin:/usr/local/bin:${PATH}"
+RUN mkdir -p /opt/prime \
+	&& curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh \
+	&& command -v prime-agent \
+	&& prime-agent --version || true
 COPY pyproject.toml README.md ./
 COPY simulacra ./simulacra
 COPY apps ./apps
@@ -21,6 +31,7 @@ COPY scripts ./scripts
 COPY --from=console-build /src/apps/console/dist ./apps/console/dist
 RUN pip install --no-cache-dir -e ".[demo]"
 ENV SIMULACRA_AUTH_REQUIRED=1
+ENV SIMULACRA_USE_PRIME=1
 ENV SIMULACRA_SANDBOX=worktree
 ENV PYTHONPATH=/app
 ENV PORT=8000

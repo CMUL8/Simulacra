@@ -1,12 +1,10 @@
 import {
   ArrowRight,
-  Bot,
   Globe,
   PanelLeft,
   PanelLeftClose,
   RotateCcw,
   Square,
-  User,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } from "../api";
@@ -37,15 +35,6 @@ type Props = {
   onNew?: () => void;
 };
 
-function formatTime(at?: string) {
-  if (!at) return "";
-  try {
-    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
-
 function renderMarkdownLite(text: string) {
   return text.split("\n").map((line, i) => {
     let html = line
@@ -61,10 +50,17 @@ function renderMarkdownLite(text: string) {
   });
 }
 
-function sourceChip(source?: string | null) {
-  if (!source || source === "system" || source === "heuristic") return null;
-  if (source !== "prime") return null;
-  return <span className="source-chip source-prime">Prime</span>;
+function ThinkingLoader({ label }: { label: string }) {
+  return (
+    <div className="cursor-thinking" aria-live="polite" aria-busy="true">
+      <span className="cursor-thinking-dots" aria-hidden>
+        <i />
+        <i />
+        <i />
+      </span>
+      <span className="cursor-thinking-label">{label}</span>
+    </div>
+  );
 }
 
 export function AgentShell({
@@ -92,6 +88,7 @@ export function AgentShell({
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
+  const waitingForOpen = isPlan && busy && project.chat.length === 0;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -104,7 +101,9 @@ export function AgentShell({
           <button type="button" className="icon-btn" onClick={onToggleSidebar} title="Toggle sidebar">
             {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
           </button>
-          <span className="product">Simu<em>lacra</em></span>
+          <span className="product">
+            Simu<em>lacra</em>
+          </span>
           <span className="project-name">{project.app_config.title}</span>
           {project.deployed && <span className="deployed-pill">live</span>}
         </div>
@@ -126,8 +125,8 @@ export function AgentShell({
               <RotateCcw size={14} />
             </button>
           )}
-          <button type="button" className="topbar-link" onClick={onGovernance} title="Policy & controls">
-            Policy
+          <button type="button" className="topbar-link" onClick={onGovernance} title="Account, policy & admin">
+            Account
           </button>
           {isPlan && onApprove && (
             <button type="button" className="approve-btn" disabled={busy} onClick={onApprove}>
@@ -154,34 +153,19 @@ export function AgentShell({
       )}
 
       <div className="agent-center">
-        <div className="agent-thread">
+        <div className="agent-thread cursor-thread">
           {project.chat.map((m: ChatMessage, i: number) => (
-            <article key={i} className={`agent-msg ${m.role}`}>
-              <div className="agent-msg-head">
-                <span className="avatar">{m.role === "user" ? <User size={12} /> : <Bot size={12} />}</span>
-                <span className="who">{m.role === "user" ? "You" : "Simulacra"}</span>
-                {m.role === "assistant" && sourceChip(m.source)}
-                <time>{formatTime(m.at)}</time>
-              </div>
-              <div className="agent-msg-body">{renderMarkdownLite(m.content)}</div>
+            <article key={i} className={`cursor-msg ${m.role}`}>
+              <div className="cursor-msg-body">{renderMarkdownLite(m.content)}</div>
             </article>
           ))}
 
-          {traces.length > 0 && <TracePanel events={traces} onCancel={busy ? onCancel : undefined} />}
+          {!isPlan && traces.length > 0 && (
+            <TracePanel events={traces} onCancel={busy ? onCancel : undefined} />
+          )}
 
-          {busy && traces.length === 0 && (
-            <article className="agent-msg assistant">
-              <div className="agent-msg-head">
-                <span className="avatar">
-                  <Bot size={12} />
-                </span>
-                <span className="who">Simulacra</span>
-                <span className="source-chip source-prime">Prime</span>
-              </div>
-              <div className="agent-msg-body dim">
-                {isPlan ? "Prime is planning from your request…" : "Working…"}
-              </div>
-            </article>
+          {busy && (isPlan || traces.length === 0) && (
+            <ThinkingLoader label={waitingForOpen ? "Planning with Prime…" : "Thinking…"} />
           )}
 
           <div ref={endRef} />

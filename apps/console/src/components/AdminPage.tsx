@@ -22,7 +22,7 @@ import {
   type TenantMember,
 } from "../api";
 
-type Props = { onBack: () => void };
+type Props = { onBack: () => void; embedded?: boolean };
 
 async function downloadAudit(format: string) {
   const token = getToken();
@@ -43,7 +43,7 @@ async function downloadAudit(format: string) {
   URL.revokeObjectURL(url);
 }
 
-export function AdminPage({ onBack }: Props) {
+export function AdminPage({ onBack, embedded = false }: Props) {
   const [admin, setAdmin] = useState<AdminOverview | null>(null);
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -191,17 +191,19 @@ export function AdminPage({ onBack }: Props) {
   }
 
   return (
-    <div className="admin-page">
-      <header className="admin-top">
-        <button type="button" className="ghost-btn" onClick={onBack}>
-          <ArrowLeft size={14} />
-          Back
-        </button>
-        <h1>
-          <Building2 size={18} />
-          Enterprise admin
-        </h1>
-      </header>
+    <div className={embedded ? "admin-page admin-embedded" : "admin-page"}>
+      {!embedded && (
+        <header className="admin-top">
+          <button type="button" className="ghost-btn" onClick={onBack}>
+            <ArrowLeft size={14} />
+            Back
+          </button>
+          <h1>
+            <Building2 size={18} />
+            Enterprise admin
+          </h1>
+        </header>
+      )}
 
       {error && <div className="landing-error">{error}</div>}
 

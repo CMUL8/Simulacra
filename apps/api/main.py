@@ -44,11 +44,11 @@ from simulacra.demo.pipeline import (
 	cancel_job,
 	export_audit_zip,
 	init_plan,
-	plan_chat,
 	project_snapshot,
 	rollback_project,
 	start_approve_build,
 	start_follow_up,
+	start_plan_chat,
 )
 from simulacra.demo.runs import create_project, list_projects, load_state, project_dir, save_state
 from simulacra.demo.sandbox import sandbox_status
@@ -607,7 +607,7 @@ def post_plan(
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 ) -> dict:
 	try:
-		plan_chat(project_id, body.message)
+		start_plan_chat(project_id, body.message)
 		return project_snapshot(project_id)
 	except ValueError as exc:
 		raise HTTPException(400, str(exc)) from exc

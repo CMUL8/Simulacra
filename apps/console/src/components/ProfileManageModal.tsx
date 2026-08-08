@@ -1,17 +1,21 @@
-import { LogOut, Settings, UserRound, X } from "lucide-react";
+import { LogOut, Shield, UserRound, Building2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AuthSession, AuthUser, Tenant } from "../api";
+import { setTenantId } from "../api";
+import { AdminPage } from "./AdminPage";
+import { GovernancePage } from "./GovernancePage";
 import { LoginPage } from "./LoginPage";
 
-export type ProfileTab = "account" | "auth" | "settings";
+export type ProfileTab = "account" | "policy" | "admin" | "auth";
 
 type Props = {
   open: boolean;
   onClose?: () => void;
-  /** Force open for unauthenticated gate — close disabled */
   locked?: boolean;
   user: AuthUser | null;
   tenants: Tenant[];
+  tenantId?: string;
+  onTenant?: (id: string) => void;
   clerkEnabled?: boolean;
   clerkAvailable?: boolean;
   onUseClerk?: () => void;
@@ -26,6 +30,8 @@ export function ProfileManageModal({
   locked = false,
   user,
   tenants,
+  tenantId,
+  onTenant,
   clerkEnabled = false,
   clerkAvailable = false,
   onUseClerk,
@@ -50,89 +56,130 @@ export function ProfileManageModal({
 
   if (!open) return null;
 
+  const title =
+    tab === "policy" ? "Policy" : tab === "admin" ? "Admin" : tab === "auth" ? (user ? "Session" : "Sign in") : "Account";
+
   return (
-    <div className="profile-backdrop" role="dialog" aria-modal="true" aria-label="Manage profile">
-      <div className="profile-modal">
-        <aside className="profile-rail">
-          <div className="profile-rail-head">
-            <span className="profile-kicker">Account</span>
-            <h2 className="profile-rail-title">Manage</h2>
+    <div className="acct-backdrop" role="dialog" aria-modal="true" aria-label="Account">
+      <div className="acct-modal">
+        <aside className="acct-rail">
+          <div className="acct-rail-head">
+            <span className="acct-brand">
+              Simu<em>lacra</em>
+            </span>
+            <p className="acct-rail-sub">Workspace controls</p>
           </div>
-          <nav className="profile-nav">
-            {user && (
-              <button
-                type="button"
-                className={tab === "account" ? "active" : ""}
-                onClick={() => setTab("account")}
-              >
-                <UserRound size={15} />
-                Profile
+
+          <nav className="acct-nav" aria-label="Account sections">
+            {user ? (
+              <>
+                <button type="button" className={tab === "account" ? "active" : ""} onClick={() => setTab("account")}>
+                  <UserRound size={15} strokeWidth={1.75} />
+                  Account
+                </button>
+                <button type="button" className={tab === "policy" ? "active" : ""} onClick={() => setTab("policy")}>
+                  <Shield size={15} strokeWidth={1.75} />
+                  Policy
+                </button>
+                <button type="button" className={tab === "admin" ? "active" : ""} onClick={() => setTab("admin")}>
+                  <Building2 size={15} strokeWidth={1.75} />
+                  Admin
+                </button>
+              </>
+            ) : (
+              <button type="button" className={tab === "auth" ? "active" : ""} onClick={() => setTab("auth")}>
+                <UserRound size={15} strokeWidth={1.75} />
+                Sign in
               </button>
             )}
-            <button type="button" className={tab === "auth" ? "active" : ""} onClick={() => setTab("auth")}>
-              <UserRound size={15} />
-              {user ? "Session" : "Sign in"}
-            </button>
-            <button
-              type="button"
-              className={tab === "settings" ? "active" : ""}
-              onClick={() => setTab("settings")}
-            >
-              <Settings size={15} />
-              Settings
-            </button>
           </nav>
+
           {user && (
-            <button type="button" className="profile-signout" onClick={onSignOut}>
-              <LogOut size={15} />
+            <button type="button" className="acct-signout" onClick={onSignOut}>
+              <LogOut size={15} strokeWidth={1.75} />
               Sign out
             </button>
           )}
         </aside>
 
-        <section className="profile-main">
+        <section className={`acct-main ${tab === "policy" || tab === "admin" ? "acct-main-wide" : ""}`}>
           {!locked && onClose && (
-            <button type="button" className="profile-close" onClick={onClose} aria-label="Close">
+            <button type="button" className="acct-close" onClick={onClose} aria-label="Close">
               <X size={16} />
             </button>
           )}
 
           {tab === "account" && user && (
-            <div className="profile-pane">
-              <h1 className="profile-pane-title">Profile</h1>
-              <p className="profile-pane-sub">Your Simulacra identity and workspaces.</p>
-              <div className="profile-kv">
-                <span>Email</span>
-                <strong>{user.email}</strong>
+            <div className="acct-pane">
+              <h1 className="acct-title">{title}</h1>
+              <p className="acct-sub">Identity, workspace, and session.</p>
+
+              <div className="acct-card">
+                <div className="acct-kv">
+                  <span>Email</span>
+                  <strong>{user.email}</strong>
+                </div>
+                <div className="acct-kv">
+                  <span>Name</span>
+                  <strong>{user.name || "—"}</strong>
+                </div>
+                <div className="acct-kv">
+                  <span>Role</span>
+                  <strong>{user.is_platform_admin ? "Platform admin" : "Member"}</strong>
+                </div>
               </div>
-              <div className="profile-kv">
-                <span>Name</span>
-                <strong>{user.name || "—"}</strong>
-              </div>
-              <div className="profile-kv">
-                <span>Role</span>
-                <strong>{user.is_platform_admin ? "Platform admin" : "Member"}</strong>
-              </div>
-              <h3 className="profile-section-label">Workspaces</h3>
-              <ul className="profile-tenant-list">
+
+              <h3 className="acct-section">Workspace</h3>
+              {tenants.length > 1 && onTenant ? (
+                <label className="acct-select-wrap">
+                  <span>Active workspace</span>
+                  <select
+                    className="acct-select"
+                    value={tenantId || tenants[0]?.id}
+                    onChange={(e) => {
+                      setTenantId(e.target.value);
+                      onTenant(e.target.value);
+                    }}
+                  >
+                    {tenants.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <ul className="acct-tenant-list">
                 {tenants.map((t) => (
-                  <li key={t.id}>
+                  <li key={t.id} className={t.id === (tenantId || tenants[0]?.id) ? "on" : ""}>
                     <strong>{t.name}</strong>
                     <span>{t.id}</span>
                   </li>
                 ))}
                 {tenants.length === 0 && <li className="dim">No workspaces yet</li>}
               </ul>
+
+              <h3 className="acct-section">Preferences</h3>
+              <div className="acct-card">
+                <div className="acct-kv">
+                  <span>Theme</span>
+                  <strong>Void</strong>
+                </div>
+                <div className="acct-kv">
+                  <span>Auth</span>
+                  <strong>{clerkAvailable ? "Password + CMUL8 Clerk" : "Password"}</strong>
+                </div>
+              </div>
             </div>
           )}
 
           {tab === "auth" && (
-            <div className="profile-pane profile-pane-auth">
-              <h1 className="profile-pane-title">{user ? "Session" : "Welcome"}</h1>
-              <p className="profile-pane-sub">
+            <div className="acct-pane acct-pane-auth">
+              <h1 className="acct-title">{user ? "Session" : "Welcome"}</h1>
+              <p className="acct-sub">
                 {user
-                  ? "You’re signed in. Use Sign out in the rail to end this session."
-                  : "Sign in or create a workspace to start building governed data apps."}
+                  ? "You’re signed in. Use Sign out to end this session."
+                  : "Sign in to plan and build governed internal apps."}
               </p>
               {!user && (
                 <LoginPage
@@ -144,29 +191,26 @@ export function ProfileManageModal({
                 />
               )}
               {user && (
-                <div className="profile-session-ok">
+                <div className="acct-session-ok">
                   Signed in as <strong>{user.email}</strong>
                 </div>
               )}
             </div>
           )}
 
-          {tab === "settings" && (
-            <div className="profile-pane">
-              <h1 className="profile-pane-title">Settings</h1>
-              <p className="profile-pane-sub">Appearance follows the Simulacra void theme — Anything-grade contrast.</p>
-              <div className="profile-kv">
-                <span>Theme</span>
-                <strong>Void / bone</strong>
-              </div>
-              <div className="profile-kv">
-                <span>Auth</span>
-                <strong>{clerkAvailable ? "Password + CMUL8 Clerk" : "Password"}</strong>
-              </div>
-              <div className="profile-kv">
-                <span>Sandbox</span>
-                <strong>Tenant policy</strong>
-              </div>
+          {tab === "policy" && user && (
+            <div className="acct-pane acct-pane-embed">
+              <h1 className="acct-title">Policy</h1>
+              <p className="acct-sub">Control plane for AI-generated internal apps.</p>
+              <GovernancePage embedded onBack={() => setTab("account")} />
+            </div>
+          )}
+
+          {tab === "admin" && user && (
+            <div className="acct-pane acct-pane-embed">
+              <h1 className="acct-title">Admin</h1>
+              <p className="acct-sub">Tenants, members, keys, and sandbox policy.</p>
+              <AdminPage embedded onBack={() => setTab("account")} />
             </div>
           )}
         </section>

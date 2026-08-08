@@ -31,6 +31,20 @@ def main() -> int:
 	state = init_plan(state)
 	print(f"==> plan phase: {state.phase}, rows preview: {state.plan_preview.get('row_count', 0)}")
 
+	# Plan open runs as a background job — wait for Prime (or heuristic) reply
+	import time
+
+	from simulacra.demo.jobs import get_job
+	from simulacra.demo.runs import load_state
+
+	for _ in range(120):
+		job = get_job(state.id)
+		if job is None or job.status not in ("running", "settling"):
+			break
+		time.sleep(0.5)
+	state = load_state(state.id)
+	print(f"==> plan open source: {state.prime.get('source')}")
+
 	state = approve_and_build(state.id)
 	print(f"==> status: {state.status}")
 	print(f"==> app: {state.app_config.title}")
