@@ -30,6 +30,11 @@ from .plan import (
 
 from .prime_builder import prime_build_app
 from .prime_hook import prime_meta_dict
+from .research_bundle import (
+	ensure_research_aware_report_app,
+	message_suggests_research,
+	write_research_bundle,
+)
 from .runs import ChatMessage, ProjectState, file_hash, load_state, project_dir, save_state
 from .sandbox import prepare_project_sandbox
 from .sources import (
@@ -39,6 +44,7 @@ from .sources import (
 	write_agent_context,
 )
 from .tenants import get_tenant
+from .formats import normalize_kind
 
 log = logging.getLogger("simulacra.pipeline")
 
@@ -443,14 +449,14 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 		"template": "Draft unchanged.",
 	}.get(source, "Build finished.")
 
-	if build_meta.get("style_only") and source not in ("error", "craft", "prime"):
+	if build_meta.get("style_only") and source not in ("error", "prime"):
 		source = "heuristic"
 		honesty = (
 			"## Partial update\n\n"
 			"Styles applied from your Style chips.\n\n"
 			"**What changed**\n"
 			f"{change_block}\n\n"
-			"The builder did not rewrite the layout — retry **Build app**."
+			"The builder did not rewrite the layout — retry **Build**."
 		)
 
 	state.prime["source"] = source
@@ -560,6 +566,24 @@ def start_follow_up(project_id: str, message: str) -> dict[str, Any]:
 	return {"job_id": job.get("id"), "status": job.get("status") or "running", **snap}
 
 
+def _iterate_merge_app_config(state: ProjectState, message: str) -> None:
+	"""Avoid renaming report/topic titles back to Vendor Risk on iterate.
+
+	Skip infer_app_config when a real title/product exists or the artifact is a
+	document format. Only merge non-destructive layout toggles when we do run it
+	for placeholder data apps.
+	"""
+	kind = normalize_kind(state.artifact_kind)
+	if kind in ("report", "slides", "one_pager"):
+		return
+	title = (state.app_config.title or "").strip()
+	placeholders = {"", "Data Explorer", "Data App", "Custom App"}
+	product = str((state.design_brief or {}).get("product_name") or "").strip()
+	if title not in placeholders or product:
+		return
+	state.app_config = infer_app_config(message, state.app_config)
+
+
 def _iterate_ui(project_id: str, message: str) -> None:
 	state = load_state(project_id)
 	# Don't snapshot "Before:" — Versions menu only keeps meaningful restores
@@ -569,6 +593,21 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	app_dir = refresh_app_data(project_id, state.app_config, rows)
 	write_brief(project_id, state.design_brief)
 	apply_brief_css_tokens(app_dir, state.design_brief)
+
+	kind = normalize_kind(state.artifact_kind)
+	research_bundle = None
+	# Research → public/research.json before builder (reports / non-apps)
+	if kind != "data_app" or message_suggests_research(message):
+		try:
+			research_bundle = write_research_bundle(
+				project_id,
+				force=kind == "report" or message_suggests_research(message),
+				message=message,
+			)
+			if research_bundle and kind == "report":
+				ensure_research_aware_report_app(app_dir)
+		except Exception:  # noqa: BLE001
+			log.exception("research bundle failed for %s", project_id)
 
 	meta = prime_build_app(
 		app_dir,
@@ -580,7 +619,20 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	)
 	source = meta.get("source") or ("prime" if meta.get("ok") else "heuristic")
 	state = load_state(project_id)
-	state.app_config = infer_app_config(message, state.app_config)
+	_iterate_merge_app_config(state, message)
+	if research_bundle and kind == "report":
+		rtitle = str(research_bundle.get("title") or "").strip()
+		rsub = str(research_bundle.get("subtitle") or "").strip()
+		if rtitle:
+			state.app_config.title = rtitle[:80]
+		if rsub:
+			state.app_config.subtitle = rsub[:120]
+		# Keep public/config.json in sync for the upcoming preview build
+		try:
+			refresh_app_data(project_id, state.app_config, rows)
+			# refresh does not wipe research.json (only data/analytics/config)
+		except Exception:  # noqa: BLE001
+			pass
 	state.prime = {
 		**state.prime,
 		"source": source,
@@ -591,8 +643,18 @@ def _iterate_ui(project_id: str, message: str) -> None:
 
 	changed = [str(x) for x in (meta.get("changed_files") or []) if x]
 	change_lines = _change_summary_lines(message, changed, layout=bool(meta.get("layout_customized")))
+	if research_bundle and kind == "report":
+		change_lines = ["Research content wired into the report", *change_lines]
 
-	if meta.get("ok") and meta.get("files_changed") and not meta.get("style_only"):
+	# Full "## Updated" only for real prime content wins — not craft / style_only
+	content_win = (
+		meta.get("ok")
+		and meta.get("files_changed")
+		and not meta.get("style_only")
+		and meta.get("source") == "prime"
+	)
+	research_ready = bool(research_bundle) and kind == "report"
+	if content_win:
 		honesty = (
 			"## Updated\n\n"
 			"Preview refreshed with your request.\n\n"
@@ -600,16 +662,40 @@ def _iterate_ui(project_id: str, message: str) -> None:
 			+ "\n".join(f"- {line}" for line in change_lines)
 			+ "\n\nOpen **Preview** to check, keep chatting to refine, or **Ship** for a share link."
 		)
-		source = "prime" if meta.get("source") == "prime" else (meta.get("source") or "craft")
-	elif meta.get("style_only") or (meta.get("files_changed") and not meta.get("ok")):
+		source = "prime"
+	elif research_ready:
 		honesty = (
-			"## Partial update\n\n"
-			"Styles were applied, but the layout edit did **not** finish.\n\n"
+			"## Preview refreshed\n\n"
+			"Report content now comes from your research — not the vendor sample layout.\n\n"
 			"**What changed**\n"
 			+ "\n".join(f"- {line}" for line in change_lines)
-			+ "\n\nRephrase the change and send again."
+			+ "\n\nOpen **Preview** to check, or keep chatting to refine."
 		)
-		source = "heuristic"
+		source = "prime" if meta.get("source") == "prime" else "craft"
+	elif (
+		meta.get("source") == "craft"
+		and meta.get("layout_customized")
+		and not meta.get("style_only")
+	):
+		honesty = (
+			"## Preview refreshed\n\n"
+			"Report layout was updated from your brief.\n\n"
+			"**What changed**\n"
+			+ "\n".join(f"- {line}" for line in change_lines)
+			+ "\n\nOpen **Preview** to check, or keep chatting to refine."
+		)
+		source = "craft"
+	elif meta.get("style_only") or meta.get("source") == "craft" or (
+		meta.get("files_changed") and not meta.get("ok")
+	):
+		honesty = (
+			"## Partial update\n\n"
+			"Some styles landed, but the content rewrite did **not** finish.\n\n"
+			"**What changed**\n"
+			+ "\n".join(f"- {line}" for line in change_lines)
+			+ "\n\nRephrase the change and send again — Preview may still show the prior layout."
+		)
+		source = "craft" if meta.get("source") == "craft" else "heuristic"
 	elif not meta.get("used"):
 		honesty = "Builder is offline — could not edit the app. Try again when the agent is available."
 		source = "error"
@@ -620,7 +706,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		source = meta.get("source") or "error"
 
 	state.prime["source"] = source
-	state.prime["layout_customized"] = bool(meta.get("layout_customized"))
+	state.prime["layout_customized"] = bool(meta.get("layout_customized")) or research_ready
 	state.prime["changed_files"] = changed
 	state.chat.append(ChatMessage(role="assistant", content=honesty, source=source))
 	state.status = "publishing_preview"
@@ -630,7 +716,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	state.deploy_url = url
 	state.status = "ready"
 	# Only keep a version when something useful landed
-	if source in ("prime", "craft") or (changed and source != "error"):
+	if source in ("prime", "craft") or (changed and source != "error") or research_ready:
 		save_checkpoint(state, version_label(message))
 	emit_event(project_id, "done", label="Preview updated", detail=url, status="done")
 	save_state(state)

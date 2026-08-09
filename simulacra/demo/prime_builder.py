@@ -177,7 +177,12 @@ def _brand_mark(direction: str) -> str:
 
 
 def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
-	"""Honest craft fallback when the agent narrates without writing."""
+	"""Honest craft fallback when the agent narrates without writing.
+
+	Returns True only when App.tsx meaningfully changed (data_app layout craft,
+	or report App synced for research). Marker/class stamps alone return False
+	after writing — callers treat that as style_only.
+	"""
 	state = load_state(project_id)
 	kind = normalize_kind(state.artifact_kind)
 	brief = state.design_brief or {}
@@ -196,6 +201,14 @@ def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
 
 	# Non-app formats: stamp craft marker + title/classes; don't regex command-center DOM
 	if kind != "data_app":
+		content_win = False
+		if kind == "report":
+			try:
+				from .research_bundle import ensure_research_aware_report_app
+
+				content_win = ensure_research_aware_report_app(app_dir)
+			except Exception:  # noqa: BLE001
+				content_win = False
 		before = tsx_path.read_bytes()
 		tsx = before.decode("utf-8")
 		stamp = f"{CRAFT_MARKER}{kind}:{direction}:{density}\n"
@@ -215,7 +228,8 @@ def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
 		if changed:
 			tsx_path.write_text(tsx)
 		_force_style_pass(app_dir, project_id)
-		return changed or True
+		# Marker/class stamps are not a content win — only research App sync is
+		return bool(content_win)
 
 	before = tsx_path.read_bytes()
 	tsx = before.decode("utf-8")
@@ -332,7 +346,21 @@ def prime_build_app(
 	writes triggers one steered retry, then a deterministic craft personalizer.
 	"""
 	if not prime_enabled():
+		state = load_state(project_id)
+		kind = normalize_kind(state.artifact_kind)
 		forced_layout = _deterministic_layout_pass(app_dir, project_id)
+		# Non-data_app craft often only stamps markers — that is style_only
+		if kind != "data_app" and not forced_layout:
+			styled = _force_style_pass(app_dir, project_id) or True
+			return {
+				"used": False,
+				"ok": True,
+				"source": "craft",
+				"error": "agent_no_app_edits",
+				"files_changed": styled,
+				"style_only": True,
+				"layout_customized": False,
+			}
 		return {
 			"used": False,
 			"ok": forced_layout,
@@ -470,39 +498,44 @@ def prime_build_app(
 		status="running",
 	)
 	crafted = _deterministic_layout_pass(app_dir, project_id)
-	meta["files_changed"] = crafted or any_changed
-	meta["layout_customized"] = crafted
 	meta["craft_fallback"] = True
 	meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
+	kind_now = normalize_kind(state.artifact_kind)
 
 	if crafted:
+		# Real layout/content win (data_app craft or research-aware report sync)
 		meta["ok"] = True
 		meta["source"] = "craft"
 		meta["style_only"] = False
+		meta["layout_customized"] = True
+		meta["files_changed"] = True
 		meta["error"] = meta.get("error") or "agent_no_app_edits"
 		emit_event(
 			project_id,
 			"phase",
 			label="Build complete",
-			detail="Layout personalized (craft fallback)",
+			detail="Layout personalized from your brief",
 			status="done",
 		)
 		return meta
 
-	# Last resort: styles only
+	# Marker/class stamp or CSS-only — honest style_only (especially reports)
 	forced = _force_style_pass(app_dir, project_id)
-	meta["ok"] = False
-	meta["source"] = "error" if meta.get("error") else "heuristic"
-	meta["error"] = meta.get("error") or "no_file_changes"
-	meta["style_only"] = True
-	meta["files_changed"] = forced
-	meta["layout_customized"] = False
+	files_touched = bool(meta.get("changed_files")) or forced or any_changed
+	# Re-read hashes after layout pass + style (layout pass may have stamped markers)
 	meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
+	files_touched = bool(meta["changed_files"]) or forced
+	meta["ok"] = files_touched and kind_now != "data_app"
+	meta["source"] = "craft" if files_touched else ("error" if meta.get("error") else "heuristic")
+	meta["error"] = meta.get("error") or ("agent_no_app_edits" if files_touched else "no_file_changes")
+	meta["style_only"] = True
+	meta["files_changed"] = files_touched
+	meta["layout_customized"] = False
 	emit_event(
 		project_id,
 		"think",
-		label="Builder ran but did not edit layout",
-		detail="No App.tsx changes — styles only. Retry Build or rephrase.",
+		label="Styles applied — layout unchanged",
+		detail="No content rewrite landed. Rephrase or retry Build.",
 		status="done",
 	)
 	return meta

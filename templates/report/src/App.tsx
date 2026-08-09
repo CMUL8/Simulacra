@@ -13,11 +13,23 @@ type Analytics = {
   }[];
   theme_breakdown: { theme: string; count: number; pct: number }[];
 };
+type ResearchSection = {
+  heading: string;
+  body?: string;
+  bullets?: string[];
+};
+type Research = {
+  title?: string;
+  subtitle?: string;
+  source_note?: string;
+  sections?: ResearchSection[];
+};
 
 export default function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [research, setResearch] = useState<Research | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,11 +48,13 @@ export default function App() {
         if (!r.ok) throw new Error(`analytics ${r.status}`);
         return r.json();
       }),
+      fetch(asset("research.json")).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ])
-      .then(([cfg, data, stats]) => {
+      .then(([cfg, data, stats, researchBundle]) => {
         setConfig(cfg);
         setRows(data);
         setAnalytics(stats);
+        setResearch(researchBundle);
       })
       .catch((err) => setBootError(String(err?.message || err)));
   }, []);
@@ -52,9 +66,41 @@ export default function App() {
   );
   const themes = analytics?.theme_breakdown || [];
   const risks = analytics?.risk_distribution || [];
+  const researchSections = research?.sections || [];
+  const narrativeMode = researchSections.length > 0;
 
   if (bootError) return <div className="boot">Failed to load report: {bootError}</div>;
   if (!config || !analytics) return <div className="boot">Loading report…</div>;
+
+  if (narrativeMode) {
+    const title = research?.title || config.title;
+    const subtitle = research?.subtitle || config.subtitle;
+    return (
+      <article className="report narrative">
+        <header className="cover">
+          <p className="eyebrow">Research report</p>
+          <h1>{title}</h1>
+          {subtitle ? <p className="lede">{subtitle}</p> : null}
+          {research?.source_note ? <p className="meta">{research.source_note}</p> : null}
+        </header>
+        {researchSections.map((section, idx) => (
+          <section key={`${section.heading}-${idx}`}>
+            <h2>
+              {idx + 1}. {section.heading}
+            </h2>
+            {section.body ? <p className="section-body">{section.body}</p> : null}
+            {section.bullets && section.bullets.length > 0 ? (
+              <ul className="narrative-bullets">
+                {section.bullets.map((b, i) => (
+                  <li key={i}>{b}</li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        ))}
+      </article>
+    );
+  }
 
   if (!rows.length) {
     return (
@@ -75,7 +121,9 @@ export default function App() {
         <p className="eyebrow">Internal report</p>
         <h1>{config.title}</h1>
         <p className="lede">{config.subtitle}</p>
-        <p className="meta">{rows.length} findings · {topVendors.length} vendors surfaced</p>
+        <p className="meta">
+          {rows.length} findings · {topVendors.length} vendors surfaced
+        </p>
       </header>
 
       <section className="exec">
