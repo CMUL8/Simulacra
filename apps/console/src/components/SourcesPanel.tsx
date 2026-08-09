@@ -77,7 +77,7 @@ export function SourcesPanel({
               />
               <span>
                 Include sample pack
-                <em>vendor research · notes · CSV</em>
+                <em>vendor-risk demo only — not for unrelated topics</em>
               </span>
             </label>
           )}

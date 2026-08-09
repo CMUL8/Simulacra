@@ -143,9 +143,8 @@ export function Landing({
   const landingRef = useRef<HTMLDivElement>(null);
   const projectsRef = useRef<HTMLElement>(null);
   const sourceCount = (dataAttached ? files.length : 0) + pendingFiles.length;
-  // Guests may send with sample pack checked even before fixture list loads.
-  const sourcesReady = sourceCount > 0 || (!authed && dataAttached);
-  const canBuild = prompt.trim().length >= 3 && sourcesReady && !busy && !guestGateOpen;
+  // Prompt alone is enough — empty/mismatched sources open plan chat to ask for data.
+  const canBuild = prompt.trim().length >= 3 && !busy && !guestGateOpen;
   const recent = projects.slice(0, 12);
   const pills = useMemo(() => pillsForDay(utcDayIndex()), []);
   const activeFormat = FORMAT_OPTIONS.find((f) => f.kind === artifactKind) || FORMAT_OPTIONS[0]!;
@@ -273,7 +272,7 @@ export function Landing({
 
         {busy && (
           <p className="landing-busy-status" role="status" aria-live="polite" aria-busy="true">
-            Building your {activeFormat.label.toLowerCase()}
+            Starting your {activeFormat.label.toLowerCase()}
             <span className="landing-busy-dots" aria-hidden>
               <i />
               <i />

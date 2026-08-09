@@ -88,7 +88,7 @@ def _startup() -> None:
 class CreateProjectBody(BaseModel):
 	prompt: str = Field(min_length=3)
 	goal: str = ""
-	use_fixture: bool = True
+	use_fixture: bool = False
 	design_brief: dict[str, Any] | None = None
 	tenant_id: str | None = None
 	artifact_kind: str | None = None

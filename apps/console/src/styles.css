@@ -2659,6 +2659,31 @@ a.md-link:hover {
   flex-direction: column;
   gap: 8px;
 }
+/* Plan: what the agent has / needs — above chrome */
+.agent-needs {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 2px 2px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+.agent-needs-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.agent-needs-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* One slim line above composer — status · style · format · Preview · Stop */
 .composer-chrome {
   display: flex;

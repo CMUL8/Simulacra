@@ -560,3 +560,48 @@ def sources_to_prime_block(profile: DataProfile, *, extract: ExtractReport | Non
 			"CRITICAL: empty room — do not invent vendors/findings; show an honest empty state."
 		)
 	return "\n".join(lines)
+
+
+# ── Soft inventory for plan UI / Prime (not a build gate) ─────────────
+
+_FIXTURE_NAMES = frozenset({"notes.json", "supplement.csv", "vendor-research.md"})
+
+
+def source_room_brief(preview: dict[str, Any] | None) -> dict[str, Any]:
+	"""Honest inventory of what's in the data room — for chat UI and Prime context.
+
+	Does **not** decide whether to build. User + Prime steer: upload, sample pack,
+	or research/scrape if the user asks.
+	"""
+	preview = preview or {}
+	files = [f for f in (preview.get("files") or []) if isinstance(f, dict)]
+	names = [(f.get("name") or "").strip() for f in files if f.get("name")]
+	rows = int(preview.get("row_count") or 0)
+	name_set = {n.lower() for n in names}
+	vendor_sample = bool(_FIXTURE_NAMES & name_set) or any(
+		"vendor-research" in n for n in name_set
+	)
+	return {
+		"empty": rows <= 0 and not names,
+		"row_count": rows,
+		"file_count": len(names),
+		"file_names": names[:12],
+		"vendors": list(preview.get("vendors") or [])[:12],
+		"looks_like_vendor_sample": vendor_sample,
+	}
+
+
+def source_room_lines(brief: dict[str, Any]) -> list[str]:
+	"""Short human lines for plan chrome / agent prompts."""
+	if brief.get("empty"):
+		return ["No sources attached yet"]
+	names = ", ".join(brief.get("file_names") or []) or "files"
+	rows = int(brief.get("row_count") or 0)
+	line = f"{brief.get('file_count', 0)} files"
+	if rows:
+		line += f" · {rows} rows"
+	line += f" ({names})"
+	out = [line]
+	if brief.get("looks_like_vendor_sample"):
+		out.append("Attached pack looks like the vendor-risk sample")
+	return out

@@ -71,7 +71,7 @@ function readLandingDraft(): LandingDraft | null {
         parsed.artifactKind === "data_app"
           ? parsed.artifactKind
           : "data_app",
-      dataAttached: parsed.dataAttached !== false,
+      dataAttached: parsed.dataAttached === true,
       resumeBuild: Boolean(parsed.resumeBuild),
     };
   } catch {
@@ -119,7 +119,7 @@ export default function App({
   const [prompt, setPrompt] = useState("");
   const [artifactKind, setArtifactKind] = useState<ArtifactKind>("data_app");
   const [designBrief, setDesignBrief] = useState<DesignBrief>(DEFAULT_DESIGN_BRIEF);
-  const [dataAttached, setDataAttached] = useState(true);
+  const [dataAttached, setDataAttached] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -331,11 +331,6 @@ export default function App({
   }
 
   const handleStartPlanning = useCallback(async () => {
-    const hasSources = dataAttached || pendingFiles.length > 0;
-    if (!hasSources) {
-      setError("Add sources (sample pack and/or uploads) before planning.");
-      return;
-    }
     const parts: string[] = [];
     if (goal.trim()) parts.push(`Goal: ${goal.trim()}`);
     if (prompt.trim()) parts.push(prompt.trim());
@@ -398,14 +393,9 @@ export default function App({
       clearLandingDraft();
       return;
     }
-    if (!(dataAttached || pendingFiles.length > 0)) {
-      setResumeBuild(false);
-      clearLandingDraft();
-      return;
-    }
     resumeStarted.current = true;
     void handleStartPlanning();
-  }, [authed, busy, dataAttached, handleStartPlanning, pendingFiles.length, prompt, resumeBuild]);
+  }, [authed, busy, handleStartPlanning, prompt, resumeBuild]);
 
   if (authed === null) {
     const bg = bgPresetFromSearch();

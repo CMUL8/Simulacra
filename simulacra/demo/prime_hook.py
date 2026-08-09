@@ -126,15 +126,32 @@ def prime_open_plan(
 			data_block = sources_to_prime_block(profile)
 	except Exception:  # noqa: BLE001
 		data_block = ""
+	room = preview.get("source_room") or {}
+	try:
+		from .sources import source_room_brief, source_room_lines
+
+		if not room:
+			room = source_room_brief(preview)
+		room_lines = "\n".join(f"- {ln}" for ln in source_room_lines(room))
+	except Exception:  # noqa: BLE001
+		room_lines = f"- {preview.get('row_count', 0)} rows · {len(preview.get('files') or [])} files"
+
 	prime_prompt = (
-		"You are Simulacra in PLAN mode. The user just started a project.\n"
-		"Propose what to build based on THEIR request — not a generic data explorer.\n"
-		"Honor intent: games, learning/quiz apps, dashboards, ops tools, etc.\n"
-		"Do NOT claim you have built anything yet. Do not write app code.\n"
-		"Source material is available for the app to draw from; mention it briefly.\n"
-		"Design the proposal around the actual data profile/nuances below.\n\n"
+		"You are Simulacra's planning agent, live in chat with the user.\n"
+		"They steer you. You have free reign to figure out how to deliver THEIR request.\n"
+		"Honor intent: reports, decks, apps, games, research briefs, ops tools, etc.\n"
+		"Do NOT claim you have built anything yet. Do not write app code in this turn.\n\n"
+		"Be honest about the data room below. Options you may propose (user chooses):\n"
+		"- Use / refine attached sources if they actually help the request\n"
+		"- Ask them to upload files\n"
+		"- Use the vendor-risk sample pack only if they want that demo\n"
+		"- Research, web-gather, or scrape material IF they ask or clearly need it "
+		"(say what you would do; do not invent finished research as fact)\n"
+		"Never silently pretend unrelated attached rows are about their topic.\n"
+		"End by inviting the next steer in chat, or **Build** when they are ready.\n\n"
 		f"User request:\n{state.prompt}\n\n"
 		f"Goal (if any):\n{state.goal or '(none)'}\n\n"
+		f"Data room inventory:\n{room_lines}\n\n"
 		f"Source summary:\n{summary[:2200]}\n\n"
 		f"Stats: {preview.get('row_count', 0)} extracted rows, "
 		f"{preview.get('high_risk', 0)} high-risk, "
@@ -146,8 +163,8 @@ def prime_open_plan(
 		"{\n"
 		'  "title": "short product name matching the request",\n'
 		'  "subtitle": "one-line description",\n'
-		'  "reply": "markdown for the user: reflect their ask, propose the app, '
-		"briefly note sources and data nuances, invite refine or Approve & Build\"\n"
+		'  "reply": "markdown for the user: reflect their ask, be clear what you have / need / '
+		'can do next (including research if relevant), invite chat steer or Build"\n'
 		"}"
 	)
 	text, meta = prime_ask(
@@ -210,10 +227,11 @@ def prime_plan_chat(
 	preview = state.plan_preview
 	design = brief_to_prime_block(state.design_brief or {})
 	prime_prompt = (
-		"You are Simulacra in PLAN mode (read-only). Help refine what to build.\n"
-		"Do NOT force a vendor dashboard or data explorer unless the user wants that.\n"
-		"Match their product intent (game, learning tool, analytics, ops, etc.).\n"
-		"Do NOT claim to have built anything. Do not write app code.\n"
+		"You are Simulacra's planning agent, live in chat with the user.\n"
+		"They steer you — uploads, sample pack, research/scrape, scope changes, tone.\n"
+		"Be honest about attached sources; never silently reuse unrelated data as their topic.\n"
+		"Do NOT force a vendor dashboard unless they want that.\n"
+		"Match their product intent. Do NOT claim to have built anything. Do not write app code.\n"
 		"You may suggest look-and-feel / design_brief tweaks.\n\n"
 		f"Proposed app so far: {state.app_config.title} — {state.app_config.subtitle}\n"
 		f"User goal/prompt:\n{state.prompt}\n\n"

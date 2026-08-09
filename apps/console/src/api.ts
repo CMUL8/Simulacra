@@ -128,6 +128,14 @@ export type PlanPreview = {
     ok_files?: number;
   };
   fingerprint?: string;
+  source_room?: {
+    empty?: boolean;
+    row_count?: number;
+    file_count?: number;
+    file_names?: string[];
+    vendors?: string[];
+    looks_like_vendor_sample?: boolean;
+  };
 };
 
 export type Project = {
@@ -426,7 +434,7 @@ export async function createProject(
     body: JSON.stringify({
       prompt,
       goal,
-      use_fixture: opts?.useFixture ?? true,
+      use_fixture: opts?.useFixture ?? false,
       design_brief: designBrief ?? null,
       artifact_kind: opts?.artifactKind ?? null,
     }),

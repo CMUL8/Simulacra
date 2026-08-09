@@ -174,7 +174,7 @@ def save_state(state: ProjectState) -> None:
 def create_project(
 	prompt: str,
 	*,
-	use_fixture: bool = True,
+	use_fixture: bool = False,
 	goal: str = "",
 	design_brief: dict[str, Any] | None = None,
 	tenant_id: str | None = None,

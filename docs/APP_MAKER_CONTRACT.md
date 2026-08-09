@@ -28,14 +28,17 @@ Format is chosen on create (`artifact_kind`). Prompt keywords can hint; UI selec
 ## Loop (memorize)
 
 ```
-Create (+ format) → (scaffold + builder, behind the scenes) → Built preview
+Create (+ format) → Plan chat with Prime (user steers: sources / research / scope)
+                 → Build (scaffold + builder) → Built preview
                  → Drive (every change chat → agent iterate, preview refreshes)
                  → Ship (approve this build + share URL)
 ```
 
 | Step | What happens | User sees |
 |------|----------------|-----------|
-| **Create** | Scan → gates → copy format template → **builder customizes** → preview. Template is not a user-facing wait. | **Building…** → **Built** + Preview |
+| **Create** | Scan data room → **open Prime in plan chat**. No silent auto-build. | **Draft** + agent message: what it has / needs / can do |
+| **Steer** | User chats: upload, sample pack, research/scrape, scope, tone. UI shows sources + agent status. | Live plan chat with Prime |
+| **Build** | User hits Build → gates → format template → **builder customizes** → preview | **Building…** → **Built** + Preview |
 | **Drive** | Chat that asks for a change → `iterate_run` → agent edits existing artifact (**does not wipe** prior agent work) | Thinking → Preview updates → reply |
 | **Ask** | Pure questions only (`?` / what / why…) → short Q&A, **no file edits** | Answer in chat |
 | **Ship** | Gates pass → `deployed=true` + stable preview URL + chat receipt | **Shipped** + shareable link |
@@ -43,10 +46,11 @@ Create (+ format) → (scaffold + builder, behind the scenes) → Built preview
 
 ## Chat rules (critical)
 
-1. **After create (Built)** — default is **drive the agent**. Almost every send that is not a pure question starts an agent iterate job.
-2. Style chips still patch tokens live on the preview.
-3. **Never** pretend a heuristic rename was an agent build.
-4. **One job at a time** — Stop unlocks UI; last good preview kept.
+1. **After create (plan)** — user is connected to **Prime in chat**. Simulacra shows what the agent is doing and what the data room contains; the user steers (including research). No hard “sources must match” gate.
+2. **After Build (Built)** — default is **drive the agent**. Almost every send that is not a pure question starts an agent iterate job.
+3. Style chips still patch tokens live on the preview.
+4. **Never** pretend a heuristic rename was an agent build.
+5. **One job at a time** — Stop unlocks UI; last good preview kept.
 
 ## What Ship is (and is not)
 
@@ -77,6 +81,7 @@ Create (+ format) → (scaffold + builder, behind the scenes) → Built preview
 
 | Case | Behavior |
 |------|----------|
+| Empty / unrelated sources on create | Stay in **plan** chat with Prime. Be honest about the room; user may upload, use sample pack, or ask the agent to research. Build when the user is ready. |
 | Agent off / fail on Build | Craft personalizer stamps format + brief when possible → **Built** (`craft`); else Draft + retry |
 | Agent narrates, zero App.tsx diffs | One steered retry → then craft fallback (never claim prime) |
 | Agent fail on iterate | Last good preview kept; honest “builder didn’t finish”; no fake heuristic success |

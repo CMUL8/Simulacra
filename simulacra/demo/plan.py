@@ -17,6 +17,7 @@ from .sources import (
 	content_fingerprint,
 	list_source_files,
 	profile_rows,
+	source_room_brief,
 	write_agent_context,
 )
 
@@ -132,29 +133,34 @@ def run_plan_open(project_id: str) -> ProjectState:
 
 
 def init_plan(state: ProjectState) -> ProjectState:
-	"""Scan immediately, then bootstrap a live preview (no Prime wait). See APP_MAKER_CONTRACT."""
+	"""Scan sources, then open Prime-backed plan chat. User steers; Build starts the scaffold."""
 	if not any(m.role == "user" for m in state.chat):
 		state.chat.append(ChatMessage(role="user", content=state.prompt, source="system"))
 		save_state(state)
 	state = explore_plan_scan(state)
 	pid = state.id
 
-	# Infer title early so the shell isn't blank while bootstrap runs
+	# Infer title early so the shell isn't blank while plan-open runs
 	state.app_config = infer_app_config(state.prompt, state.app_config)
 	if state.app_config.title:
 		state.design_brief["product_name"] = state.app_config.title
 	if state.app_config.subtitle:
 		state.design_brief["one_liner"] = state.app_config.subtitle
 	write_brief(pid, state.design_brief)
+
+	preview = dict(state.plan_preview or {})
+	preview["source_room"] = source_room_brief(preview)
+	state.plan_preview = preview
+	state.phase = "plan"
+	state.status = "planning"
 	save_state(state)
 
-	def target(_job):
-		from .pipeline import bootstrap_project
-
-		return bootstrap_project(load_state(pid))
+	# Always connect the user to Prime in chat first — free reign to ask, upload, or research.
+	def plan_target(_job):
+		return run_plan_open(pid)
 
 	try:
-		start_job(pid, "bootstrap", label="Building", target=target)
+		start_job(pid, "plan_ask", label="Planning with agent", target=plan_target)
 	except JobConflictError:
 		pass
 	return load_state(pid)
@@ -252,13 +258,24 @@ def _open_reply(
 	high: int,
 	vendors: list[str],
 ) -> str:
-	"""Clean opening when the planner cannot answer."""
+	"""Fallback opening when Prime is offline — still invite the user to steer."""
+	title = state.app_config.title or "Your project"
+	names = ", ".join(f.get("name", "?") for f in files[:6])
+	if not files:
+		room = "No sources attached yet."
+	else:
+		room = f"Attached: `{names}`"
+		if rows:
+			room += f" ({rows} rows"
+			if vendors:
+				room += f" · {len(vendors)} vendors"
+			room += ")."
 	return (
-		f"**{state.app_config.title}** — {state.app_config.subtitle}\n\n"
-		f"I have {len(files)} source files ready"
-		+ (f" ({rows} rows across {len(vendors)} vendors)" if rows else "")
-		+ ".\n\n"
-		"Describe what you want next in chat — the builder will update the preview."
+		f"**{title}** — {state.app_config.subtitle}\n\n"
+		f"{room}\n\n"
+		"Chat with me to steer: upload files, use the sample pack, "
+		"or ask me to research / gather material for your topic. "
+		"When you’re ready, hit **Build**."
 	)
 
 
@@ -286,5 +303,5 @@ def _heuristic_plan_reply(state: ProjectState, message: str) -> str:
 
 	return (
 		f"Noted for **{state.app_config.title}**. "
-		f"I’ll fold that into the build. Open the draft preview, or hit **Build app**."
+		f"Keep steering in chat (sources, research, scope), or hit **Build** when ready."
 	)

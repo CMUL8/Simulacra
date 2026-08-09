@@ -820,6 +820,12 @@ def reingest_sources(project_id: str, *, refresh_preview: bool = True) -> Projec
 					status="done",
 				)
 
+	from .sources import source_room_brief
+
+	preview = dict(state.plan_preview or {})
+	preview["source_room"] = source_room_brief(preview)
+	state.plan_preview = preview
+
 	changed = prev_fp and prev_fp != fp
 	n_files = len(preview.get("files") or [])
 	msg = (
@@ -832,9 +838,11 @@ def reingest_sources(project_id: str, *, refresh_preview: bool = True) -> Projec
 		msg += f"\n\nSkipped (not extractable): {', '.join(report.skipped[:5])}"
 	if not rows:
 		msg = (
-			"**Sources updated**, but no extractable findings yet. "
-			"Add `.md` / `.csv` / `.json` (or re-attach the fixture pack), then re-ingest."
+			"**Sources updated**, but nothing extractable yet. "
+			"Add `.md` / `.csv` / `.json`, or tell the agent in chat how you want material gathered."
 		)
+	elif state.phase == "plan":
+		msg += "\n\nChat with the agent about next steps, or hit **Build** when ready."
 	state.chat.append(ChatMessage(role="assistant", content=msg, source="system"))
 	state.status = "draft" if state.phase == "plan" else state.status
 	if state.phase == "plan" and rows:

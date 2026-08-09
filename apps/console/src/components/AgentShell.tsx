@@ -200,11 +200,44 @@ function statusChip(
   if (source === "prime" || source === "craft") return { text: "Built", cls: "source-prime" };
   if (source === "cancelled") return { text: "Stopped", cls: "source-error" };
   if (source === "timeout" || source === "error") return { text: "Retry", cls: "source-error" };
-  // Plan / template / heuristic preview — not shipped
-  if (project.phase === "plan" || source === "template" || source === "heuristic" || !source || source === "none") {
+  // Plan — user is steering the agent before Build
+  if (project.phase === "plan") {
+    return { text: "Plan", cls: "source-heuristic" };
+  }
+  // Template / heuristic preview — not shipped
+  if (source === "template" || source === "heuristic" || !source || source === "none") {
     return { text: "Draft", cls: "source-heuristic" };
   }
   return null;
+}
+
+function agentNeedsLine(
+  project: Snapshot["project"],
+  busy: boolean,
+  jobKind?: string | null,
+): { label: string; detail: string } {
+  const room = project.plan_preview?.source_room;
+  const files = project.plan_preview?.files ?? [];
+  const names = room?.file_names?.length
+    ? room.file_names
+    : files.map((f) => f.name).filter(Boolean);
+  const empty = room?.empty ?? names.length === 0;
+  const sources = empty
+    ? "No sources yet"
+    : `${names.length} source${names.length === 1 ? "" : "s"} · ${names.slice(0, 3).join(", ")}${
+        names.length > 3 ? "…" : ""
+      }`;
+
+  if (busy && (jobKind === "plan_ask" || !jobKind)) {
+    return { label: "Agent", detail: `${sources} · thinking — you’ll see what it needs next` };
+  }
+  if (project.phase === "plan") {
+    return {
+      label: "Steer the agent",
+      detail: `${sources} · chat to upload, research, or refine — then Build`,
+    };
+  }
+  return { label: "Agent", detail: sources };
 }
 
 function formatBuildLabel(kind?: string | null): string {
@@ -344,15 +377,18 @@ export function AgentShell({
   const noun = formatNoun(project.artifact_kind);
   const buildLabel = formatBuildLabel(project.artifact_kind);
   const thinkingLabel =
-    jobKind === "bootstrap" || (isPlan && waitingForOpen)
-      ? `Building ${noun}…`
-      : jobKind === "build_run"
-        ? `Builder customizing ${noun}…`
-        : jobKind === "iterate_run"
-          ? `Builder updating ${noun}…`
-          : "Working…";
+    jobKind === "plan_ask" || (isPlan && waitingForOpen)
+      ? "Agent planning…"
+      : jobKind === "bootstrap"
+        ? `Building ${noun}…`
+        : jobKind === "build_run"
+          ? `Builder customizing ${noun}…`
+          : jobKind === "iterate_run"
+            ? `Builder updating ${noun}…`
+            : "Working…";
   const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
   const stage = statusChip(project, lastAssistant?.source ?? project.prime?.source);
+  const needs = isPlan ? agentNeedsLine(project, busy, jobKind) : null;
   const showStyleBar = Boolean(designBrief && onSaveDesignBrief);
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const showStandalonePlan =
@@ -430,9 +466,11 @@ export function AgentShell({
                 variant="thread"
                 title={thinkingLabel.replace(/…$/, "")}
                 subtitle={
-                  jobKind === "iterate_run"
-                    ? "Applying your change — preview refreshes when done"
-                    : `Building your ${noun} — preview opens when this finishes`
+                  jobKind === "plan_ask" || isPlan
+                    ? "Talking with the agent — it will say what it has and what it needs"
+                    : jobKind === "iterate_run"
+                      ? "Applying your change — preview refreshes when done"
+                      : `Building your ${noun} — preview opens when this finishes`
                 }
                 jobKind={jobKind}
                 traces={traces}
@@ -446,6 +484,12 @@ export function AgentShell({
         </div>
 
         <div className="agent-composer-wrap">
+          {needs && (
+            <div className="agent-needs" role="status">
+              <span className="agent-needs-label">{needs.label}</span>
+              <span className="agent-needs-detail">{needs.detail}</span>
+            </div>
+          )}
           <div className="composer-chrome" role="toolbar" aria-label="Project actions">
             <div className="composer-chrome-left">
               {stage && <span className={`composer-chrome-chip source-chip ${stage.cls}`}>{stage.text}</span>}
@@ -468,7 +512,7 @@ export function AgentShell({
                 className="composer-chrome-btn"
                 disabled={!hasPreview}
                 onClick={onOpenPreview}
-                title={hasPreview ? "Open preview" : "Preview appears when the build finishes"}
+                title={hasPreview ? "Open preview" : "Preview appears after Build"}
               >
                 <Globe size={13} strokeWidth={1.75} />
                 {hasPreview ? "Preview" : "Preview…"}
@@ -498,7 +542,7 @@ export function AgentShell({
             files={files}
             placeholder={
               isPlan
-                ? "Ask about the plan or style…"
+                ? "Steer the agent — sources, research, scope…"
                 : "Tell the builder what to change…"
             }
             submitLabel="Send"
