@@ -422,8 +422,9 @@ body {
 .landing-hero-img {
   object-fit: cover;
   object-position: center 35%;
-  transform: scale(1.02);
-  filter: blur(1.5px);
+  transform: scale(1.06);
+  /* Soft atmosphere — photo stays, chaos goes */
+  filter: blur(10px) saturate(0.72) brightness(0.92);
 }
 .landing-hero-wash {
   background: #5ba3d9;
@@ -454,17 +455,21 @@ body {
   inset: 0;
   z-index: 0;
   background:
-    linear-gradient(180deg, rgba(90, 160, 220, 0.18) 0%, rgba(40, 80, 120, 0.12) 45%, rgba(20, 30, 40, 0.28) 100%);
+    radial-gradient(720px 420px at 50% 32%, rgba(8, 16, 26, 0.42) 0%, transparent 70%),
+    linear-gradient(
+      180deg,
+      rgba(24, 40, 56, 0.34) 0%,
+      rgba(16, 28, 40, 0.46) 48%,
+      rgba(10, 18, 28, 0.62) 100%
+    );
   pointer-events: none;
 }
-.landing[data-bg="mist"] .landing-hero-veil {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(40, 55, 70, 0.18) 100%);
-}
-.landing[data-bg="dusk"] .landing-hero-veil {
-  background: linear-gradient(180deg, rgba(255, 200, 140, 0.12) 0%, rgba(20, 30, 45, 0.35) 100%);
-}
+.landing[data-bg="mist"] .landing-hero-veil,
+.landing[data-bg="dusk"] .landing-hero-veil,
 .landing[data-bg="field"] .landing-hero-veil {
-  background: linear-gradient(180deg, rgba(200, 235, 210, 0.14) 0%, rgba(20, 40, 35, 0.3) 100%);
+  background:
+    radial-gradient(920px 520px at 50% 28%, rgba(255, 255, 255, 0.18), transparent 62%),
+    linear-gradient(180deg, rgba(24, 36, 48, 0.28) 0%, rgba(16, 26, 36, 0.5) 100%);
 }
 .landing-nav {
   position: absolute;
@@ -483,16 +488,16 @@ body {
   width: min(880px, 100%);
   padding: 8px 8px 8px 20px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(20px) saturate(1.25);
-  -webkit-backdrop-filter: blur(20px) saturate(1.25);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.12);
 }
 .landing-nav-brand {
   font-family: var(--font-display);
   font-size: 22px;
-  color: #fff;
+  color: #141414;
   letter-spacing: -0.02em;
   line-height: 1;
   white-space: nowrap;
@@ -511,10 +516,10 @@ body {
 .landing-nav-links button {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.92);
+  color: #2a2a2a;
   font-family: var(--font-ui);
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 500;
   cursor: pointer;
   text-decoration: none;
   padding: 8px 12px;
@@ -523,13 +528,13 @@ body {
 }
 .landing-nav-links a:hover,
 .landing-nav-links button:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.06);
 }
 .landing-nav-select {
   appearance: none;
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.92);
+  color: #2a2a2a;
   font-family: var(--font-ui);
   font-size: 14px;
   padding: 8px 12px;
@@ -537,7 +542,7 @@ body {
   cursor: pointer;
   max-width: 140px;
 }
-.landing-nav-select:hover { background: rgba(255, 255, 255, 0.12); }
+.landing-nav-select:hover { background: rgba(0, 0, 0, 0.06); }
 .landing-nav-select option { color: #111; }
 .landing-nav-cta {
   border: none;
@@ -561,15 +566,29 @@ body {
   padding: max(96px, 12vh) 0 80px;
   text-align: center;
 }
+.landing-content::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  transform: translateX(-50%);
+  width: min(900px, 130%);
+  height: min(560px, 74vh);
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(8, 14, 22, 0.5) 0%, rgba(8, 14, 22, 0.18) 48%, transparent 74%);
+}
 .landing-projects {
   margin-top: 40px;
   text-align: left;
   scroll-margin-top: 96px;
-  padding: 0;
-  background: none;
-  border: none;
-  box-shadow: none;
-  backdrop-filter: none;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 .landing-projects-head {
   display: flex;
@@ -583,15 +602,15 @@ body {
   margin: 0;
   font-family: var(--font-ui);
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.86);
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.18);
+  color: #3a3a3a;
+  text-shadow: none;
 }
 .landing-projects-head span {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.62);
+  color: #6a6a6a;
   font-variant-numeric: tabular-nums;
 }
 .landing-project-grid {
@@ -603,7 +622,7 @@ body {
   gap: 10px;
 }
 .landing-project-card {
-  --kind-accent: #e8f2ff;
+  --kind-accent: #dbeafe;
   width: 100%;
   min-height: 96px;
   display: flex;
@@ -611,31 +630,25 @@ body {
   align-items: stretch;
   gap: 8px;
   padding: 11px 12px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 12px;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--kind-accent) 22%, transparent), transparent 58%),
-    rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(14px) saturate(1.2);
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
-  color: #fff;
+    linear-gradient(135deg, color-mix(in srgb, var(--kind-accent) 55%, #fff), #fff 70%);
+  color: #141414;
   cursor: pointer;
   text-align: left;
   font-family: var(--font-ui);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
-.landing-project-card.kind-data_app { --kind-accent: #9fd0ff; }
-.landing-project-card.kind-report { --kind-accent: #c6b4ff; }
-.landing-project-card.kind-slides { --kind-accent: #ffc48a; }
-.landing-project-card.kind-one_pager { --kind-accent: #9be7c4; }
+.landing-project-card.kind-data_app { --kind-accent: #dbeafe; }
+.landing-project-card.kind-report { --kind-accent: #e8e4ff; }
+.landing-project-card.kind-slides { --kind-accent: #ffe8d2; }
+.landing-project-card.kind-one_pager { --kind-accent: #d9f5e8; }
 .landing-project-card:hover:not(:disabled) {
   transform: translateY(-1px);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--kind-accent) 34%, transparent), transparent 60%),
-    rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.4);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
 }
 .landing-project-card:disabled {
   opacity: 0.55;
@@ -654,26 +667,26 @@ body {
   text-transform: uppercase;
   padding: 3px 7px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.22);
-  color: rgba(255, 255, 255, 0.95);
+  background: rgba(0, 0, 0, 0.06);
+  color: #333;
   line-height: 1.2;
 }
 .landing-project-phase {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 550;
   letter-spacing: 0.02em;
-  color: rgba(255, 255, 255, 0.78);
+  color: #5a5a5a;
   white-space: nowrap;
 }
 .landing-project-phase.phase-ready,
 .landing-project-phase.phase-shipped {
-  color: #d7ffe9;
+  color: #1f7a4d;
 }
 .landing-project-phase.phase-plan {
-  color: #ffe7c2;
+  color: #8a5a12;
 }
 .landing-project-phase.phase-build {
-  color: #cfe4ff;
+  color: #2a5f9e;
 }
 .landing-project-title {
   display: -webkit-box;
@@ -683,7 +696,7 @@ body {
   font-size: 13.5px;
   font-weight: 550;
   line-height: 1.28;
-  color: #fff;
+  color: #141414;
   min-height: 2.56em;
 }
 .landing-project-foot {
@@ -693,7 +706,7 @@ body {
   gap: 8px;
   margin-top: auto;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.68);
+  color: #6a6a6a;
   font-variant-numeric: tabular-nums;
 }
 @media (max-width: 560px) {
@@ -705,27 +718,27 @@ body {
   }
 }
 .brand-mark {
-  margin: 0 0 16px;
+  margin: 0 0 14px;
   font-family: var(--font-display);
-  font-size: clamp(56px, 11vw, 92px);
+  font-size: clamp(52px, 10vw, 84px);
   font-weight: 400;
   line-height: 0.92;
   color: #fff;
   letter-spacing: -0.03em;
-  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.18);
+  text-shadow: 0 2px 28px rgba(0, 0, 0, 0.35);
 }
 .brand-mark em {
   font-style: italic;
   font-weight: 400;
 }
 .landing-sub {
-  margin: 0 auto 28px;
-  max-width: 540px;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: clamp(17px, 2.3vw, 22px);
-  line-height: 1.4;
-  font-weight: 400;
-  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.2);
+  margin: 0 auto 24px;
+  max-width: 520px;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: clamp(16px, 2.1vw, 19px);
+  line-height: 1.45;
+  font-weight: 450;
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.4);
 }
 .landing-error {
   display: flex;
@@ -767,23 +780,23 @@ body {
   width: min(640px, 100%);
 }
 .format-chip {
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.14);
-  color: #f4f4f4;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.88);
+  color: #222;
   border-radius: 999px;
   padding: 7px 14px;
   font-size: 13px;
   font-weight: 550;
   cursor: pointer;
-  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
 }
 .format-chip:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.24);
+  background: #fff;
 }
 .format-chip.on {
-  background: #fff;
-  color: #111;
-  border-color: #fff;
+  background: #111;
+  color: #fff;
+  border-color: #111;
 }
 .format-chip:disabled { opacity: 0.45; cursor: not-allowed; }
 .anything-prompt textarea {
@@ -978,17 +991,15 @@ body {
   margin: 18px auto 0;
   padding: 10px 18px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+  color: #1a1a1a;
   font-family: var(--font-ui);
   font-size: 14px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+  text-shadow: none;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.1);
 }
 .landing-busy-dots {
   display: inline-flex;
@@ -999,7 +1010,7 @@ body {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #fff;
+  background: #1a1a1a;
   opacity: 0.35;
   animation: landing-busy-dot 1.2s ease-in-out infinite;
 }
@@ -1027,18 +1038,20 @@ body {
   text-shadow: 0 1px 12px rgba(0, 0, 0, 0.22);
 }
 .landing-pills button {
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.9);
+  color: #2a2a2a;
   border-radius: var(--radius-pill);
   padding: 8px 14px;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  backdrop-filter: blur(8px);
   font-family: var(--font-ui);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
 }
 .landing-pills button:hover {
-  background: rgba(255, 255, 255, 0.28);
+  background: #fff;
+  color: #111;
 }
 .landing-files {
   margin-top: 16px;
