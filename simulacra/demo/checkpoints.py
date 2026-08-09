@@ -77,13 +77,10 @@ def rollback(project_id: str, checkpoint_id: str | None = None) -> ProjectState:
 	state.status = snap.get("status", "ready")
 
 	# Plain language — users don't care about checkpoint IDs/labels
-	msg = (
-		"Undid the last change. Preview is back to the earlier version — "
-		"sources and chat are unchanged."
-	)
+	msg = "Undid — preview restored."
 	# Don't spam identical undo lines if they hit Undo twice
 	last = state.chat[-1] if state.chat else None
-	if not (last and last.role == "assistant" and "Undid the last change" in (last.content or "")):
+	if not (last and last.role == "assistant" and (last.content or "").startswith("Undid")):
 		state.chat.append(
 			ChatMessage(
 				role="assistant",
