@@ -235,20 +235,25 @@ def _agent_chat_turn(
 		# Prefer honest heuristic label over "error" when we still have a user-facing reply
 		source = "heuristic"
 
-	# Soft topic note once (also primed into agent system note via prime_hook)
+	# Soft topic note once — separate system line; never rewrite the agent's reply
 	if (
 		prime_meta.get("topic_mismatch")
 		and not prime_meta.get("topic_mismatch_announced")
-		and reply
 	):
 		note = str((prime_meta.get("topic_mismatch") or {}).get("reason") or "").strip()
-		if note and note not in reply:
-			reply = f"{reply}\n\n_{note}_"
-		prime_meta["topic_mismatch_announced"] = True
+		if note:
+			prime_meta["topic_mismatch_announced"] = True
+			# Stored for system message after agent reply is appended below
+			prime_meta["_pending_topic_note"] = note
 
 	request = turn.request if turn.meta.source == "prime" and turn.reply else "await_user"
 
 	state.chat.append(ChatMessage(role="assistant", content=reply, source=source))
+	pending_topic = str(prime_meta.pop("_pending_topic_note", "") or "").strip()
+	if pending_topic:
+		state.chat.append(
+			ChatMessage(role="assistant", content=pending_topic, source="system")
+		)
 	state.prime = {
 		**state.prime,
 		**prime_meta,

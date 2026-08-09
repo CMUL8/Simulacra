@@ -1,7 +1,8 @@
 """Observe → intervene: small product hooks after agent turns and before builds.
 
-Simulacra does not invent chat replies. It notices usual product work (files in
-work/, stale extracts, broken preview URLs) and completes infra.
+Priority on doubt: the agent wins. Soft and additive only — promote files, heal
+status, prewarm Build. Never rewrite agent replies or hard-block Build/iterate
+because Simulacra is unsure.
 """
 
 from __future__ import annotations

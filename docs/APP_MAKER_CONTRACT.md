@@ -1,6 +1,8 @@
 # App Maker Contract
 
-**Product law.** The **main chat is Prime**. Simulacra is **infra + observer**: sources, gates, templates, preview, jobs, ship. The user and Prime steer; Simulacra runs structured requests and explicit user actions (Build / Ship / upload).
+**Product law.** The **main chat is the agent**. Simulacra is **infra + observer**: sources, gates, templates, preview, jobs, ship. The user and the agent steer; Simulacra runs structured requests and explicit user actions (Build / Ship / upload).
+
+**Priority on doubt.** When Simulacra and the agent disagree — or the right intervene is unclear — **the agent wins**. Soft-warn, never hard-block; never rewrite or replace the agent’s reply; never invent chat. Infra may promote files, heal status, and prewarm — it does not second-guess conversation.
 
 ## One sentence
 
@@ -25,7 +27,7 @@ Format is chosen on create (`artifact_kind`). Prompt keywords can hint; UI selec
 | **Simulacra** | Auth, tenants, sources, extract, gates, sandbox, **format templates**, preview URL, jobs, ship, audit — **observes** the agent’s structured `request` **and intervenes** on usual product actions (e.g. research file written → promote into data room) |
 | **User** | Intent, **format**, chat, uploads, explicit **Build** / **Ship** |
 
-**Observer law.** Simulacra does not invent chat replies. It does notice when the agent did something that product infra must complete — research saved outside the data room, iterate requested, gates after Build — and runs that infra without waiting for the user to babysit files.
+**Observer law.** Simulacra does not invent chat replies. It notices when the agent did something that product infra must complete — research saved outside the data room, iterate requested, gates after Build — and runs that infra without waiting for the user to babysit files. Interventions are **additive and soft**; they never override the agent’s `reply` or clear a meaningful `request` just because Simulacra is unsure.
 
 ### Observer intervene (product hooks)
 
@@ -78,11 +80,12 @@ Every Prime chat turn returns JSON (Simulacra observes; does not invent replies)
 
 ## Chat rules (critical)
 
-1. **Main chat is always Prime** — one API path (`POST /chat`). No Plan-vs-Agent dual brains.
+1. **Main chat is always the agent** — one API path (`POST /chat`). No Plan-vs-Agent dual brains.
 2. Simulacra does **not** route on `is_question_only` heuristics for product chat.
-3. Style chips still patch tokens live on the preview.
-4. **Never** pretend a heuristic rename was an agent build.
-5. **One job at a time** — Stop unlocks UI; last good preview kept.
+3. **Agent > Simulacra on doubt** — never rewrite agent replies; soft system notes only; never hard-block Build/iterate because of topic mismatch.
+4. Style from chat may patch tokens live on the preview — only as infra, not as a competing brain.
+5. **Never** pretend a heuristic rename was an agent build.
+6. **One job at a time** — Stop unlocks UI; last good preview kept.
 
 ## What Ship is (and is not)
 
