@@ -204,12 +204,10 @@ def _agent_chat_turn(
 			reply = _open_reply(state, files=files, rows=rows, high=high, vendors=vendors)
 		else:
 			reply = _heuristic_chat_reply(state, message or "")
-		source = "heuristic" if not meta.error else "error"
+		# Prefer honest heuristic label over "error" when we still have a user-facing reply
+		source = "heuristic"
 
-	request = turn.request if source == "prime" else "await_user"
-	if source != "prime":
-		# Offline heuristic: offer build when opening; otherwise await
-		request = "await_user" if not open_turn else "await_user"
+	request = turn.request if turn.meta.source == "prime" and turn.reply else "await_user"
 
 	state.chat.append(ChatMessage(role="assistant", content=reply, source=source))
 	state.prime = {
@@ -333,16 +331,23 @@ def _heuristic_chat_reply(state: ProjectState, message: str) -> str:
 		if tags:
 			return f"Tagged {', '.join(tags)}. I’ll use those sources in the build."
 
-	if any(w in lower for w in ("how many", "count", "rows", "findings")):
+	# Prefer honest “agent hiccup” over misleading keyword matches when Prime failed
+	if any(w in lower for w in ("research", "scrape", "web", "gather", "online")):
+		return (
+			f"**{state.app_config.title or 'Your project'}** — the agent couldn’t finish that turn. "
+			"Say again what you want researched, or upload sources / hit **Build** when ready."
+		)
+
+	if any(w in lower for w in ("how many", "count", "rows", "findings")) and rows:
 		return f"The sources contain **{rows}** extracted rows ({preview.get('high_risk', 0)} high risk)."
 
-	if any(w in lower for w in ("vendor", "who")):
-		return f"Vendors in scope: **{', '.join(vendors[:8]) or 'none'}**."
+	if lower.startswith(("what vendors", "which vendors", "list vendors", "who are the vendors")) and vendors:
+		return f"Vendors in scope: **{', '.join(vendors[:8])}**."
 
-	if any(w in lower for w in ("file", "source", "data room")):
+	if any(w in lower for w in ("file", "source", "data room", "upload")):
 		files = preview.get("files", [])
-		names = ", ".join(f["name"] for f in files[:6])
-		return f"Source files: {names}."
+		names = ", ".join(f["name"] for f in files[:6]) or "none yet"
+		return f"Source files: {names}. Chat to steer, or hit **Build** when ready."
 
 	return (
 		f"Noted for **{state.app_config.title}**. "

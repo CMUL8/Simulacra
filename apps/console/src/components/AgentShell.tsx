@@ -249,6 +249,9 @@ function agentNeedsLine(
         : `${sources} · agent wants to gather material`,
     };
   }
+  if (project.prime?.last_error && project.prime?.source === "heuristic") {
+    return { label: "Agent", detail: `${sources} · last turn used fallback — try again` };
+  }
   if (project.phase === "plan") {
     return { label: "Agent", detail: `${sources} · chat to steer — Build when ready` };
   }
