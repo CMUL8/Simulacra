@@ -14,7 +14,6 @@ import {
   listFixtureFiles,
   listProjectFiles,
   listProjects,
-  patchDesignBrief,
   rollbackProject,
   sendChat,
   setTenantId,
@@ -489,19 +488,6 @@ export default function App({
     }
   }
 
-  async function handleDesignBriefSave(next: DesignBrief) {
-    setDesignBrief(next);
-    if (!snapshot) throw new Error("No project");
-    const snap = await patchDesignBrief(snapshot.project.id, next);
-    setSnapshot(snap);
-    if (snap.project.design_brief) setDesignBrief(snap.project.design_brief);
-    // Style chips patch live dist — reload iframe so user sees the change now
-    if (snap.preview_url) {
-      setPreviewOpen(true);
-      setPreviewRefresh((n) => n + 1);
-    }
-  }
-
   async function handleApprove() {
     if (!snapshot) return;
     setBusy(true);
@@ -696,8 +682,6 @@ export default function App({
           traces={traces}
           sidebarOpen={sidebarOpen}
           waitStartedAt={waitStartedAt}
-          designBrief={designBrief}
-          onSaveDesignBrief={handleDesignBriefSave}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onInput={setInput}
           onSend={handleSend}

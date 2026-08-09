@@ -19,6 +19,7 @@ from .extract import extract_data_room_report, write_summary
 from .gates import run_gates, write_manifest
 from .jobs import JobConflictError, JobRecord, request_cancel, start_job
 from .plan import (
+	_purge_ephemeral_status,
 	approve_plan,
 	explore_plan_scan,
 	init_plan,
@@ -349,9 +350,8 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 				f"{file_names}\n\n"
 				"**What changed**\n"
 				f"{change_block}\n\n"
-				"Layout was personalized from your Style brief "
-				"(craft fallback — agent file edits incomplete).\n\n"
-				"Open **Preview**, chat to refine, or **Ship** when ready."
+				"Preview is ready (layout applied from your brief). "
+				"Open **Preview**, chat to refine style or content, or **Ship** when ready."
 			)
 	else:
 		body = (
@@ -367,6 +367,7 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	state.chat.append(ChatMessage(role="assistant", content=body, source=source))
 	save_checkpoint(state, "Built")
 	emit_event(pid, "done", label=f"{spec.label} ready", detail=state.deploy_url or "", status="done")
+	_purge_ephemeral_status(state)
 	save_state(state)
 	return state
 
@@ -428,11 +429,10 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 		),
 		"craft": (
 			"## Built\n\n"
-			"Layout was personalized from your Style brief "
-			"(craft fallback — agent file edits incomplete).\n\n"
+			"Preview is ready — layout applied from your brief.\n\n"
 			"**What changed**\n"
 			f"{change_block}\n\n"
-			"Open **Preview**, then chat to refine — or **Ship** when ready."
+			"Open **Preview**, chat to refine style or content, or **Ship** when ready."
 		),
 		"heuristic": (
 			"Styles from your brief were applied, but the builder did **not** rewrite the layout. "
@@ -830,9 +830,31 @@ def project_snapshot(project_id: str) -> dict:
 	# Heal ghost "running" after process restart (in-memory job gone)
 	live = get_job(project_id)
 	job = dict(state.job or {})
+	dirty = False
 	if job.get("status") in ("running", "settling") and live is None:
 		job["status"] = "idle"
 		state.job = job
+		dirty = True
+
+	before = len(state.chat)
+	_purge_ephemeral_status(state)
+	if len(state.chat) != before:
+		dirty = True
+
+	# Honest subtitle — never leave a fake "Built from your sources" claim
+	sub = (state.app_config.subtitle or "").strip()
+	if sub == "Built from your sources":
+		src = (state.prime or {}).get("source")
+		if src in ("prime", "craft"):
+			state.app_config.subtitle = ""
+		else:
+			state.app_config.subtitle = "Chat with the agent — Build when ready"
+		dirty = True
+	elif sub == "Data Explorer" and state.phase == "plan":
+		state.app_config.subtitle = "Chat with the agent — Build when ready"
+		dirty = True
+
+	if dirty:
 		save_state(state)
 
 	# Heal legacy localhost preview URLs → same-origin static path

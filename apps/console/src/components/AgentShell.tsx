@@ -7,8 +7,7 @@ import {
   Square,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
-import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } from "../api";
-import { DesignBriefForm } from "./DesignBriefForm";
+import type { AgentEvent, ChatMessage, DataRoomFile, Snapshot } from "../api";
 import { PromptComposer } from "./PromptComposer";
 import { WaitStage } from "./WaitStage";
 
@@ -22,8 +21,6 @@ type Props = {
   traces: AgentEvent[];
   sidebarOpen: boolean;
   waitStartedAt?: number | null;
-  designBrief?: DesignBrief;
-  onSaveDesignBrief?: (v: DesignBrief) => Promise<void>;
   onToggleSidebar: () => void;
   onInput: (v: string) => void;
   onSend: () => void;
@@ -179,6 +176,12 @@ function ShipReceipt({
       <p className="ship-receipt-foot">Keep chatting to iterate — changes stay on this same link.</p>
     </div>
   );
+}
+
+function isOrphanJobStatus(m: ChatMessage): boolean {
+  // Old builds left "Building your app…" in chat forever — never show it.
+  if (m.source !== "system") return false;
+  return /^Building your\b/i.test(m.content.trim());
 }
 
 function turnKind(m: ChatMessage): TurnKind {
@@ -372,8 +375,6 @@ export function AgentShell({
   traces,
   sidebarOpen,
   waitStartedAt = null,
-  designBrief,
-  onSaveDesignBrief,
   onToggleSidebar,
   onInput,
   onSend,
@@ -407,14 +408,14 @@ export function AgentShell({
   const stage = statusChip(project, lastAssistant?.source ?? project.prime?.source);
   const needs = agentNeedsLine(project, busy, jobKind);
   const agentWantsBuild = project.prime?.request === "build";
-  const showStyleBar = Boolean(designBrief && onSaveDesignBrief);
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
+  const visibleChat = project.chat.filter((m) => !isOrphanJobStatus(m));
   const showStandalonePlan =
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [project.chat, traces, busy]);
+  }, [visibleChat, traces, busy]);
 
   return (
     <div className="agent-shell">
@@ -474,7 +475,7 @@ export function AgentShell({
 
       <div className="agent-center">
         <div className="agent-thread cursor-thread">
-          {project.chat.map((m, i) => (
+          {visibleChat.map((m, i) => (
             <MessageTurn key={i} message={m} snapshot={snapshot} onOpenPreview={onOpenPreview} />
           ))}
 
@@ -493,8 +494,8 @@ export function AgentShell({
                   jobKind === "agent_chat" || jobKind === "plan_ask" || (isPlan && waitingForOpen)
                     ? "Working on your message"
                     : jobKind === "iterate_run"
-                      ? "Applying your change — preview refreshes when done"
-                      : `Building your ${noun} — preview opens when this finishes`
+                      ? "Updating preview from your message"
+                      : `Building your ${noun}`
                 }
                 jobKind={jobKind}
                 traces={traces}
@@ -526,15 +527,6 @@ export function AgentShell({
                 </span>
               ) : null}
             </div>
-
-            {showStyleBar && (
-              <DesignBriefForm
-                compact
-                value={designBrief!}
-                onSave={onSaveDesignBrief!}
-                disabled={busy}
-              />
-            )}
 
             <div className="composer-chrome-actions">
               <button

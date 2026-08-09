@@ -272,15 +272,23 @@ def approve_plan(project_id: str) -> ProjectState:
 		state.status = "approved"
 	# Clear build request — user confirmed via Build button
 	state.prime = {**state.prime, "request": None}
-	state.chat.append(
-		ChatMessage(
-			role="assistant",
-			content="Building your app…",
-			source="system",
-		)
-	)
+	# Do not append "Building…" to chat — that becomes an orphan status line.
+	# Live WaitStage / SSE covers in-flight work.
+	_purge_ephemeral_status(state)
 	save_state(state)
 	return state
+
+
+def _purge_ephemeral_status(state: ProjectState) -> None:
+	"""Drop stuck job-status lines that used to live in chat forever."""
+	state.chat = [
+		m
+		for m in state.chat
+		if not (
+			getattr(m, "source", None) == "system"
+			and str(m.content or "").strip().startswith("Building your")
+		)
+	]
 
 
 def _merge_prompt_update(prompt: str, message: str) -> str:
