@@ -26,6 +26,18 @@ function StatusIcon({ status, gates }: { status: string; gates: string }) {
   return <Clock size={12} className="status-icon pending" />;
 }
 
+function projectStatusLabel(p: Project): string {
+  if (p.deployed || p.status === "deployed") return "Shipped";
+  if (p.phase === "ready" || p.status === "ready") return "Built";
+  if (p.phase === "plan" || p.status === "planning" || p.status === "draft") return "Draft";
+  const status = (p.status || "").toLowerCase();
+  if (["building_app", "publishing_preview", "approved"].includes(status)) return "Building";
+  if (["extracting", "gating"].includes(status)) return "Scanning";
+  if (status === "failed") return "Failed";
+  if (status.includes("_")) return p.phase === "build" ? "Building" : "Draft";
+  return p.phase === "build" ? "Building" : "Draft";
+}
+
 export function Sidebar({ projects, activeId, files, focus, collapsed, onNew, onSelect, onToggle }: Props) {
   const [filter, setFilter] = useState("");
 
@@ -61,7 +73,7 @@ export function Sidebar({ projects, activeId, files, focus, collapsed, onNew, on
                 <div className="project-text">
                   <span className="project-title">{p.app_config?.title || "Untitled"}</span>
                   <span className="project-meta">
-                    {p.row_count} rows · {p.status}
+                    {p.row_count} rows · {projectStatusLabel(p)}
                   </span>
                 </div>
               </button>

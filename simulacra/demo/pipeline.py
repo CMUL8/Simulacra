@@ -854,6 +854,25 @@ def project_snapshot(project_id: str) -> dict:
 		state.app_config.subtitle = "Chat with the agent — Build when ready"
 		dirty = True
 
+	# Heal stuck in-progress status when no live job is running
+	stale_build = (state.status or "") in (
+		"building_app",
+		"publishing_preview",
+		"approved",
+		"extracting",
+		"gating",
+	)
+	if stale_build and live is None and job.get("status") not in ("running", "settling"):
+		if state.deployed:
+			state.status = "deployed"
+		elif state.phase == "ready" or state.deploy_url:
+			state.status = "ready"
+		elif state.phase == "plan":
+			state.status = "planning"
+		else:
+			state.status = "draft"
+		dirty = True
+
 	if dirty:
 		save_state(state)
 

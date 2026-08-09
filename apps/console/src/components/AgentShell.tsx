@@ -218,7 +218,7 @@ function agentNeedsLine(
   project: Snapshot["project"],
   busy: boolean,
   jobKind?: string | null,
-): { label: string; detail: string } {
+): { label: string; detail: string; title: string } {
   const room = project.plan_preview?.source_room;
   const files = project.plan_preview?.files ?? [];
   const names = room?.file_names?.length
@@ -226,34 +226,36 @@ function agentNeedsLine(
     : files.map((f) => f.name).filter(Boolean);
   const empty = room?.empty ?? names.length === 0;
   const sources = empty
-    ? "No sources yet"
-    : `${names.length} source${names.length === 1 ? "" : "s"} · ${names.slice(0, 3).join(", ")}${
-        names.length > 3 ? "…" : ""
-      }`;
+    ? "No sources"
+    : `${names.length} source${names.length === 1 ? "" : "s"}`;
+  const sourcesTitle = empty
+    ? "No sources attached yet"
+    : names.join(", ");
   const req = project.prime?.request;
 
   if (busy && (jobKind === "agent_chat" || jobKind === "plan_ask" || waitingChatJob(jobKind))) {
-    return { label: "Working", detail: sources };
+    return { label: "Working", detail: sources, title: sourcesTitle };
   }
   if (busy && (jobKind === "build_run" || jobKind === "bootstrap")) {
-    return { label: "Building", detail: sources };
+    return { label: "Building", detail: sources, title: sourcesTitle };
   }
   if (busy && jobKind === "iterate_run") {
-    return { label: "Updating", detail: sources };
+    return { label: "Updating", detail: sources, title: sourcesTitle };
   }
   if (req === "build") {
-    return { label: "Ready to build", detail: sources };
+    return { label: "Ready to build", detail: sources, title: sourcesTitle };
   }
   if (req === "research") {
     return {
       label: "Research",
-      detail: project.prime?.brief ? `${sources} · ${project.prime.brief}` : sources,
+      detail: sources,
+      title: project.prime?.brief ? `${sourcesTitle} · ${project.prime.brief}` : sourcesTitle,
     };
   }
   if (project.prime?.last_error && project.prime?.source === "heuristic") {
-    return { label: "Retry", detail: `${sources} · last turn used fallback` };
+    return { label: "Retry", detail: sources, title: `${sourcesTitle} · last turn used fallback` };
   }
-  return { label: "Agent", detail: sources };
+  return { label: "Agent", detail: sources, title: sourcesTitle };
 }
 
 function waitingChatJob(jobKind?: string | null): boolean {
@@ -431,8 +433,15 @@ export function AgentShell({
         </div>
         <div className="agent-topbar-right">
           {!isPlan && project.checkpoints?.length > 0 && onRollback && (
-            <button type="button" className="icon-btn" disabled={busy} onClick={onRollback} title="Rollback">
-              <RotateCcw size={14} />
+            <button
+              type="button"
+              className="topbar-link"
+              disabled={busy}
+              onClick={onRollback}
+              title="Undo to the last good preview (keeps your sources and chat)"
+            >
+              <RotateCcw size={13} strokeWidth={1.75} />
+              Undo
             </button>
           )}
           <button type="button" className="topbar-link" onClick={onGovernance} title="Account, policy & admin">
@@ -453,12 +462,12 @@ export function AgentShell({
           {!isPlan && onRebuild && (
             <button
               type="button"
-              className="ghost-btn quiet"
+              className="topbar-link danger-quiet"
               disabled={busy}
               onClick={onRebuild}
-              title="Reset to scaffold and run the builder again"
+              title="Throw away the current preview and build again from a blank template"
             >
-              Rebuild from draft
+              Start over
             </button>
           )}
         </div>
@@ -521,7 +530,7 @@ export function AgentShell({
                 {formatChipLabel(project.artifact_kind)}
               </span>
               {needs?.detail ? (
-                <span className="composer-sources" title={needs.detail}>
+                <span className="composer-sources" title={needs.title || needs.detail}>
                   <span className="composer-sep">· </span>
                   {needs.detail}
                 </span>

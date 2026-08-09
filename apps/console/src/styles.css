@@ -2090,6 +2090,13 @@ body {
   color: var(--text);
   letter-spacing: -0.011em;
 }
+/* Same body size for user + agent — hierarchy is background tint, not type scale */
+.cursor-turn-user .cursor-prose,
+.cursor-turn-assistant .cursor-prose,
+.cursor-turn-plan .cursor-prose {
+  font-size: 14.5px;
+  line-height: 1.65;
+}
 .cursor-prose p {
   margin: 0 0 0.65em;
 }
@@ -2914,6 +2921,9 @@ a.md-link:hover {
 }
 
 .topbar-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: none;
   background: transparent;
   color: var(--text-dim);
@@ -2923,6 +2933,13 @@ a.md-link:hover {
   cursor: pointer;
 }
 .topbar-link:hover { color: var(--text-bright); }
+.topbar-link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.topbar-link.danger-quiet:hover:not(:disabled) {
+  color: #f0b4b4;
+}
 
 /* Style bar — replaces Look & feel card */
 .style-bar {

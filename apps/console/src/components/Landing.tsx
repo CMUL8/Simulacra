@@ -59,7 +59,19 @@ function phaseLabel(p: Project): string {
   if (p.deployed) return "Shipped";
   if (p.phase === "ready") return "Built";
   if (p.phase === "plan") return "Draft";
-  return p.status || p.phase;
+  const status = (p.status || "").toLowerCase();
+  if (status === "building_app" || status === "publishing_preview" || status === "approved") {
+    return "Building";
+  }
+  if (status === "extracting" || status === "gating") return "Scanning";
+  if (status === "planning") return "Draft";
+  if (status === "failed") return "Failed";
+  if (status === "draft" || status === "ready" || status === "deployed") {
+    return status === "deployed" ? "Shipped" : status === "ready" ? "Built" : "Draft";
+  }
+  // Never leak snake_case internals into the UI
+  if (status.includes("_")) return p.phase === "build" ? "Building" : "Draft";
+  return p.phase === "build" ? "Building" : p.phase || "Draft";
 }
 
 function kindShort(p: Project): string {

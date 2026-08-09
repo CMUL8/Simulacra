@@ -41,7 +41,8 @@ Create (+ format) → Prime chat (user steers)
 | **Build** | User hits Build → gates → format template → **builder customizes** → preview. Clears `prime.request`. | **Building…** → **Built** + Preview |
 | **Drive** | Chat → Prime; if `request=iterate` and artifact exists → `iterate_run` | Thinking → Preview updates → reply |
 | **Ship** | Gates pass → `deployed=true` + stable preview URL + chat receipt | **Shipped** + shareable link |
-| **Rebuild from draft** | Escape hatch — wipe back to template, agent builds again | Same as create deepen |
+| **Start over** | Escape hatch — wipe back to blank template, build again | Same as create deepen |
+| **Undo** | Restore last good checkpoint (keeps sources + chat) | Preview rolls back |
 
 ## Prime chat envelope
 
@@ -89,7 +90,7 @@ Every Prime chat turn returns JSON (Simulacra observes; does not invent replies)
 |------|------|
 | `agent_chat` | Prime chat turn (create open + every user message) |
 | `plan_ask` | Alias / same bounds as `agent_chat` (compat) |
-| `build_run` | First Build / Rebuild from draft (agent) |
+| `build_run` | First Build / Start over (agent) |
 | `iterate_run` | Prime requested iterate — edit artifact (preserve prior work) |
 | `bootstrap` | Legacy create scaffold (tests); not live create |
 
