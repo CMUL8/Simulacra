@@ -167,6 +167,21 @@ def _envelope_schema_block() -> str:
 	)
 
 
+def _recent_chat_block(state: ProjectState, *, limit: int = 10) -> str:
+	"""Compact recent transcript so follow-ups stay coherent even if session resume is weak."""
+	lines: list[str] = []
+	for m in (state.chat or [])[-limit:]:
+		role = (m.role or "?").upper()
+		content = (m.content or "").strip().replace("\n", " ")
+		if len(content) > 280:
+			content = content[:277] + "…"
+		if content:
+			lines.append(f"{role}: {content}")
+	if not lines:
+		return "(no prior chat)"
+	return "\n".join(lines)
+
+
 def prime_chat_turn(
 	cwd: Path,
 	state: ProjectState,
@@ -175,17 +190,21 @@ def prime_chat_turn(
 	open_turn: bool = False,
 	project_id: str | None = None,
 ) -> PrimeChatTurn:
-	"""Single Prime chat turn for the product. Main chat = this helper."""
+	"""Single Prime chat turn for the product. Main chat = this helper.
+
+	Always uses the same session name + session_dir so Prime's RLM worker can
+	resume context across the ~10–12 follow-ups a normal user sends.
+	"""
 	if not prime_enabled() or not (project_id or state.id):
 		return PrimeChatTurn(meta=PrimeBuildMeta(used=False, source="heuristic"))
 
 	pid = project_id or state.id
 	preview = state.plan_preview or {}
 	summary = str(preview.get("summary") or "")
-	design = brief_to_prime_block(state.design_brief or {})
 	room_lines = _room_lines(preview)
-	data_block = _data_block(preview)
-	has_artifact = state.phase in ("ready", "build") and bool(state.deploy_url or (cwd / "app" / "package.json").exists())
+	has_artifact = state.phase in ("ready", "build") and bool(
+		state.deploy_url or (cwd / "app" / "package.json").exists()
+	)
 
 	phase_note = (
 		f"Project phase: {state.phase}. "
@@ -196,27 +215,51 @@ def prime_chat_turn(
 		)
 	)
 
+	# One stable session name for the project lifetime — enables RLM resume.
+	session_name = "simulacra-chat"
+
 	if open_turn:
+		design = brief_to_prime_block(state.design_brief or {})
+		data_block = _data_block(preview)
 		role = (
 			"You are the Simulacra agent, live in the main chat with the user.\n"
-			"This is the opening turn after create. They steer you.\n"
+			"This is the opening turn after create. They will steer you across many follow-ups.\n"
 			"Do NOT claim you have built anything. Do not write app code in this turn.\n"
+			"Use your persistent session/RLM memory — later turns will resume this conversation.\n"
 		)
 		user_bit = f"User request:\n{state.prompt}\n\nGoal (if any):\n{state.goal or '(none)'}\n"
-		name = "simulacra-chat-open"
+		context_bit = (
+			f"Data room inventory:\n{room_lines}\n\n"
+			f"Source summary:\n{summary[:1800]}\n\n"
+			f"Stats: {preview.get('row_count', 0)} rows, "
+			f"{preview.get('high_risk', 0)} high-risk, "
+			f"{len(preview.get('vendors') or [])} vendors, "
+			f"{len(preview.get('files') or [])} files.\n\n"
+			f"{data_block}\n\n"
+			f"{design}\n"
+		)
+		ask_timeout = 180.0
 	else:
+		# Slim follow-ups: rely on session memory + short recent transcript, not a full dump.
 		role = (
-			"You are the Simulacra agent, live in the main chat with the user.\n"
+			"You are the Simulacra agent continuing the SAME chat session with the user.\n"
+			"Resume prior context from your session/RLM memory. Do not restart from scratch.\n"
 			"They steer you — sources, sample pack, research, scope, tone, UI edits.\n"
 			"Do NOT force a vendor dashboard unless they want that.\n"
 			"Do not write app code in this turn; request iterate/build instead.\n"
 		)
 		user_bit = (
-			f"Proposed so far: {state.app_config.title} — {state.app_config.subtitle}\n"
-			f"User goal/prompt:\n{state.prompt}\n\n"
-			f"User message:\n{message or ''}\n"
+			f"Product so far: {state.app_config.title} — {state.app_config.subtitle}\n"
+			f"Original ask: {state.prompt[:400]}\n\n"
+			f"Recent chat:\n{_recent_chat_block(state)}\n\n"
+			f"Latest user message:\n{message or ''}\n"
 		)
-		name = "simulacra-chat"
+		context_bit = (
+			f"Data room inventory (current):\n{room_lines}\n\n"
+			f"Rows={preview.get('row_count', 0)} high={preview.get('high_risk', 0)} "
+			f"vendors={len(preview.get('vendors') or [])} files={len(preview.get('files') or [])}\n"
+		)
+		ask_timeout = 240.0
 
 	prime_prompt = (
 		f"{role}\n"
@@ -224,14 +267,7 @@ def prime_chat_turn(
 		"Be honest about the data room. Never silently pretend unrelated attached rows "
 		"are about their topic. Never claim Built until Simulacra has actually built.\n\n"
 		f"{user_bit}\n"
-		f"Data room inventory:\n{room_lines}\n\n"
-		f"Source summary:\n{summary[:2200]}\n\n"
-		f"Stats: {preview.get('row_count', 0)} extracted rows, "
-		f"{preview.get('high_risk', 0)} high-risk, "
-		f"{len(preview.get('vendors') or [])} vendors, "
-		f"{len(preview.get('files') or [])} files.\n\n"
-		f"{data_block}\n\n"
-		f"{design}\n\n"
+		f"{context_bit}\n"
 		f"{_envelope_schema_block()}"
 	)
 
@@ -239,8 +275,8 @@ def prime_chat_turn(
 		pid,
 		cwd=cwd,
 		prompt=prime_prompt,
-		name=name,
-		timeout=90.0,
+		name=session_name,
+		timeout=ask_timeout,
 	)
 	out_meta = PrimeBuildMeta(
 		used=True,

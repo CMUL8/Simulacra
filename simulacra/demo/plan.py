@@ -325,6 +325,7 @@ def _heuristic_chat_reply(state: ProjectState, message: str) -> str:
 	preview = state.plan_preview or {}
 	rows = preview.get("row_count", 0)
 	vendors = preview.get("vendors", [])
+	title = state.app_config.title or "Your project"
 
 	if "@" in message:
 		tags = [t.strip() for t in message.split() if t.startswith("@")]
@@ -334,8 +335,9 @@ def _heuristic_chat_reply(state: ProjectState, message: str) -> str:
 	# Prefer honest “agent hiccup” over misleading keyword matches when Prime failed
 	if any(w in lower for w in ("research", "scrape", "web", "gather", "online")):
 		return (
-			f"**{state.app_config.title or 'Your project'}** — the agent couldn’t finish that turn. "
-			"Say again what you want researched, or upload sources / hit **Build** when ready."
+			f"**{title}** — the agent couldn’t finish that turn. "
+			"Send again (research outline, sources to fetch), or upload files"
+			+ (" / hit **Build** when ready." if state.phase == "plan" else ".")
 		)
 
 	if any(w in lower for w in ("how many", "count", "rows", "findings")) and rows:
@@ -347,9 +349,15 @@ def _heuristic_chat_reply(state: ProjectState, message: str) -> str:
 	if any(w in lower for w in ("file", "source", "data room", "upload")):
 		files = preview.get("files", [])
 		names = ", ".join(f["name"] for f in files[:6]) or "none yet"
-		return f"Source files: {names}. Chat to steer, or hit **Build** when ready."
+		return f"Source files: {names}."
+
+	if state.phase == "ready":
+		return (
+			f"**{title}** — the agent hiccuped on that turn. "
+			"Send the change again (e.g. denser summary, tighter opening) and I’ll retry."
+		)
 
 	return (
-		f"Noted for **{state.app_config.title}**. "
+		f"Noted for **{title}**. "
 		f"Keep chatting (sources, research, scope), or hit **Build** when ready."
 	)

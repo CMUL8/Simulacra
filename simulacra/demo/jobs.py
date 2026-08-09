@@ -19,9 +19,9 @@ log = logging.getLogger("simulacra.jobs")
 # APP_MAKER_CONTRACT + PRODUCT_SPEC §3A.6 defaults
 BOUNDS: dict[str, dict[str, float | int]] = {
 	"bootstrap": {"timeout": 480, "max_steps": 50, "stall": 120},
-	# Chat may chain into iterate inside the same job
-	"agent_chat": {"timeout": 300, "max_steps": 40, "stall": 60},
-	"plan_ask": {"timeout": 300, "max_steps": 40, "stall": 60},  # alias bounds
+	# Chat may chain into iterate; long LLM waits without tools are normal.
+	"agent_chat": {"timeout": 600, "max_steps": 80, "stall": 300},
+	"plan_ask": {"timeout": 600, "max_steps": 80, "stall": 300},  # alias bounds
 	"build_run": {"timeout": 300, "max_steps": 40, "stall": 45},
 	"iterate_run": {"timeout": 180, "max_steps": 25, "stall": 45},
 	"iterate_ask": {"timeout": 90, "max_steps": 6, "stall": 45},
@@ -138,7 +138,9 @@ def check_bounds(project_id: str) -> None:
 		raise JobCancelled("timeout")
 	if job.steps >= job.max_steps:
 		raise JobCancelled("max_steps")
-	if now - job.last_event_at > job.stall_secs:
+	# Pure chat turns often think for minutes with no tool events — do not stall-kill them.
+	# Build/iterate still use stall so runaway tool loops die.
+	if job.kind not in ("agent_chat", "plan_ask") and now - job.last_event_at > job.stall_secs:
 		raise JobCancelled("stall")
 	for sig, count in job.tool_signatures.items():
 		if count >= 3:

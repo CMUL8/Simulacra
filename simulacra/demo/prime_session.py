@@ -134,6 +134,20 @@ async def _ask_async(
 
 	register_abort(project_id, abort_hook)
 
+	# Keep job alive during long think stretches (no tools) — RLM chat can take minutes.
+	stop_hb = threading.Event()
+
+	def _heartbeat() -> None:
+		while not stop_hb.wait(20.0):
+			try:
+				note_event(project_id)
+				emit_event(project_id, "think", label="Agent thinking", status="running")
+			except Exception:  # noqa: BLE001
+				pass
+
+	hb = threading.Thread(target=_heartbeat, name=f"prime-hb-{project_id[:8]}", daemon=True)
+	hb.start()
+
 	try:
 		await agent.start()
 		state = await agent.state()
@@ -152,6 +166,7 @@ async def _ask_async(
 		_save_prime_meta(project_id, meta)
 		return None, meta
 	finally:
+		stop_hb.set()
 		try:
 			await agent.stop()
 		except Exception:  # noqa: BLE001
@@ -232,14 +247,16 @@ def _save_prime_meta(project_id: str, meta: dict[str, Any]) -> None:
 		state = load_state(project_id)
 	except FileNotFoundError:
 		return
+	# Preserve observer fields (request/brief) set by chat turn — only patch session health.
+	prev = dict(state.prime or {})
 	state.prime = {
-		**state.prime,
-		"session_id": meta.get("session_id") or state.prime.get("session_id"),
+		**prev,
+		"session_id": meta.get("session_id") or prev.get("session_id"),
 		"session_dir": str(session_dir_for(project_id)),
-		"model": meta.get("model") or state.prime.get("model"),
-		"source": meta.get("source", "prime"),
+		"model": meta.get("model") or prev.get("model"),
+		"source": meta.get("source") or prev.get("source") or "prime",
 		"last_error": meta.get("error"),
-		"status": "ok" if meta.get("ok") else ("error" if meta.get("error") else state.prime.get("status")),
+		"status": "ok" if meta.get("ok") else ("error" if meta.get("error") else prev.get("status")),
 	}
 	save_state(state)
 
@@ -250,7 +267,7 @@ def prime_ask(
 	cwd: Path,
 	prompt: str,
 	name: str = "simulacra",
-	timeout: float = 90.0,
+	timeout: float = 240.0,
 ) -> tuple[str | None, dict[str, Any]]:
 	return _run_coro(_ask_async(project_id, cwd=cwd, prompt=prompt, name=name, timeout=timeout))
 

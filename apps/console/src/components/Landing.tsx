@@ -201,8 +201,8 @@ export function Landing({
           Simu<em>lacra</em>
         </h1>
         <p className="landing-sub">
-          Describe what you need from the data room. Pick a format — we build it in one shot,
-          then you chat to refine and ship.
+          Describe what you need. Pick a format — the agent opens in chat to steer sources
+          and scope, then you Build, refine, and Ship.
         </p>
 
         {error && (

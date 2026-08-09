@@ -27,7 +27,9 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 	elif placeholder:
 		clause = prompt.strip().split("\n")[0].strip()[:60]
 		cfg.title = clause[:1].upper() + clause[1:] if clause else "Custom App"
-		cfg.subtitle = "Built from your sources"
+		# Honest until Build — never imply the artifact already exists
+		if not cfg.subtitle or cfg.subtitle in ("Built from your sources", "Data Explorer"):
+			cfg.subtitle = "Chat with the agent — Build when ready"
 
 	if "region" in lower or "country" in lower:
 		cfg.group_by = "theme"
