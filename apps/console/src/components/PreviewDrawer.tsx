@@ -94,12 +94,16 @@ export function PreviewDrawer({
                 className="approve-btn preview-deploy-btn"
                 disabled={busy}
                 onClick={onDeploy}
+                title="Approve this preview for your team"
+                aria-label="Ship — approve this preview for your team"
               >
                 Ship
               </button>
             )}
             {project?.deployed && (
-              <span className="source-chip source-prime">Shipped</span>
+              <span className="source-chip source-prime" title="Approved share link">
+                Shipped
+              </span>
             )}
             {project?.deployed && previewUrl && (
               <button

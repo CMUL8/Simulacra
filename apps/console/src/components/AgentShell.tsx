@@ -4,6 +4,7 @@ import {
   PanelLeft,
   PanelLeftClose,
   RotateCcw,
+  Square,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } from "../api";
@@ -342,11 +343,6 @@ export function AgentShell({
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const showStandalonePlan =
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
-  const loopHint = isPlan
-    ? "Building in progress — chat unlocks when this finishes."
-    : project.deployed
-      ? "Shipped — keep chatting to iterate on the same preview link."
-      : "Agent mode — each change request drives the builder. Questions ending in ? are Q&A only.";
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -363,15 +359,8 @@ export function AgentShell({
             Simu<em>lacra</em>
           </span>
           <span className="project-name">{project.app_config.title}</span>
-          {stage && <span className={`source-chip ${stage.cls}`}>{stage.text}</span>}
         </div>
         <div className="agent-topbar-right">
-          {hasPreview && (
-            <button type="button" className="ghost-btn quiet" onClick={onOpenPreview}>
-              <Globe size={14} />
-              Preview
-            </button>
-          )}
           {!isPlan && project.checkpoints?.length > 0 && onRollback && (
             <button type="button" className="icon-btn" disabled={busy} onClick={onRollback} title="Rollback">
               <RotateCcw size={14} />
@@ -443,7 +432,34 @@ export function AgentShell({
         </div>
 
         <div className="agent-composer-wrap">
-          <p className="agent-loop-hint">{loopHint}</p>
+          <div className="composer-chrome" role="toolbar" aria-label="Project actions">
+            <div className="composer-chrome-left">
+              {stage && <span className={`composer-chrome-chip source-chip ${stage.cls}`}>{stage.text}</span>}
+              <button
+                type="button"
+                className="composer-chrome-btn"
+                disabled={!hasPreview}
+                onClick={onOpenPreview}
+                title={hasPreview ? "Open preview" : "Preview appears when the build finishes"}
+              >
+                <Globe size={13} strokeWidth={1.75} />
+                {hasPreview ? "Preview" : "Preview…"}
+              </button>
+            </div>
+            <div className="composer-chrome-right">
+              {busy && onCancel && (
+                <button
+                  type="button"
+                  className="composer-chrome-btn stop"
+                  onClick={onCancel}
+                  title="Stop current job"
+                >
+                  <Square size={11} fill="currentColor" />
+                  Stop
+                </button>
+              )}
+            </div>
+          </div>
           {showStyleBar && (
             <DesignBriefForm value={designBrief!} onSave={onSaveDesignBrief!} disabled={false} />
           )}

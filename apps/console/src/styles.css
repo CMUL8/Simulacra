@@ -422,9 +422,9 @@ body {
 .landing-hero-img {
   object-fit: cover;
   object-position: center 35%;
-  transform: scale(1.06);
-  /* Soft atmosphere — photo stays, chaos goes */
-  filter: blur(10px) saturate(0.72) brightness(0.92);
+  transform: scale(1.02);
+  /* Light + cheery — slight soften only; UI stays solid for contrast */
+  filter: blur(2px) saturate(1.05) brightness(1.03);
 }
 .landing-hero-wash {
   background: #5ba3d9;
@@ -455,21 +455,29 @@ body {
   inset: 0;
   z-index: 0;
   background:
-    radial-gradient(720px 420px at 50% 32%, rgba(8, 16, 26, 0.42) 0%, transparent 70%),
+    radial-gradient(900px 480px at 50% 22%, rgba(255, 255, 255, 0.28), transparent 58%),
     linear-gradient(
       180deg,
-      rgba(24, 40, 56, 0.34) 0%,
-      rgba(16, 28, 40, 0.46) 48%,
-      rgba(10, 18, 28, 0.62) 100%
+      rgba(120, 180, 230, 0.18) 0%,
+      rgba(60, 110, 160, 0.12) 45%,
+      rgba(20, 40, 60, 0.22) 100%
     );
   pointer-events: none;
 }
-.landing[data-bg="mist"] .landing-hero-veil,
-.landing[data-bg="dusk"] .landing-hero-veil,
+.landing[data-bg="mist"] .landing-hero-veil {
+  background:
+    radial-gradient(900px 480px at 50% 22%, rgba(255, 255, 255, 0.3), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(40, 55, 70, 0.2) 100%);
+}
+.landing[data-bg="dusk"] .landing-hero-veil {
+  background:
+    radial-gradient(900px 480px at 50% 22%, rgba(255, 220, 180, 0.2), transparent 58%),
+    linear-gradient(180deg, rgba(255, 200, 140, 0.14) 0%, rgba(20, 30, 45, 0.28) 100%);
+}
 .landing[data-bg="field"] .landing-hero-veil {
   background:
-    radial-gradient(920px 520px at 50% 28%, rgba(255, 255, 255, 0.18), transparent 62%),
-    linear-gradient(180deg, rgba(24, 36, 48, 0.28) 0%, rgba(16, 26, 36, 0.5) 100%);
+    radial-gradient(900px 480px at 50% 22%, rgba(220, 245, 230, 0.22), transparent 58%),
+    linear-gradient(180deg, rgba(200, 235, 210, 0.14) 0%, rgba(20, 40, 35, 0.24) 100%);
 }
 .landing-nav {
   position: absolute;
@@ -570,13 +578,14 @@ body {
   content: "";
   position: absolute;
   left: 50%;
-  top: 6%;
+  top: 4%;
   transform: translateX(-50%);
-  width: min(900px, 130%);
-  height: min(560px, 74vh);
+  width: min(880px, 125%);
+  height: min(420px, 58vh);
   z-index: -1;
   pointer-events: none;
-  background: radial-gradient(ellipse at center, rgba(8, 14, 22, 0.5) 0%, rgba(8, 14, 22, 0.18) 48%, transparent 74%);
+  /* Soft lift for brand type — not a dark fog */
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.16) 0%, transparent 70%);
 }
 .landing-projects {
   margin-top: 40px;
@@ -2648,14 +2657,60 @@ a.md-link:hover {
   padding: 0 var(--thread-pad, 20px) 18px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
-.agent-loop-hint {
-  margin: 0;
-  padding: 0;
+/* Slim bar above composer — status + Preview + Stop. Ship lives on Preview. */
+.composer-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+.composer-chrome-left,
+.composer-chrome-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.composer-chrome-chip.source-chip {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+.composer-chrome-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-family: var(--font-ui);
   font-size: 12px;
-  line-height: 1.4;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.composer-chrome-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-bright);
+}
+.composer-chrome-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.composer-chrome-btn.stop {
   color: var(--text-dim);
+}
+.composer-chrome-btn.stop:hover:not(:disabled) {
+  color: var(--text-bright);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 
 .policy-whisper {
