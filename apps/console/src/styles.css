@@ -2659,7 +2659,7 @@ a.md-link:hover {
   flex-direction: column;
   gap: 8px;
 }
-/* Slim bar above composer — status + Preview + Stop. Ship lives on Preview. */
+/* One slim line above composer — status · style · format · Preview · Stop */
 .composer-chrome {
   display: flex;
   align-items: center;
@@ -2673,12 +2673,50 @@ a.md-link:hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex-wrap: nowrap;
+}
+.composer-chrome-left {
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.composer-chrome-left::-webkit-scrollbar {
+  display: none;
 }
 .composer-chrome-chip.source-chip {
   flex-shrink: 0;
   font-size: 11px;
   padding: 3px 9px;
   border-radius: 999px;
+}
+.composer-chrome .style-bar-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.composer-chrome .style-chips {
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+.composer-chrome .style-chip {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  border-radius: 999px;
+}
+.composer-chrome .style-accent {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.composer-chrome .style-status {
+  margin-left: 0;
+  font-size: 10.5px;
+}
+.composer-chrome .style-status.ok {
+  display: none; /* keep the chrome line quiet */
 }
 .composer-chrome-btn {
   display: inline-flex;
@@ -2695,6 +2733,7 @@ a.md-link:hover {
   line-height: 1;
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .composer-chrome-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
@@ -2704,6 +2743,15 @@ a.md-link:hover {
 .composer-chrome-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+.composer-chrome-btn.format {
+  color: var(--text-dim);
+  cursor: default;
+}
+.composer-chrome-btn.format:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-dim);
 }
 .composer-chrome-btn.stop {
   color: var(--text-dim);

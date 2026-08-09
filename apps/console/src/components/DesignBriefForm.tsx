@@ -5,6 +5,8 @@ type Props = {
   value: DesignBrief;
   onSave: (v: DesignBrief) => Promise<void>;
   disabled?: boolean;
+  /** Single-line chrome: chips + accent only (no notes field). */
+  compact?: boolean;
 };
 
 type Preset = {
@@ -98,7 +100,7 @@ function matchPreset(brief: DesignBrief): string | null {
   return found?.id ?? null;
 }
 
-export function DesignBriefForm({ value, onSave, disabled }: Props) {
+export function DesignBriefForm({ value, onSave, disabled, compact }: Props) {
   const [notes, setNotes] = useState(value.user_notes ?? "");
   const [accent, setAccent] = useState(value.aesthetic?.palette?.accent ?? "#3D8B6E");
   const [active, setActive] = useState<string | null>(matchPreset(value));
@@ -165,55 +167,53 @@ export function DesignBriefForm({ value, onSave, disabled }: Props) {
     }, 500);
   }
 
+  const chips = (
+    <>
+      <div className="style-chips" role="group" aria-label="Look and feel">
+        {PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`style-chip ${active === p.id ? "on" : ""}`}
+            disabled={disabled || status === "saving"}
+            onClick={() => applyPreset(p)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <label className="style-accent" title="Accent">
+        <input
+          type="color"
+          disabled={disabled}
+          value={accent}
+          onChange={(e) => {
+            const v = e.target.value;
+            setAccent(v);
+            scheduleNotesSave(notes, v);
+          }}
+        />
+      </label>
+      {status === "saved" && <span className="style-status ok">Applied</span>}
+      {status === "saving" && <span className="style-status">…</span>}
+      {status === "error" && (
+        <span className="style-status err" title={err}>
+          Retry
+        </span>
+      )}
+    </>
+  );
+
+  if (compact) {
+    return <div className="style-bar style-bar-compact">{chips}</div>;
+  }
+
   return (
     <div className="style-bar">
       <div className="style-bar-row">
         <span className="style-bar-label">Style</span>
-        <div className="style-chips" role="group" aria-label="Look and feel">
-          {PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`style-chip ${active === p.id ? "on" : ""}`}
-              disabled={disabled || status === "saving"}
-              onClick={() => applyPreset(p)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        <label className="style-accent" title="Accent">
-          <input
-            type="color"
-            disabled={disabled}
-            value={accent}
-            onChange={(e) => {
-              const v = e.target.value;
-              setAccent(v);
-              scheduleNotesSave(notes, v);
-            }}
-          />
-        </label>
-        {status === "saved" && <span className="style-status ok">Applied to preview</span>}
-        {status === "saving" && <span className="style-status">Applying…</span>}
-        {status === "error" && (
-          <span className="style-status err" title={err}>
-            Retry
-          </span>
-        )}
+        {chips}
       </div>
-      <input
-        className="style-notes"
-        type="text"
-        disabled={disabled}
-        value={notes}
-        placeholder="Optional notes for the build…"
-        onChange={(e) => {
-          const v = e.target.value;
-          setNotes(v);
-          scheduleNotesSave(v, accent);
-        }}
-      />
     </div>
   );
 }

@@ -221,6 +221,20 @@ function formatNoun(kind?: string | null): string {
   return "app";
 }
 
+function formatChipLabel(kind?: string | null): string {
+  if (kind === "report") return "Report";
+  if (kind === "slides") return "Slides";
+  if (kind === "one_pager") return "One-pager";
+  return "App";
+}
+
+function formatChipHint(kind?: string | null): string {
+  if (kind === "report") return "Long-form document — print-friendly, sectioned narrative";
+  if (kind === "slides") return "Multi-page deck — one idea per slide";
+  if (kind === "one_pager") return "Single printable sheet — dense and scannable";
+  return "Interactive command center — filters, tabs, drill-down";
+}
+
 function PlanSection({
   snapshot,
   onOpenPreview,
@@ -435,6 +449,20 @@ export function AgentShell({
           <div className="composer-chrome" role="toolbar" aria-label="Project actions">
             <div className="composer-chrome-left">
               {stage && <span className={`composer-chrome-chip source-chip ${stage.cls}`}>{stage.text}</span>}
+              {showStyleBar && (
+                <DesignBriefForm
+                  compact
+                  value={designBrief!}
+                  onSave={onSaveDesignBrief!}
+                  disabled={busy}
+                />
+              )}
+              <span
+                className="composer-chrome-btn format"
+                title={formatChipHint(project.artifact_kind)}
+              >
+                {formatChipLabel(project.artifact_kind)}
+              </span>
               <button
                 type="button"
                 className="composer-chrome-btn"
@@ -460,9 +488,6 @@ export function AgentShell({
               )}
             </div>
           </div>
-          {showStyleBar && (
-            <DesignBriefForm value={designBrief!} onSave={onSaveDesignBrief!} disabled={false} />
-          )}
           <PromptComposer
             value={input}
             onChange={onInput}
