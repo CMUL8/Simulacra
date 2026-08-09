@@ -1,13 +1,13 @@
-"""Optional Prime Agent hooks for plan chat, config, and follow-up Q&A."""
+"""Prime Agent chat envelope — main product chat. Simulacra observes structured requests."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from simulacra.env import load_dotenv
 
@@ -15,6 +15,9 @@ from .design_brief import brief_to_prime_block
 from .events import emit_event
 from .prime_session import prime_ask
 from .runs import AppConfig, ProjectState
+
+ChatRequest = Literal["await_user", "build", "iterate", "research"]
+VALID_REQUESTS = frozenset({"await_user", "build", "iterate", "research"})
 
 
 @dataclass
@@ -26,6 +29,29 @@ class PrimeBuildMeta:
 	source: str = "heuristic"
 
 
+@dataclass
+class PrimeChatTurn:
+	"""Structured result of one Prime chat turn — Simulacra observes, does not invent."""
+
+	reply: str | None = None
+	title: str | None = None
+	subtitle: str | None = None
+	request: ChatRequest = "await_user"
+	brief: str | None = None
+	meta: PrimeBuildMeta = field(default_factory=PrimeBuildMeta)
+
+	@property
+	def config(self) -> AppConfig | None:
+		if not self.title and not self.subtitle:
+			return None
+		cfg = AppConfig()
+		if self.title:
+			cfg.title = self.title[:80]
+		if self.subtitle:
+			cfg.subtitle = self.subtitle[:120]
+		return cfg
+
+
 def prime_enabled() -> bool:
 	load_dotenv()
 	return os.environ.get("SIMULACRA_USE_PRIME", "").lower() in ("1", "true", "yes")
@@ -33,9 +59,6 @@ def prime_enabled() -> bool:
 
 def prime_kwargs() -> dict[str, Any]:
 	load_dotenv()
-	# OpenRouter + DeepSeek V4 Pro (coding/agent default).
-	# Override with SIMULACRA_PRIME_MODEL / SIMULACRA_BUILD_MODEL if needed.
-	# Auth is OPENROUTER_API_KEY — not the model id.
 	model = (
 		os.environ.get("SIMULACRA_BUILD_MODEL")
 		or os.environ.get("SIMULACRA_PRIME_MODEL")
@@ -102,55 +125,105 @@ def prime_infer_app_config(
 	return cfg, out
 
 
-def prime_open_plan(
-	cwd: Path,
-	state: ProjectState,
-	*,
-	summary: str,
-	project_id: str | None = None,
-) -> tuple[AppConfig | None, str | None, PrimeBuildMeta]:
-	"""First-turn plan: hand the user request to Prime immediately (no dashboard bias)."""
-	if not prime_enabled() or not (project_id or state.id):
-		return None, None, PrimeBuildMeta(used=False, source="heuristic")
+def _room_lines(preview: dict[str, Any]) -> str:
+	try:
+		from .sources import source_room_brief, source_room_lines
 
-	pid = project_id or state.id
-	preview = state.plan_preview or {}
-	design = brief_to_prime_block(state.design_brief or {})
-	data_block = ""
+		room = preview.get("source_room") or source_room_brief(preview)
+		return "\n".join(f"- {ln}" for ln in source_room_lines(room))
+	except Exception:  # noqa: BLE001
+		return f"- {preview.get('row_count', 0)} rows · {len(preview.get('files') or [])} files"
+
+
+def _data_block(preview: dict[str, Any]) -> str:
 	try:
 		from .sources import DataProfile, sources_to_prime_block
 
 		raw = preview.get("profile") or {}
-		if raw:
-			profile = DataProfile(**{k: v for k, v in raw.items() if k in DataProfile.__dataclass_fields__})
-			data_block = sources_to_prime_block(profile)
+		if not raw:
+			return ""
+		profile = DataProfile(**{k: v for k, v in raw.items() if k in DataProfile.__dataclass_fields__})
+		return sources_to_prime_block(profile)
 	except Exception:  # noqa: BLE001
-		data_block = ""
-	room = preview.get("source_room") or {}
-	try:
-		from .sources import source_room_brief, source_room_lines
+		return ""
 
-		if not room:
-			room = source_room_brief(preview)
-		room_lines = "\n".join(f"- {ln}" for ln in source_room_lines(room))
-	except Exception:  # noqa: BLE001
-		room_lines = f"- {preview.get('row_count', 0)} rows · {len(preview.get('files') or [])} files"
+
+def _envelope_schema_block() -> str:
+	return (
+		"Reply with ONLY valid JSON (no markdown fences):\n"
+		"{\n"
+		'  "title": "short product name (optional on follow-ups)",\n'
+		'  "subtitle": "one-line description (optional)",\n'
+		'  "reply": "markdown for the user",\n'
+		'  "request": "await_user | build | iterate | research",\n'
+		'  "brief": "optional instruction for iterate or research"\n'
+		"}\n\n"
+		"request meanings:\n"
+		"- await_user — keep talking; default\n"
+		"- build — you are ready for the user to hit Build (do not claim Built)\n"
+		"- iterate — edit the existing artifact (only if one already exists)\n"
+		"- research — you want to gather/web material (say what you would do; "
+		"do not invent finished research as fact)\n"
+	)
+
+
+def prime_chat_turn(
+	cwd: Path,
+	state: ProjectState,
+	*,
+	message: str | None = None,
+	open_turn: bool = False,
+	project_id: str | None = None,
+) -> PrimeChatTurn:
+	"""Single Prime chat turn for the product. Main chat = this helper."""
+	if not prime_enabled() or not (project_id or state.id):
+		return PrimeChatTurn(meta=PrimeBuildMeta(used=False, source="heuristic"))
+
+	pid = project_id or state.id
+	preview = state.plan_preview or {}
+	summary = str(preview.get("summary") or "")
+	design = brief_to_prime_block(state.design_brief or {})
+	room_lines = _room_lines(preview)
+	data_block = _data_block(preview)
+	has_artifact = state.phase in ("ready", "build") and bool(state.deploy_url or (cwd / "app" / "package.json").exists())
+
+	phase_note = (
+		f"Project phase: {state.phase}. "
+		+ (
+			"An artifact/preview already exists — you may request iterate.\n"
+			if has_artifact
+			else "No Built artifact yet — do not request iterate; use await_user, build, or research.\n"
+		)
+	)
+
+	if open_turn:
+		role = (
+			"You are the Simulacra agent, live in the main chat with the user.\n"
+			"This is the opening turn after create. They steer you.\n"
+			"Do NOT claim you have built anything. Do not write app code in this turn.\n"
+		)
+		user_bit = f"User request:\n{state.prompt}\n\nGoal (if any):\n{state.goal or '(none)'}\n"
+		name = "simulacra-chat-open"
+	else:
+		role = (
+			"You are the Simulacra agent, live in the main chat with the user.\n"
+			"They steer you — sources, sample pack, research, scope, tone, UI edits.\n"
+			"Do NOT force a vendor dashboard unless they want that.\n"
+			"Do not write app code in this turn; request iterate/build instead.\n"
+		)
+		user_bit = (
+			f"Proposed so far: {state.app_config.title} — {state.app_config.subtitle}\n"
+			f"User goal/prompt:\n{state.prompt}\n\n"
+			f"User message:\n{message or ''}\n"
+		)
+		name = "simulacra-chat"
 
 	prime_prompt = (
-		"You are Simulacra's planning agent, live in chat with the user.\n"
-		"They steer you. You have free reign to figure out how to deliver THEIR request.\n"
-		"Honor intent: reports, decks, apps, games, research briefs, ops tools, etc.\n"
-		"Do NOT claim you have built anything yet. Do not write app code in this turn.\n\n"
-		"Be honest about the data room below. Options you may propose (user chooses):\n"
-		"- Use / refine attached sources if they actually help the request\n"
-		"- Ask them to upload files\n"
-		"- Use the vendor-risk sample pack only if they want that demo\n"
-		"- Research, web-gather, or scrape material IF they ask or clearly need it "
-		"(say what you would do; do not invent finished research as fact)\n"
-		"Never silently pretend unrelated attached rows are about their topic.\n"
-		"End by inviting the next steer in chat, or **Build** when they are ready.\n\n"
-		f"User request:\n{state.prompt}\n\n"
-		f"Goal (if any):\n{state.goal or '(none)'}\n\n"
+		f"{role}\n"
+		f"{phase_note}\n"
+		"Be honest about the data room. Never silently pretend unrelated attached rows "
+		"are about their topic. Never claim Built until Simulacra has actually built.\n\n"
+		f"{user_bit}\n"
 		f"Data room inventory:\n{room_lines}\n\n"
 		f"Source summary:\n{summary[:2200]}\n\n"
 		f"Stats: {preview.get('row_count', 0)} extracted rows, "
@@ -159,22 +232,17 @@ def prime_open_plan(
 		f"{len(preview.get('files') or [])} files.\n\n"
 		f"{data_block}\n\n"
 		f"{design}\n\n"
-		"Reply with ONLY valid JSON (no markdown fences):\n"
-		"{\n"
-		'  "title": "short product name matching the request",\n'
-		'  "subtitle": "one-line description",\n'
-		'  "reply": "markdown for the user: reflect their ask, be clear what you have / need / '
-		'can do next (including research if relevant), invite chat steer or Build"\n'
-		"}"
+		f"{_envelope_schema_block()}"
 	)
+
 	text, meta = prime_ask(
 		pid,
 		cwd=cwd,
 		prompt=prime_prompt,
-		name="simulacra-plan-open",
+		name=name,
 		timeout=90.0,
 	)
-	out = PrimeBuildMeta(
+	out_meta = PrimeBuildMeta(
 		used=True,
 		session_id=meta.get("session_id"),
 		model=meta.get("model"),
@@ -182,74 +250,79 @@ def prime_open_plan(
 		source="prime" if text else "error",
 	)
 	if meta.get("error"):
-		emit_event(pid, "error", label="Prime plan open error", detail=str(meta["error"])[:200], status="fail")
-	cfg, reply = _parse_plan_open_json(text)
-	if cfg is None and text:
-		out.error = out.error or "could not parse Prime plan JSON"
-		# If Prime returned prose, still use it as the chat reply
-		if not reply and text.strip():
-			reply = text.strip()
-	return cfg, reply, out
+		emit_event(pid, "error", label="Prime chat error", detail=str(meta["error"])[:200], status="fail")
+
+	turn = _parse_chat_envelope(text)
+	turn.meta = out_meta
+	if not turn.reply and text and text.strip():
+		turn.reply = text.strip()
+		if out_meta.source == "prime" and not turn.request:
+			turn.request = "await_user"
+	if turn.request == "iterate" and not has_artifact:
+		turn.request = "await_user"
+		if turn.brief and turn.reply:
+			turn.reply = f"{turn.reply}\n\n_(Build first — then I can apply edits.)_"
+	if out_meta.source == "error" and not turn.reply:
+		out_meta.source = "error"
+	elif turn.reply and out_meta.source != "error":
+		out_meta.source = "prime"
+	turn.meta = out_meta
+	return turn
 
 
-def _parse_plan_open_json(text: str | None) -> tuple[AppConfig | None, str | None]:
+def _parse_chat_envelope(text: str | None) -> PrimeChatTurn:
+	turn = PrimeChatTurn()
 	if not text:
-		return None, None
+		return turn
 	raw = text.strip()
 	fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
 	if fence:
 		raw = fence.group(1).strip()
 	match = re.search(r"\{[\s\S]*\}", raw)
 	if not match:
-		return None, text.strip() if text.strip() else None
+		turn.reply = text.strip()
+		return turn
 	try:
 		data = json.loads(match.group())
 	except json.JSONDecodeError:
-		return None, text.strip() if text.strip() else None
-	cfg = AppConfig()
+		turn.reply = text.strip()
+		return turn
+
 	if title := data.get("title"):
-		cfg.title = str(title)[:80]
+		turn.title = str(title)[:80]
 	if subtitle := data.get("subtitle"):
-		cfg.subtitle = str(subtitle)[:120]
-	reply = data.get("reply")
-	reply_s = str(reply).strip() if reply else None
-	if not cfg.title and not reply_s:
-		return None, None
-	return cfg, reply_s
+		turn.subtitle = str(subtitle)[:120]
+	if reply := data.get("reply"):
+		turn.reply = str(reply).strip()
+	req = str(data.get("request") or "await_user").strip().lower()
+	turn.request = req if req in VALID_REQUESTS else "await_user"  # type: ignore[assignment]
+	if brief := data.get("brief"):
+		turn.brief = str(brief).strip()[:2000] or None
+	return turn
+
+
+# ── Compat wrappers (tests / older call sites) ───────────────────────
+
+
+def prime_open_plan(
+	cwd: Path,
+	state: ProjectState,
+	*,
+	summary: str,
+	project_id: str | None = None,
+) -> tuple[AppConfig | None, str | None, PrimeBuildMeta]:
+	"""Compat: opening turn via prime_chat_turn."""
+	_ = summary
+	turn = prime_chat_turn(cwd, state, open_turn=True, project_id=project_id)
+	return turn.config, turn.reply, turn.meta
 
 
 def prime_plan_chat(
 	cwd: Path, state: ProjectState, message: str, *, project_id: str | None = None
 ) -> str | None:
-	if not prime_enabled():
-		return None
-	pid = project_id or state.id
-	preview = state.plan_preview
-	design = brief_to_prime_block(state.design_brief or {})
-	prime_prompt = (
-		"You are Simulacra's planning agent, live in chat with the user.\n"
-		"They steer you — uploads, sample pack, research/scrape, scope changes, tone.\n"
-		"Be honest about attached sources; never silently reuse unrelated data as their topic.\n"
-		"Do NOT force a vendor dashboard unless they want that.\n"
-		"Match their product intent. Do NOT claim to have built anything. Do not write app code.\n"
-		"You may suggest look-and-feel / design_brief tweaks.\n\n"
-		f"Proposed app so far: {state.app_config.title} — {state.app_config.subtitle}\n"
-		f"User goal/prompt:\n{state.prompt}\n\n"
-		f"Data preview: {json.dumps(preview, default=str)[:2000]}\n\n"
-		f"{design}\n\n"
-		f"User message:\n{message}\n\n"
-		"Reply concisely in markdown."
-	)
-	text, meta = prime_ask(
-		pid,
-		cwd=cwd,
-		prompt=prime_prompt,
-		name="simulacra-plan",
-		timeout=90.0,
-	)
-	if meta.get("error"):
-		emit_event(pid, "error", label="Prime plan error", detail=str(meta["error"])[:200], status="fail")
-	return text
+	"""Compat: returns reply text only."""
+	turn = prime_chat_turn(cwd, state, message=message, project_id=project_id)
+	return turn.reply
 
 
 def prime_follow_up(
@@ -260,27 +333,10 @@ def prime_follow_up(
 	*,
 	project_id: str | None = None,
 ) -> str | None:
-	"""Q&A only — UI mutations go through prime_build_app."""
-	if not prime_enabled():
-		return None
-	pid = project_id or state.id
-	prime_prompt = (
-		"You are Simulacra answering a question about an internal data app.\n"
-		"Do NOT claim you edited files — this is Q&A only.\n\n"
-		f"Current app: {state.app_config.title}\n"
-		f"Config: {json.dumps(state.app_config.__dict__)}\n"
-		f"Data: {rows_summary[:1200]}\n\n"
-		f"User question:\n{message}\n\n"
-		"Reply in 1-5 concise sentences."
-	)
-	text, _meta = prime_ask(
-		pid,
-		cwd=cwd,
-		prompt=prime_prompt,
-		name="simulacra-chat",
-		timeout=90.0,
-	)
-	return text
+	"""Compat: Q&A-shaped follow-up via the same envelope."""
+	_ = rows_summary
+	turn = prime_chat_turn(cwd, state, message=message, project_id=project_id)
+	return turn.reply
 
 
 def prime_meta_dict(meta: PrimeBuildMeta) -> dict[str, Any]:
@@ -297,7 +353,7 @@ def prime_meta_dict(meta: PrimeBuildMeta) -> dict[str, Any]:
 
 
 def is_question_only(message: str) -> bool:
-	"""True when the user is asking, not directing the builder."""
+	"""Deprecated for product chat routing — kept for tests/scripts."""
 	lower = message.lower().strip()
 	if not lower:
 		return False
@@ -346,5 +402,4 @@ def is_question_only(message: str) -> bool:
 
 
 def is_ui_change_request(message: str) -> bool:
-	"""Backward-compatible alias — prefer is_question_only inverted for routing."""
 	return not is_question_only(message)

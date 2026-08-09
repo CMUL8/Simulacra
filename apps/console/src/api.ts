@@ -164,6 +164,9 @@ export type Project = {
     last_error?: string | null;
     status?: string;
     steps?: number;
+    /** Observed from Prime chat envelope: await_user | build | iterate | research */
+    request?: string | null;
+    brief?: string | null;
   };
   job?: JobState;
   sandbox?: SandboxStatus | Record<string, unknown>;
@@ -490,16 +493,17 @@ export async function getProject(id: string): Promise<Snapshot> {
   return json(`/projects/${id}`);
 }
 
-export async function sendPlanChat(id: string, message: string): Promise<Snapshot> {
-  return json(`/projects/${id}/plan`, { method: "POST", body: JSON.stringify({ message }) });
-}
-
 export async function approveProject(id: string): Promise<Snapshot> {
   return json(`/projects/${id}/approve`, { method: "POST" });
 }
 
 export async function sendChat(id: string, message: string): Promise<Snapshot> {
   return json(`/projects/${id}/chat`, { method: "POST", body: JSON.stringify({ message }) });
+}
+
+/** @deprecated Alias of sendChat — main chat is always Prime. */
+export async function sendPlanChat(id: string, message: string): Promise<Snapshot> {
+  return sendChat(id, message);
 }
 
 export async function cancelProjectJob(id: string): Promise<Snapshot> {

@@ -1,10 +1,10 @@
 # App Maker Contract
 
-**Product law.** Simulacra is the **infra + scaffold**. The builder agent does the **building**. The user **drives the agent** in chat.
+**Product law.** The **main chat is Prime**. Simulacra is **infra + observer**: sources, gates, templates, preview, jobs, ship. The user and Prime steer; Simulacra runs structured requests and explicit user actions (Build / Ship / upload).
 
 ## One sentence
 
-User states intent → picks a **format** (app / report / slides / one-pager) → Simulacra scaffolds **behind the scenes** and the builder customizes in one create job → user lands on a **Built** preview → user **chats to drive the agent** → user **Ships**. Never fake. Never silent heuristics dressed as builds.
+User states intent → picks a **format** → **Prime chat** opens (honest about the data room) → user steers (sources, research, scope) → user hits **Build** → Simulacra scaffolds + Prime customizes → **Built** preview → chat still goes to Prime (iterate when Prime requests it) → user **Ships**. Never fake. Never silent heuristics dressed as builds.
 
 ## Formats (same loop)
 
@@ -21,33 +21,48 @@ Format is chosen on create (`artifact_kind`). Prompt keywords can hint; UI selec
 
 | Who | Owns |
 |-----|------|
-| **Simulacra** | Auth, tenants, sources, extract, gates, sandbox, **format templates**, preview URL, jobs, ship flag, audit |
-| **Builder agent** | All durable edits to `app/src/*` (layout, style, viz, copy) for the chosen format |
-| **User** | Intent, **format**, style chips, chat directions, Build, Ship |
+| **Prime** | Conversation; what to do next; when to ask for sources/research; when to request Build or iterate |
+| **Simulacra** | Auth, tenants, sources, extract, gates, sandbox, **format templates**, preview URL, jobs, ship flag, audit — observes Prime’s structured `request` and runs infra |
+| **User** | Intent, **format**, style chips, chat, uploads, explicit **Build** / **Ship** |
 
 ## Loop (memorize)
 
 ```
-Create (+ format) → Plan chat with Prime (user steers: sources / research / scope)
-                 → Build (scaffold + builder) → Built preview
-                 → Drive (every change chat → agent iterate, preview refreshes)
-                 → Ship (approve this build + share URL)
+Create (+ format) → Prime chat (user steers)
+                 → Build (user) → scaffold + builder → Built preview
+                 → Drive (chat → Prime → request=iterate → infra)
+                 → Ship
 ```
 
 | Step | What happens | User sees |
 |------|----------------|-----------|
-| **Create** | Scan data room → **open Prime in plan chat**. No silent auto-build. | **Draft** + agent message: what it has / needs / can do |
-| **Steer** | User chats: upload, sample pack, research/scrape, scope, tone. UI shows sources + agent status. | Live plan chat with Prime |
-| **Build** | User hits Build → gates → format template → **builder customizes** → preview | **Building…** → **Built** + Preview |
-| **Drive** | Chat that asks for a change → `iterate_run` → agent edits existing artifact (**does not wipe** prior agent work) | Thinking → Preview updates → reply |
-| **Ask** | Pure questions only (`?` / what / why…) → short Q&A, **no file edits** | Answer in chat |
+| **Create** | Scan data room → open **Prime** turn. No silent auto-build. | Status chip + agent reply (what it has / needs) |
+| **Steer** | Every chat message → Prime (`reply` + `request`). Simulacra shows sources/job state. | One continuous Agent chat |
+| **Build** | User hits Build → gates → format template → **builder customizes** → preview. Clears `prime.request`. | **Building…** → **Built** + Preview |
+| **Drive** | Chat → Prime; if `request=iterate` and artifact exists → `iterate_run` | Thinking → Preview updates → reply |
 | **Ship** | Gates pass → `deployed=true` + stable preview URL + chat receipt | **Shipped** + shareable link |
 | **Rebuild from draft** | Escape hatch — wipe back to template, agent builds again | Same as create deepen |
 
+## Prime chat envelope
+
+Every Prime chat turn returns JSON (Simulacra observes; does not invent replies):
+
+| Field | Meaning |
+|-------|---------|
+| `reply` | Markdown for the user |
+| `title` / `subtitle` | Optional product naming |
+| `request` | `await_user` \| `build` \| `iterate` \| `research` |
+| `brief` | Optional instruction for iterate/research |
+
+- `await_user` — conversation only.
+- `build` — surface “Agent asked for Build”; user must still press **Build**.
+- `iterate` — only when phase is ready; Simulacra starts `iterate_run`.
+- `research` — record + show status (gather tools may follow later). Never invent finished research as fact.
+
 ## Chat rules (critical)
 
-1. **After create (plan)** — user is connected to **Prime in chat**. Simulacra shows what the agent is doing and what the data room contains; the user steers (including research). No hard “sources must match” gate.
-2. **After Build (Built)** — default is **drive the agent**. Almost every send that is not a pure question starts an agent iterate job.
+1. **Main chat is always Prime** — one API path (`POST /chat`). No Plan-vs-Agent dual brains.
+2. Simulacra does **not** route on `is_question_only` heuristics for product chat.
 3. Style chips still patch tokens live on the preview.
 4. **Never** pretend a heuristic rename was an agent build.
 5. **One job at a time** — Stop unlocks UI; last good preview kept.
@@ -61,6 +76,7 @@ Create (+ format) → Plan chat with Prime (user steers: sources / research / sc
 
 | State | Chip |
 |-------|------|
+| Before first Build / planning | **Plan** |
 | Create in progress / agent missed (styles only) | **Draft** |
 | Agent customized successfully (`source=prime`) | **Built** |
 | Craft fallback personalized layout (`source=craft`) | **Built** — chat says craft applied because agent wrote no files |
@@ -71,17 +87,17 @@ Create (+ format) → Plan chat with Prime (user steers: sources / research / sc
 
 | Kind | Role |
 |------|------|
-| `bootstrap` | Create: scaffold + builder customize |
-| `plan_ask` | Plan Q&A |
+| `agent_chat` | Prime chat turn (create open + every user message) |
+| `plan_ask` | Alias / same bounds as `agent_chat` (compat) |
 | `build_run` | First Build / Rebuild from draft (agent) |
-| `iterate_run` | Chat-driven agent edit (preserve prior work) |
-| `iterate_ask` | Question-only |
+| `iterate_run` | Prime requested iterate — edit artifact (preserve prior work) |
+| `bootstrap` | Legacy create scaffold (tests); not live create |
 
 ## Edge cases
 
 | Case | Behavior |
 |------|----------|
-| Empty / unrelated sources on create | Stay in **plan** chat with Prime. Be honest about the room; user may upload, use sample pack, or ask the agent to research. Build when the user is ready. |
+| Empty / unrelated sources on create | Prime chat is honest; user may upload, sample pack, or ask to research. Build when user is ready. |
 | Agent off / fail on Build | Craft personalizer stamps format + brief when possible → **Built** (`craft`); else Draft + retry |
 | Agent narrates, zero App.tsx diffs | One steered retry → then craft fallback (never claim prime) |
 | Agent fail on iterate | Last good preview kept; honest “builder didn’t finish”; no fake heuristic success |
@@ -96,3 +112,4 @@ Create (+ format) → Plan chat with Prime (user steers: sources / research / sc
 - Silent “success” when no files changed
 - Implying Ship = production multi-region
 - Treating formats as separate products — one maker loop, four crafts
+- Simulacra owning chat replies or Plan-vs-Agent dual backends

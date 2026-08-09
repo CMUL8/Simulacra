@@ -1768,6 +1768,19 @@ body {
 .agent-topbar .approve-btn:hover:not(:disabled) {
   background: #f0f0f0;
 }
+.agent-topbar .approve-btn.pulse-build {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+  animation: pulse-build 1.6s ease-in-out infinite;
+}
+@keyframes pulse-build {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+  }
+}
 .plan-header .approve-btn:disabled,
 .agent-topbar .approve-btn:disabled {
   opacity: 0.4;

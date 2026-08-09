@@ -17,7 +17,6 @@ import {
   patchDesignBrief,
   rollbackProject,
   sendChat,
-  sendPlanChat,
   setTenantId,
   uploadProjectFiles,
   type AuthSession,
@@ -503,30 +502,6 @@ export default function App({
     }
   }
 
-  async function handlePlanSend() {
-    const text = input.trim();
-    if (!snapshot || !text) return;
-    setBusy(true);
-    setError(null);
-    setInput("");
-    try {
-      const snap = await sendPlanChat(snapshot.project.id, text);
-      setSnapshot(snap);
-      if (snap.job?.status === "running" || snap.project.job?.status === "running") {
-        setJobLive(true);
-        pollUntilIdle(snapshot.project.id);
-      } else {
-        setBusy(false);
-        setJobLive(false);
-        await refreshProjects();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Plan chat failed");
-      setBusy(false);
-      setJobLive(false);
-    }
-  }
-
   async function handleApprove() {
     if (!snapshot) return;
     setBusy(true);
@@ -725,7 +700,7 @@ export default function App({
           onSaveDesignBrief={handleDesignBriefSave}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onInput={setInput}
-          onSend={mode === "plan" ? handlePlanSend : handleSend}
+          onSend={handleSend}
           onApprove={handleApprove}
           onRebuild={handleApprove}
           onCancel={running ? handleCancel : undefined}

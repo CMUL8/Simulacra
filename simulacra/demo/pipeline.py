@@ -11,7 +11,6 @@ from .checkpoints import save_checkpoint
 from .deploy import refresh_app_data, start_preview, stop_preview, sync_app
 from .design_brief import (
 	apply_brief_css_tokens,
-	merge_notes_from_message,
 	write_brief,
 )
 from .duckdb_engine import default_preview_query, rows_to_parquet
@@ -19,10 +18,16 @@ from .events import emit_event
 from .extract import extract_data_room_report, write_summary
 from .gates import run_gates, write_manifest
 from .jobs import JobConflictError, JobRecord, request_cancel, start_job
-from .plan import approve_plan, explore_plan_scan, init_plan, plan_chat, start_plan_chat
+from .plan import (
+	approve_plan,
+	explore_plan_scan,
+	init_plan,
+	plan_chat,
+	start_agent_chat,
+)
 
 from .prime_builder import prime_build_app
-from .prime_hook import is_question_only, prime_follow_up, prime_meta_dict
+from .prime_hook import prime_meta_dict
 from .runs import ChatMessage, ProjectState, file_hash, load_state, project_dir, save_state
 from .sandbox import prepare_project_sandbox
 from .sources import (
@@ -542,34 +547,16 @@ def start_approve_build(project_id: str, *, reset_scaffold: bool = True) -> dict
 
 
 def follow_up(project_id: str, message: str) -> ProjectState:
-	"""Synchronous follow-up (tests). Prefer start_follow_up for API UI changes."""
-	return _follow_up_impl(project_id, message)
+	"""Synchronous chat (tests). Product path uses start_follow_up → Prime."""
+	return plan_chat(project_id, message)
 
 
 def start_follow_up(project_id: str, message: str) -> dict[str, Any]:
-	state = load_state(project_id)
-	if state.phase == "plan":
-		start_plan_chat(project_id, message)
-		return project_snapshot(project_id)
-
-	# Default after Build: chat drives the agent. Pure questions → ask only.
-	if is_question_only(message):
-		_follow_up_qa(project_id, message)
-		return project_snapshot(project_id)
-
-	state.chat.append(ChatMessage(role="user", content=message, source="system"))
-	state.design_brief = merge_notes_from_message(state.design_brief, message)
-	write_brief(project_id, state.design_brief)
-	save_state(state)
-
-	def target(_job: JobRecord) -> None:
-		_iterate_ui(project_id, message)
-
-	try:
-		job = start_job(project_id, "iterate_run", label="Updating app", target=target)
-	except JobConflictError as exc:
-		raise ValueError(str(exc)) from exc
-	return {"job_id": job.id, "status": "running", **project_snapshot(project_id)}
+	"""Main chat entry — always Prime; Simulacra observes structured requests."""
+	start_agent_chat(project_id, message)
+	snap = project_snapshot(project_id)
+	job = snap.get("job") or {}
+	return {"job_id": job.get("id"), "status": job.get("status") or "running", **snap}
 
 
 def _iterate_ui(project_id: str, message: str) -> None:
@@ -644,88 +631,6 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	save_checkpoint(state, f"After: {message[:40]}")
 	emit_event(project_id, "done", label="Preview updated", detail=url, status="done")
 	save_state(state)
-
-
-def _answer_from_data(state: ProjectState, message: str) -> str | None:
-	"""Answer factual questions from plan/analytics without the builder agent."""
-	lower = message.lower().strip()
-	preview = state.plan_preview or {}
-	rows = int(preview.get("row_count") or state.row_count or 0)
-	high = int(preview.get("high_risk") or 0)
-	vendors = list(preview.get("vendors") or [])
-	files = list(preview.get("files") or [])
-
-	if not rows and not vendors:
-		return None
-
-	if any(w in lower for w in ("how many", "what's the count", "what is the count", "count of")):
-		if "high" in lower or "critical" in lower:
-			return (
-				f"There are **{high}** high-risk findings "
-				f"(out of **{rows}** total rows across **{len(vendors)}** vendors)."
-			)
-		if "vendor" in lower:
-			return f"There are **{len(vendors)}** vendors in the current data room extract."
-		if "row" in lower or "finding" in lower:
-			return f"There are **{rows}** findings/rows extracted from your sources."
-		if "file" in lower or "source" in lower:
-			names = ", ".join(f.get("name", "?") for f in files[:8]) or "none"
-			return f"**{len(files)}** source files: {names}."
-
-	if lower.startswith(("what vendors", "which vendors", "list vendors")):
-		sample = ", ".join(vendors[:12])
-		more = f" (+{len(vendors) - 12} more)" if len(vendors) > 12 else ""
-		return f"Vendors in scope ({len(vendors)}): {sample}{more}."
-
-	return None
-
-
-def _follow_up_qa(project_id: str, message: str) -> ProjectState:
-	state = load_state(project_id)
-	state.chat.append(ChatMessage(role="user", content=message, source="system"))
-	rows = _load_rows(project_id)
-	summary = write_summary(rows, state.prompt) if rows else ""
-	emit_event(project_id, "think", label="Answering", status="running")
-
-	local = _answer_from_data(state, message)
-	if local:
-		state.chat.append(ChatMessage(role="assistant", content=local, source="system"))
-		emit_event(project_id, "think", label="Follow-up answered", status="done")
-		save_state(state)
-		return state
-
-	reply = prime_follow_up(project_dir(project_id), state, message, summary, project_id=project_id)
-	if reply:
-		state.chat.append(ChatMessage(role="assistant", content=reply, source="prime"))
-	else:
-		state.chat.append(
-			ChatMessage(
-				role="assistant",
-				content=(
-					"I can answer questions about your data and plan here without editing the app. "
-					"To change the UI, send an instruction (e.g. “make the KPI strip denser”)."
-				),
-				source="system",
-			)
-		)
-	emit_event(project_id, "think", label="Follow-up answered", status="done")
-	save_state(state)
-	return state
-
-
-def _follow_up_impl(project_id: str, message: str) -> ProjectState:
-	state = load_state(project_id)
-	if state.phase == "plan":
-		start_plan_chat(project_id, message)
-		return load_state(project_id)
-	if is_question_only(message):
-		return _follow_up_qa(project_id, message)
-	state.chat.append(ChatMessage(role="user", content=message, source="system"))
-	state.design_brief = merge_notes_from_message(state.design_brief, message)
-	write_brief(project_id, state.design_brief)
-	save_state(state)
-	_iterate_ui(project_id, message)
-	return load_state(project_id)
 
 
 def cancel_job(project_id: str) -> dict[str, Any]:

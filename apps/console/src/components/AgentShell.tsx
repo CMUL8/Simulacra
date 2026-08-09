@@ -227,17 +227,36 @@ function agentNeedsLine(
     : `${names.length} source${names.length === 1 ? "" : "s"} · ${names.slice(0, 3).join(", ")}${
         names.length > 3 ? "…" : ""
       }`;
+  const req = project.prime?.request;
 
-  if (busy && (jobKind === "plan_ask" || !jobKind)) {
-    return { label: "Agent", detail: `${sources} · thinking — you’ll see what it needs next` };
+  if (busy && (jobKind === "agent_chat" || jobKind === "plan_ask" || waitingChatJob(jobKind))) {
+    return { label: "Agent", detail: `${sources} · thinking` };
   }
-  if (project.phase === "plan") {
+  if (busy && (jobKind === "build_run" || jobKind === "bootstrap")) {
+    return { label: "Building", detail: sources };
+  }
+  if (busy && jobKind === "iterate_run") {
+    return { label: "Updating", detail: sources };
+  }
+  if (req === "build") {
+    return { label: "Agent asked for Build", detail: sources };
+  }
+  if (req === "research") {
     return {
-      label: "Steer the agent",
-      detail: `${sources} · chat to upload, research, or refine — then Build`,
+      label: "Research",
+      detail: project.prime?.brief
+        ? `${sources} · ${project.prime.brief}`
+        : `${sources} · agent wants to gather material`,
     };
   }
+  if (project.phase === "plan") {
+    return { label: "Agent", detail: `${sources} · chat to steer — Build when ready` };
+  }
   return { label: "Agent", detail: sources };
+}
+
+function waitingChatJob(jobKind?: string | null): boolean {
+  return !jobKind || jobKind === "agent_chat" || jobKind === "plan_ask";
 }
 
 function formatBuildLabel(kind?: string | null): string {
@@ -377,8 +396,8 @@ export function AgentShell({
   const noun = formatNoun(project.artifact_kind);
   const buildLabel = formatBuildLabel(project.artifact_kind);
   const thinkingLabel =
-    jobKind === "plan_ask" || (isPlan && waitingForOpen)
-      ? "Agent planning…"
+    jobKind === "agent_chat" || jobKind === "plan_ask" || (waitingForOpen && !jobKind)
+      ? "Agent…"
       : jobKind === "bootstrap"
         ? `Building ${noun}…`
         : jobKind === "build_run"
@@ -388,7 +407,8 @@ export function AgentShell({
             : "Working…";
   const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
   const stage = statusChip(project, lastAssistant?.source ?? project.prime?.source);
-  const needs = isPlan ? agentNeedsLine(project, busy, jobKind) : null;
+  const needs = agentNeedsLine(project, busy, jobKind);
+  const agentWantsBuild = project.prime?.request === "build";
   const showStyleBar = Boolean(designBrief && onSaveDesignBrief);
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const showStandalonePlan =
@@ -420,7 +440,13 @@ export function AgentShell({
             Account
           </button>
           {isPlan && onApprove && (
-            <button type="button" className="approve-btn" disabled={busy} onClick={onApprove}>
+            <button
+              type="button"
+              className={`approve-btn${agentWantsBuild ? " pulse-build" : ""}`}
+              disabled={busy}
+              onClick={onApprove}
+              title={agentWantsBuild ? "Agent is ready — Build when you are" : buildLabel}
+            >
               {buildLabel}
               <ArrowRight size={14} />
             </button>
@@ -466,8 +492,8 @@ export function AgentShell({
                 variant="thread"
                 title={thinkingLabel.replace(/…$/, "")}
                 subtitle={
-                  jobKind === "plan_ask" || isPlan
-                    ? "Talking with the agent — it will say what it has and what it needs"
+                  jobKind === "agent_chat" || jobKind === "plan_ask" || (isPlan && waitingForOpen)
+                    ? "Prime is in chat — Simulacra will act when you or the agent need infra"
                     : jobKind === "iterate_run"
                       ? "Applying your change — preview refreshes when done"
                       : `Building your ${noun} — preview opens when this finishes`
@@ -540,13 +566,9 @@ export function AgentShell({
             disabled={project.status === "failed"}
             busy={busy}
             files={files}
-            placeholder={
-              isPlan
-                ? "Steer the agent — sources, research, scope…"
-                : "Tell the builder what to change…"
-            }
+            placeholder="Message the agent…"
             submitLabel="Send"
-            modeTag={isPlan ? "Plan" : "Agent"}
+            modeTag="Agent"
           />
         </div>
       </div>

@@ -140,7 +140,7 @@ def test_bootstrap_runs_prime(tmp_path, monkeypatch):
 	assert out.deploy_url == f"/projects/{pid}/preview/"
 	assert out.prime.get("source") == "prime"
 	assert out.chat[-1].source == "prime"
-	assert "Built" in out.chat[-1].content
+	assert "Preview is ready" in out.chat[-1].content
 	assert "Prime" not in out.chat[-1].content
 	assert "Build app" not in out.chat[-1].content
 

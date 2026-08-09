@@ -48,7 +48,6 @@ from simulacra.demo.pipeline import (
 	rollback_project,
 	start_approve_build,
 	start_follow_up,
-	start_plan_chat,
 )
 from simulacra.demo.runs import create_project, list_projects, load_state, project_dir, save_state
 from simulacra.demo.sandbox import sandbox_status
@@ -698,13 +697,13 @@ def post_plan(
 	body: ChatBody,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 ) -> dict:
+	"""Compat alias — main chat is always Prime via /chat."""
 	try:
-		start_plan_chat(project_id, body.message)
-		return project_snapshot(project_id)
+		return start_follow_up(project_id, body.message)
 	except ValueError as exc:
-		raise HTTPException(400, str(exc)) from exc
+		raise HTTPException(409 if "already" in str(exc).lower() else 400, str(exc)) from exc
 	except Exception as exc:
-		raise HTTPException(500, f"Plan chat failed: {exc}") from exc
+		raise HTTPException(500, f"Chat failed: {exc}") from exc
 
 
 @app.get("/projects/{project_id}")
