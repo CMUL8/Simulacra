@@ -66,6 +66,36 @@ function kindShort(p: Project): string {
   return FORMAT_OPTIONS.find((f) => f.kind === k)?.label || "App";
 }
 
+function kindKey(p: Project): string {
+  const k = p.artifact_kind || "data_app";
+  return FORMAT_OPTIONS.some((f) => f.kind === k) ? k : "data_app";
+}
+
+function relativeWhen(iso?: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 14) return `${days}d ago`;
+  return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Local preview: ?bg=sky|mist|dusk|field — default sky (photo). */
+function bgPresetFromSearch(): string {
+  try {
+    const v = new URLSearchParams(window.location.search).get("bg");
+    if (v && ["sky", "mist", "dusk", "field"].includes(v)) return v;
+  } catch {
+    /* ignore */
+  }
+  return "sky";
+}
+
 type Props = {
   prompt: string;
   artifactKind: ArtifactKind;
@@ -118,7 +148,9 @@ export function Landing({
   onDismissError,
 }: Props) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [bgPreset] = useState(bgPresetFromSearch);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const landingRef = useRef<HTMLDivElement>(null);
   const projectsRef = useRef<HTMLElement>(null);
   const sourceCount = (dataAttached ? files.length : 0) + pendingFiles.length;
   // Guests may send with sample pack checked even before fixture list loads.
@@ -134,12 +166,22 @@ export function Landing({
   }, [gated]);
 
   function scrollToProjects() {
-    projectsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const root = landingRef.current;
+    const section = projectsRef.current;
+    if (!root || !section) return;
+    // Scroll the landing pane itself — window scrollIntoView fights overflow + nested lists.
+    const navClearance = 96;
+    const top = Math.max(0, section.offsetTop - navClearance);
+    root.scrollTo({ top, behavior: "smooth" });
   }
 
   return (
-    <div className="landing">
-      <img className="landing-hero-img" src="/images/hero-sky.jpg" alt="" aria-hidden />
+    <div className="landing" ref={landingRef} data-bg={bgPreset}>
+      {bgPreset === "sky" ? (
+        <img className="landing-hero-img" src="/images/hero-sky.jpg" alt="" aria-hidden />
+      ) : (
+        <div className="landing-hero-wash" aria-hidden />
+      )}
       <div className="landing-hero-veil" aria-hidden />
 
       <header className="landing-nav">
@@ -243,6 +285,17 @@ export function Landing({
           </div>
         </div>
 
+        {busy && (
+          <p className="landing-busy-status" role="status" aria-live="polite" aria-busy="true">
+            Building your {activeFormat.label.toLowerCase()}
+            <span className="landing-busy-dots" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+          </p>
+        )}
+
         {gated && (
           <GuestAuthGate
             prompt={prompt}
@@ -254,7 +307,7 @@ export function Landing({
           />
         )}
 
-        {!gated && (
+        {!gated && !busy && (
           <div className="landing-pills">
             {pills.map((p) => (
               <button key={p} type="button" onClick={() => onPrompt(p)} disabled={busy}>
@@ -270,25 +323,34 @@ export function Landing({
               <h2>Your projects</h2>
               <span>{projects.length}</span>
             </div>
-            <ul className="landing-project-list">
-              {recent.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    className="landing-project-item"
-                    disabled={busy}
-                    onClick={() => onOpenProject?.(p.id)}
-                  >
-                    <span className="landing-project-title">
-                      {p.app_config?.title || p.goal || "Untitled"}
-                    </span>
-                    <span className="landing-project-meta">
-                      {kindShort(p)} · {phaseLabel(p)}
-                      {p.row_count ? ` · ${p.row_count} rows` : ""}
-                    </span>
-                  </button>
-                </li>
-              ))}
+            <ul className="landing-project-grid">
+              {recent.map((p) => {
+                const kind = kindKey(p);
+                const title = p.app_config?.title || p.goal || "Untitled";
+                const when = relativeWhen(p.created_at);
+                return (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      className={`landing-project-card kind-${kind}`}
+                      disabled={busy}
+                      onClick={() => onOpenProject?.(p.id)}
+                    >
+                      <span className="landing-project-card-top">
+                        <span className="landing-project-kind">{kindShort(p)}</span>
+                        <span className={`landing-project-phase phase-${p.deployed ? "shipped" : p.phase}`}>
+                          {phaseLabel(p)}
+                        </span>
+                      </span>
+                      <span className="landing-project-title">{title}</span>
+                      <span className="landing-project-foot">
+                        {p.row_count ? <span>{p.row_count.toLocaleString()} rows</span> : <span>No rows yet</span>}
+                        {when ? <span>{when}</span> : null}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}

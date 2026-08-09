@@ -8,7 +8,7 @@ type Props = {
   traces?: AgentEvent[];
   startedAt?: number | null;
   onStop?: () => void;
-  /** landing overlay vs thread inline */
+  /** thread inline (default). overlay kept for compat — no dark backdrop. */
   variant?: "thread" | "overlay";
 };
 

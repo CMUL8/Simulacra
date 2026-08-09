@@ -88,8 +88,15 @@ function Root() {
 
   if (!config) {
     return (
-      <div className="login-page">
-        <div className="login-card">Loading…</div>
+      <div className="landing landing-boot">
+        <img className="landing-hero-img" src="/images/hero-sky.jpg" alt="" aria-hidden />
+        <div className="landing-hero-veil" aria-hidden />
+        <div className="landing-content">
+          <h1 className="brand-mark">
+            Simu<em>lacra</em>
+          </h1>
+          <p className="landing-boot-status">Opening…</p>
+        </div>
       </div>
     );
   }

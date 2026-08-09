@@ -9,7 +9,6 @@ import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import type { AgentEvent, ChatMessage, DataRoomFile, DesignBrief, Snapshot } from "../api";
 import { DesignBriefForm } from "./DesignBriefForm";
 import { PromptComposer } from "./PromptComposer";
-import { TracePanel } from "./TracePanel";
 import { WaitStage } from "./WaitStage";
 
 type Props = {
@@ -261,7 +260,6 @@ export function AgentShell({
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const showStandalonePlan =
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
-  const liveTraces = traces.some((e) => e.status === "running");
   const loopHint = isPlan
     ? `Still building — hang tight. Then chat drives the builder.`
     : project.deployed
@@ -341,7 +339,7 @@ export function AgentShell({
             </article>
           )}
 
-          {busy && (
+          {busy ? (
             <WaitStage
               variant="thread"
               title={thinkingLabel.replace(/…$/, "")}
@@ -355,8 +353,7 @@ export function AgentShell({
               startedAt={waitStartedAt}
               onStop={onCancel}
             />
-          )}
-          {busy && liveTraces && <TracePanel events={traces} compact onCancel={onCancel} />}
+          ) : null}
 
           <div ref={endRef} />
         </div>

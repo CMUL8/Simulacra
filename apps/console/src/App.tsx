@@ -31,7 +31,6 @@ import {
 } from "./api";
 import { AgentShell } from "./components/AgentShell";
 import { Landing } from "./components/Landing";
-import { WaitStage } from "./components/WaitStage";
 import { PreviewDrawer } from "./components/PreviewDrawer";
 import { ProfileManageModal, type ProfileTab } from "./components/ProfileManageModal";
 import { Sidebar } from "./components/Sidebar";
@@ -409,13 +408,14 @@ export default function App({
 
   if (authed === null) {
     return (
-      <div className="landing">
-        <div className="landing-bg" />
+      <div className="landing landing-boot">
+        <img className="landing-hero-img" src="/images/hero-sky.jpg" alt="" aria-hidden />
+        <div className="landing-hero-veil" aria-hidden />
         <div className="landing-content">
-          <p className="brand-mark">
+          <h1 className="brand-mark">
             Simu<em>lacra</em>
-          </p>
-          <p className="landing-sub">Loading…</p>
+          </h1>
+          <p className="landing-boot-status">Opening…</p>
         </div>
       </div>
     );
@@ -651,14 +651,6 @@ export default function App({
   }
 
   if (mode === "landing") {
-    const formatLabel =
-      artifactKind === "slides"
-        ? "slides"
-        : artifactKind === "report"
-          ? "report"
-          : artifactKind === "one_pager"
-            ? "one-pager"
-            : "app";
     return (
       <>
         <Landing
@@ -686,15 +678,6 @@ export default function App({
           onLogin={() => openAccount("account")}
           onDismissError={() => setError(null)}
         />
-        {busy && (
-          <WaitStage
-            variant="overlay"
-            title={`Building ${formatLabel}`}
-            subtitle="Sources → scaffold → builder → preview. Hang tight."
-            jobKind="bootstrap"
-            startedAt={waitStartedAt}
-          />
-        )}
         <ProfileManageModal
           open={profileOpen}
           onClose={() => setProfileOpen(false)}
