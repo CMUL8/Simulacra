@@ -11,7 +11,7 @@ from typing import Any
 from simulacra.agent import Agent, RunOptions
 from simulacra.env import load_dotenv
 
-from .events import emit_event, emit_prime_event
+from .events import emit_event, emit_prime_event, last_event
 from .jobs import JobCancelled, check_bounds, note_event, register_abort
 from .runs import load_state, project_dir, save_state
 
@@ -20,13 +20,28 @@ log = logging.getLogger("simulacra.prime_session")
 _WRITE_TOOL_HINTS = ("write", "edit", "replace", "patch", "create_file", "apply_diff", "str_replace")
 
 
+def _rpc_tool_name(raw: dict[str, Any]) -> str:
+	"""Match Prime RPC fields: toolName first, then legacy aliases / nesting."""
+	for key in ("toolName", "tool_name", "tool", "name"):
+		v = raw.get(key)
+		if isinstance(v, str) and v.strip():
+			return v.strip()
+	for nest in ("toolCall", "tool_call", "call", "data"):
+		nested = raw.get(nest)
+		if isinstance(nested, dict):
+			found = _rpc_tool_name(nested)
+			if found:
+				return found
+	return ""
+
+
 def _count_write_tools(events: list[dict[str, Any]]) -> int:
 	n = 0
 	for e in events:
 		kind = e.get("type") or ""
 		if kind not in ("tool_execution_end", "tool_execution_start", "tool_use"):
 			continue
-		tool = str(e.get("tool") or e.get("name") or e.get("toolName") or "").lower()
+		tool = _rpc_tool_name(e).lower()
 		if any(h in tool for h in _WRITE_TOOL_HINTS):
 			n += 1
 	return n
@@ -52,10 +67,11 @@ def session_dir_for(project_id: str) -> Path:
 
 def _on_event(project_id: str):
 	def handler(raw: dict[str, Any]) -> None:
-		tool = raw.get("tool") or raw.get("name")
+		tool = _rpc_tool_name(raw)
 		sig = None
 		if raw.get("type") == "tool_execution_start" and tool:
-			sig = f"{tool}:{str(raw.get('input') or raw.get('args') or '')[:80]}"
+			args = raw.get("args") or raw.get("input") or raw.get("arguments") or ""
+			sig = f"{tool}:{str(args)[:80]}"
 		note_event(project_id, tool_sig=sig)
 		emit_prime_event(project_id, raw)
 		try:
@@ -140,7 +156,17 @@ async def _ask_async(
 	def _heartbeat() -> None:
 		while not stop_hb.wait(20.0):
 			try:
+				# Keep job liveness even when we skip a duplicate Thinking line.
 				note_event(project_id)
+				prev = last_event(project_id)
+				# Don't stack "Thinking" every 20s — refresh only if something else ran.
+				if (
+					prev
+					and prev.get("type") == "think"
+					and str(prev.get("label") or "").strip().lower() in ("thinking", "thinking…", "thinking...")
+					and prev.get("status") == "running"
+				):
+					continue
 				emit_event(project_id, "think", label="Thinking", status="running")
 			except Exception:  # noqa: BLE001
 				pass

@@ -135,7 +135,7 @@ export function WaitStage({
           </>
         )}
 
-        <ActivityFeed events={feedEvents} live limit={chatMode ? 10 : 6} />
+        <ActivityFeed events={feedEvents} live limit={chatMode ? 6 : 5} />
       </div>
     </div>
   );
