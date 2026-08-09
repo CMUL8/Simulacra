@@ -179,9 +179,12 @@ function ShipReceipt({
 }
 
 function isOrphanJobStatus(m: ChatMessage): boolean {
+  const text = m.content.trim();
   // Old builds left "Building your app…" in chat forever — never show it.
-  if (m.source !== "system") return false;
-  return /^Building your\b/i.test(m.content.trim());
+  if (m.source === "system" && /^Building your\b/i.test(text)) return true;
+  // Legacy rollback jargon — hide; new undos use plain copy
+  if (/^Rolled back to checkpoint/i.test(text)) return true;
+  return false;
 }
 
 function turnKind(m: ChatMessage): TurnKind {
