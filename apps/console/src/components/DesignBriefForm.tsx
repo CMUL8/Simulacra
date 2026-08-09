@@ -169,12 +169,12 @@ export function DesignBriefForm({ value, onSave, disabled, compact }: Props) {
 
   const chips = (
     <>
-      <div className="style-chips" role="group" aria-label="Look and feel">
+      <div className="style-segment" role="group" aria-label="Look and feel">
         {PRESETS.map((p) => (
           <button
             key={p.id}
             type="button"
-            className={`style-chip ${active === p.id ? "on" : ""}`}
+            className={`style-seg ${active === p.id ? "on" : ""}`}
             disabled={disabled || status === "saving"}
             onClick={() => applyPreset(p)}
           >
@@ -182,11 +182,13 @@ export function DesignBriefForm({ value, onSave, disabled, compact }: Props) {
           </button>
         ))}
       </div>
-      <label className="style-accent" title="Accent">
+      <label className="style-accent" title="Accent color">
+        <span className="style-accent-swatch" style={{ background: accent }} aria-hidden />
         <input
           type="color"
           disabled={disabled}
           value={accent}
+          aria-label="Accent color"
           onChange={(e) => {
             const v = e.target.value;
             setAccent(v);
@@ -194,8 +196,6 @@ export function DesignBriefForm({ value, onSave, disabled, compact }: Props) {
           }}
         />
       </label>
-      {status === "saved" && <span className="style-status ok">Applied</span>}
-      {status === "saving" && <span className="style-status">…</span>}
       {status === "error" && (
         <span className="style-status err" title={err}>
           Retry

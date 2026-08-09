@@ -230,7 +230,7 @@ function agentNeedsLine(
   const req = project.prime?.request;
 
   if (busy && (jobKind === "agent_chat" || jobKind === "plan_ask" || waitingChatJob(jobKind))) {
-    return { label: "Agent", detail: `${sources} · thinking` };
+    return { label: "Working", detail: sources };
   }
   if (busy && (jobKind === "build_run" || jobKind === "bootstrap")) {
     return { label: "Building", detail: sources };
@@ -239,21 +239,16 @@ function agentNeedsLine(
     return { label: "Updating", detail: sources };
   }
   if (req === "build") {
-    return { label: "Agent asked for Build", detail: sources };
+    return { label: "Ready to build", detail: sources };
   }
   if (req === "research") {
     return {
       label: "Research",
-      detail: project.prime?.brief
-        ? `${sources} · ${project.prime.brief}`
-        : `${sources} · agent wants to gather material`,
+      detail: project.prime?.brief ? `${sources} · ${project.prime.brief}` : sources,
     };
   }
   if (project.prime?.last_error && project.prime?.source === "heuristic") {
-    return { label: "Agent", detail: `${sources} · last turn used fallback — try again` };
-  }
-  if (project.phase === "plan") {
-    return { label: "Agent", detail: `${sources} · chat to steer — Build when ready` };
+    return { label: "Retry", detail: `${sources} · last turn used fallback` };
   }
   return { label: "Agent", detail: sources };
 }
@@ -513,49 +508,53 @@ export function AgentShell({
         </div>
 
         <div className="agent-composer-wrap">
-          {needs && (
-            <div className="agent-needs" role="status">
-              <span className="agent-needs-label">{needs.label}</span>
-              <span className="agent-needs-detail">{needs.detail}</span>
-            </div>
-          )}
           <div className="composer-chrome" role="toolbar" aria-label="Project actions">
-            <div className="composer-chrome-left">
-              {stage && <span className={`composer-chrome-chip source-chip ${stage.cls}`}>{stage.text}</span>}
-              {showStyleBar && (
-                <DesignBriefForm
-                  compact
-                  value={designBrief!}
-                  onSave={onSaveDesignBrief!}
-                  disabled={busy}
-                />
+            <div className="composer-chrome-meta">
+              {stage && (
+                <span className={`composer-status ${stage.cls}`} title={stage.text}>
+                  {stage.text}
+                </span>
               )}
-              <span
-                className="composer-chrome-btn format"
-                title={formatChipHint(project.artifact_kind)}
-              >
+              <span className="composer-format" title={formatChipHint(project.artifact_kind)}>
+                {stage ? <span className="composer-sep">· </span> : null}
                 {formatChipLabel(project.artifact_kind)}
               </span>
+              {needs?.detail ? (
+                <span className="composer-sources" title={needs.detail}>
+                  <span className="composer-sep">· </span>
+                  {needs.detail}
+                </span>
+              ) : null}
+            </div>
+
+            {showStyleBar && (
+              <DesignBriefForm
+                compact
+                value={designBrief!}
+                onSave={onSaveDesignBrief!}
+                disabled={busy}
+              />
+            )}
+
+            <div className="composer-chrome-actions">
               <button
                 type="button"
-                className="composer-chrome-btn"
+                className="composer-action"
                 disabled={!hasPreview}
                 onClick={onOpenPreview}
                 title={hasPreview ? "Open preview" : "Preview appears after Build"}
               >
                 <Globe size={13} strokeWidth={1.75} />
-                {hasPreview ? "Preview" : "Preview…"}
+                Preview
               </button>
-            </div>
-            <div className="composer-chrome-right">
               {busy && onCancel && (
                 <button
                   type="button"
-                  className="composer-chrome-btn stop"
+                  className="composer-action danger"
                   onClick={onCancel}
                   title="Stop current job"
                 >
-                  <Square size={11} fill="currentColor" />
+                  <Square size={10} fill="currentColor" />
                   Stop
                 </button>
               )}
