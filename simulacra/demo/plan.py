@@ -177,6 +177,11 @@ def _agent_chat_turn(
 		status="running",
 	)
 
+	# Observe baseline — files the agent may write during this turn
+	from .research_bundle import observe_and_promote_research, snapshot_research_mtimes
+
+	before_research = snapshot_research_mtimes(project_id)
+
 	turn = prime_chat_turn(
 		root,
 		state,
@@ -238,7 +243,54 @@ def _agent_chat_turn(
 		status="done",
 	)
 
+	# Observe + intervene: agent research files → data room (our core job)
+	observe = observe_and_promote_research(
+		project_id,
+		before=before_research,
+		force=request == "research",
+		artifact_kind=state.artifact_kind,
+	)
+	promoted = list(observe.get("promoted") or [])
+	if promoted:
+		names = ", ".join(f"`{n}`" for n in promoted[:4])
+		more = f" (+{len(promoted) - 4} more)" if len(promoted) > 4 else ""
+		emit_event(
+			project_id,
+			"phase",
+			label="Added to sources",
+			detail=", ".join(promoted[:6]),
+			status="done",
+			meta={"promoted": promoted},
+		)
+		state = load_state(project_id)
+		state.chat.append(
+			ChatMessage(
+				role="assistant",
+				content=f"Added {names}{more} to your sources.",
+				source="system",
+			)
+		)
+		state.prime = {
+			**state.prime,
+			"request": "await_user" if request == "research" else state.prime.get("request"),
+			"brief": turn.brief if request == "research" else state.prime.get("brief"),
+		}
+		save_state(state)
+	elif request == "research":
+		emit_event(
+			project_id,
+			"think",
+			label="Research noted",
+			detail=(turn.brief or message or "")[:200],
+			status="done",
+		)
+		state = load_state(project_id)
+		state.prime = {**state.prime, "request": "await_user"}
+		save_state(state)
+
 	# Observe: iterate while artifact exists — run inside this job (one builder).
+	state = load_state(project_id)
+	request = str((state.prime or {}).get("request") or request)
 	if request == "iterate" and state.phase == "ready":
 		from .pipeline import _iterate_ui
 
@@ -249,15 +301,6 @@ def _agent_chat_turn(
 			state = load_state(project_id)
 			state.prime = {**state.prime, "request": "await_user"}
 			save_state(state)
-
-	if request == "research":
-		emit_event(
-			project_id,
-			"think",
-			label="Agent requested research",
-			detail=(turn.brief or message or "")[:200],
-			status="done",
-		)
 
 	return load_state(project_id)
 

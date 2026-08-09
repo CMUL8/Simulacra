@@ -21,9 +21,11 @@ Format is chosen on create (`artifact_kind`). Prompt keywords can hint; UI selec
 
 | Who | Owns |
 |-----|------|
-| **Prime** | Conversation; what to do next; when to ask for sources/research; when to request Build or iterate |
-| **Simulacra** | Auth, tenants, sources, extract, gates, sandbox, **format templates**, preview URL, jobs, ship flag, audit — observes Prime’s structured `request` and runs infra |
-| **User** | Intent, **format**, style chips, chat, uploads, explicit **Build** / **Ship** |
+| **Agent** | Conversation; what to do next; when to ask for sources/research; when to request Build or iterate |
+| **Simulacra** | Auth, tenants, sources, extract, gates, sandbox, **format templates**, preview URL, jobs, ship, audit — **observes** the agent’s structured `request` **and intervenes** on usual product actions (e.g. research file written → promote into data room) |
+| **User** | Intent, **format**, chat, uploads, explicit **Build** / **Ship** |
+
+**Observer law.** Simulacra does not invent chat replies. It does notice when the agent did something that product infra must complete — research saved outside the data room, iterate requested, gates after Build — and runs that infra without waiting for the user to babysit files.
 
 ## Loop (memorize)
 
@@ -58,7 +60,7 @@ Every Prime chat turn returns JSON (Simulacra observes; does not invent replies)
 - `await_user` — conversation only.
 - `build` — surface “Agent asked for Build”; user must still press **Build**.
 - `iterate` — only when phase is ready; Simulacra starts `iterate_run`.
-- `research` — record + show status (gather tools may follow later). Never invent finished research as fact.
+- `research` — Simulacra **observes** agent-written research (`*research*`, topic packs under `work/`) and **promotes them into the data room** + wires `research.json` for reports. Never invent finished research as fact.
 
 ## Chat rules (critical)
 

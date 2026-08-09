@@ -189,3 +189,25 @@ def test_iterate_does_not_rename_report_to_vendor_risk(report_scaffold: tuple[st
 	state = load_state(pid)
 	_iterate_merge_app_config(state, "Replace vendor sample with researched BJP content")
 	assert state.app_config.title == "BJP Landscape Brief"
+
+
+def test_observe_promotes_agent_research_into_data_room(report_scaffold: tuple[str, Path]) -> None:
+	from simulacra.demo.research_bundle import observe_and_promote_research, snapshot_research_mtimes
+	from simulacra.demo.sources import data_room_dir, list_source_files
+
+	pid, _app = report_scaffold
+	root = project_dir(pid)
+	work = root / "work"
+	work.mkdir(parents=True, exist_ok=True)
+	before = snapshot_research_mtimes(pid)
+	payload = {
+		"title": "BJP Research",
+		"sections": [{"heading": "Overview", "body": "Founded 1980", "bullets": ["Modi"]}],
+	}
+	(work / "bjp_research.json").write_text(json.dumps(payload), encoding="utf-8")
+	result = observe_and_promote_research(pid, before=before, force=False, artifact_kind="report")
+	assert "bjp_research.json" in result["promoted"]
+	assert (data_room_dir(pid) / "bjp_research.json").is_file()
+	names = {s.name for s in list_source_files(pid)}
+	assert "bjp_research.json" in names
+	assert (root / "app" / "public" / "research.json").is_file()
