@@ -215,6 +215,21 @@ def prime_chat_turn(
 		)
 	)
 
+	research_note = (
+		"When researching, write files under `work/research/` "
+		"(markdown/json/csv). Simulacra will promote them into the data room.\n"
+	)
+
+	mismatch = (state.prime or {}).get("topic_mismatch") or {}
+	topic_note = ""
+	if isinstance(mismatch, dict) and mismatch.get("reason") and not (state.prime or {}).get(
+		"topic_mismatch_announced"
+	):
+		topic_note = (
+			f"System note (soft — do not hard-block): {mismatch.get('reason')}\n"
+			"Be honest; suggest upload, sample swap, or research for their topic.\n"
+		)
+
 	# One stable session name per project — RLM resume within the project,
 	# never shared across users (session_dir is already per-project).
 	session_name = f"chat-{pid}"
@@ -265,6 +280,8 @@ def prime_chat_turn(
 	prime_prompt = (
 		f"{role}\n"
 		f"{phase_note}\n"
+		f"{research_note}"
+		f"{topic_note}"
 		"Be honest about the data room. Never silently pretend unrelated attached rows "
 		"are about their topic. Never claim Built until Simulacra has actually built.\n\n"
 		f"{user_bit}\n"

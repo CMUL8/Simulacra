@@ -444,15 +444,10 @@ def ensure_research_aware_report_app(app_dir: Path) -> bool:
 
 
 def snapshot_research_mtimes(project_id: str) -> dict[str, float]:
-	"""Capture research-like file mtimes before an agent turn (observe baseline)."""
-	root = project_dir(project_id)
-	out: dict[str, float] = {}
-	for path in find_research_candidates(root):
-		try:
-			out[str(path.resolve())] = path.stat().st_mtime
-		except OSError:
-			continue
-	return out
+	"""Capture work/research baselines before an agent turn (observe wrapper)."""
+	from .observe import snapshot_work_mtimes
+
+	return snapshot_work_mtimes(project_id)
 
 
 def observe_and_promote_research(
@@ -464,120 +459,14 @@ def observe_and_promote_research(
 ) -> dict[str, Any]:
 	"""Simulacra observer: agent wrote research → promote into the data room.
 
-	This is the product job — Prime may write `bjp_research.json` in work/ or the
-	project root; Simulacra intervenes so inventory, Preview, and later builds see it.
-
-	Returns {promoted: [names], bundle: dict|None, refreshed: bool}.
+	Thin wrapper over observe.promote_work_artifacts for back-compat.
+	Returns {promoted, quarantined, bundle, refreshed, section_count}.
 	"""
-	from .formats import normalize_kind
-	from .sources import data_room_dir, list_source_files, safe_source_name, source_room_brief
+	from .observe import promote_work_artifacts
 
-	root = project_dir(project_id)
-	room = data_room_dir(project_id)
-	before = before or {}
-	promoted: list[str] = []
-
-	candidates = find_research_candidates(root)
-	# Prefer research-named files; also anything new/changed since the turn started
-	targets: list[Path] = []
-	for path in candidates:
-		try:
-			resolved = str(path.resolve())
-			mtime = path.stat().st_mtime
-		except OSError:
-			continue
-		name_hit = bool(_RESEARCH_NAME.search(path.name))
-		rel = str(path.relative_to(root)).replace("\\", "/") if path.is_relative_to(root) else path.name
-		in_room = rel.startswith("inputs/data-room/")
-		if in_room:
-			continue
-		changed = resolved not in before or mtime > (before.get(resolved) or 0) + 0.01
-		if force or name_hit or changed:
-			targets.append(path)
-
-	# Deduplicate by basename preference (*research* / bjp* first)
-	targets.sort(key=lambda p: (0 if _RESEARCH_NAME.search(p.name) else 1, -p.stat().st_mtime if p.exists() else 0))
-
-	seen_names: set[str] = set()
-	for path in targets:
-		try:
-			dest_name = safe_source_name(path.name)
-		except Exception:  # noqa: BLE001
-			dest_name = path.name
-		if dest_name in seen_names:
-			continue
-		seen_names.add(dest_name)
-		dest = room / dest_name
-		try:
-			src_res = path.resolve()
-			dst_res = dest.resolve() if dest.exists() else dest
-		except OSError:
-			src_res, dst_res = path, dest
-		if dest.exists():
-			# Already mirrored — only refresh when agent file is newer
-			try:
-				if path.stat().st_mtime <= dest.stat().st_mtime + 0.01:
-					continue
-			except OSError:
-				pass
-		try:
-			if src_res != dst_res:
-				shutil.copy2(path, dest)
-			promoted.append(dest_name)
-		except OSError:
-			continue
-
-	bundle = None
-	kind = normalize_kind(artifact_kind) if artifact_kind else "data_app"
-	# Always refresh narrative bundle when we promoted or research was forced
-	if promoted or force or any(_RESEARCH_NAME.search(p.name) for p in candidates):
-		try:
-			bundle = write_research_bundle(
-				project_id,
-				force=True,
-				message="research",
-			)
-		except Exception:  # noqa: BLE001
-			bundle = None
-		if bundle and kind == "report":
-			app_dir = root / "app"
-			if app_dir.is_dir():
-				try:
-					ensure_research_aware_report_app(app_dir)
-				except Exception:  # noqa: BLE001
-					pass
-
-	refreshed = False
-	if promoted:
-		# Soft inventory refresh — file list + source_room for chat/UI
-		try:
-			from .runs import load_state, save_state
-
-			state = load_state(project_id)
-			sources = list_source_files(project_id)
-			files = [
-				{
-					"name": s.name,
-					"size": s.size,
-					"type": s.type,
-					"status": s.status,
-					"detail": s.detail,
-					"sha256": (s.sha256 or "")[:16],
-				}
-				for s in sources
-			]
-			preview = dict(state.plan_preview or {})
-			preview["files"] = files
-			preview["source_room"] = source_room_brief(preview)
-			state.plan_preview = preview
-			save_state(state)
-			refreshed = True
-		except Exception:  # noqa: BLE001
-			refreshed = False
-
-	return {
-		"promoted": promoted,
-		"bundle": bundle,
-		"refreshed": refreshed,
-		"section_count": len((bundle or {}).get("sections") or []) if isinstance(bundle, dict) else 0,
-	}
+	return promote_work_artifacts(
+		project_id,
+		before=before,
+		force=force,
+		artifact_kind=artifact_kind,
+	)

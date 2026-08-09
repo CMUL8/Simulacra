@@ -694,7 +694,14 @@ def post_project(
 		state = init_plan(state)
 		audit_request(request, ctx, "project.create", project_id=state.id)
 		log.info("project_created id=%s tenant=%s user=%s", state.id, state.tenant_id, ctx.user.id)
-		return project_snapshot(state.id)
+		from simulacra.demo.observe import duplicate_project_warnings
+
+		snap = project_snapshot(state.id)
+		warnings = duplicate_project_warnings(tid, body.prompt, exclude_id=state.id)
+		# Exclude the project we just created from soft-dup noise when it's the only match
+		if warnings:
+			snap["warnings"] = warnings
+		return snap
 	except PermissionError as exc:
 		raise HTTPException(403, str(exc)) from exc
 	except KeyError as exc:

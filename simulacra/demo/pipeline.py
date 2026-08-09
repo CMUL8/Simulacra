@@ -402,6 +402,18 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 	write_brief(pid, state.design_brief)
 	apply_brief_css_tokens(app_dir, state.design_brief)
 
+	# Ensure research.json is wired when research packs already exist
+	try:
+		from .formats import normalize_kind as _nk
+
+		kind = _nk(state.artifact_kind)
+		if kind != "data_app" or message_suggests_research(state.prompt):
+			rb = write_research_bundle(pid, force=kind == "report", message=state.prompt)
+			if rb and kind == "report":
+				ensure_research_aware_report_app(app_dir)
+	except Exception:  # noqa: BLE001
+		log.exception("research bundle ensure failed for %s", pid)
+
 	build_meta = prime_build_app(
 		app_dir, state.prompt, project_id=pid, row_count=len(rows), kind="build_run"
 	)
@@ -537,6 +549,9 @@ def approve_and_build(project_id: str) -> ProjectState:
 
 def start_approve_build(project_id: str, *, reset_scaffold: bool = True) -> dict[str, Any]:
 	"""Non-blocking Build app / Rebuild from draft → agent customize."""
+	from .observe import ensure_fresh_extract
+
+	ensure_fresh_extract(project_id)
 	approve_plan(project_id)
 
 	def target(_job: JobRecord) -> None:
@@ -585,6 +600,9 @@ def _iterate_merge_app_config(state: ProjectState, message: str) -> None:
 
 
 def _iterate_ui(project_id: str, message: str) -> None:
+	from .observe import ensure_fresh_extract
+
+	ensure_fresh_extract(project_id)
 	state = load_state(project_id)
 	# Don't snapshot "Before:" — Versions menu only keeps meaningful restores
 	emit_event(project_id, "phase", label="Builder updating app", detail=message[:120], status="running")
@@ -914,8 +932,10 @@ def approve_deploy(project_id: str, *, public_base: str | None = None) -> Projec
 def project_snapshot(project_id: str) -> dict:
 	from .deploy import preview_path
 	from .jobs import get_job
+	from .observe import heal_broken_preview, preview_is_stale
 
 	state = load_state(project_id)
+	state = heal_broken_preview(state)
 	# Heal ghost "running" after process restart (in-memory job gone)
 	live = get_job(project_id)
 	job = dict(state.job or {})
@@ -944,6 +964,7 @@ def project_snapshot(project_id: str) -> dict:
 		dirty = True
 
 	# Heal stuck in-progress status when no live job is running
+	# (heal_broken_preview also covers building_* — keep subtitle/job heals here)
 	stale_build = (state.status or "") in (
 		"building_app",
 		"publishing_preview",
@@ -987,11 +1008,14 @@ def project_snapshot(project_id: str) -> dict:
 		}
 	else:
 		preview = {"columns": [], "rows": [], "row_count": 0}
+
+	proj = {
+		**state.to_dict(),
+		"checkpoints": list_checkpoints(project_id),
+		"preview_stale": preview_is_stale(project_id),
+	}
 	return {
-		"project": {
-			**state.to_dict(),
-			"checkpoints": list_checkpoints(project_id),
-		},
+		"project": proj,
 		"preview_data": preview,
 		"preview_url": url,
 		"job": state.job,

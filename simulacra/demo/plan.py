@@ -177,10 +177,33 @@ def _agent_chat_turn(
 		status="running",
 	)
 
-	# Observe baseline — files the agent may write during this turn
-	from .research_bundle import observe_and_promote_research, snapshot_research_mtimes
+	from .observe import (
+		apply_style_from_message,
+		detect_topic_mismatch,
+		ensure_research_scratch,
+		prewarm_for_build,
+		promote_work_artifacts,
+		snapshot_work_mtimes,
+	)
 
-	before_research = snapshot_research_mtimes(project_id)
+	# Observe baseline + research scratch for agent writes
+	before_work = snapshot_work_mtimes(project_id)
+	ensure_research_scratch(project_id)
+	if message:
+		try:
+			apply_style_from_message(project_id, message)
+		except Exception:  # noqa: BLE001
+			pass
+
+	# Soft topic mismatch — once per session (prime meta flag)
+	prime_meta = dict(state.prime or {})
+	if not prime_meta.get("topic_mismatch_warned"):
+		mismatch = detect_topic_mismatch(state)
+		if mismatch:
+			prime_meta["topic_mismatch_warned"] = True
+			prime_meta["topic_mismatch"] = mismatch
+			state.prime = prime_meta
+			save_state(state)
 
 	turn = prime_chat_turn(
 		root,
@@ -212,11 +235,23 @@ def _agent_chat_turn(
 		# Prefer honest heuristic label over "error" when we still have a user-facing reply
 		source = "heuristic"
 
+	# Soft topic note once (also primed into agent system note via prime_hook)
+	if (
+		prime_meta.get("topic_mismatch")
+		and not prime_meta.get("topic_mismatch_announced")
+		and reply
+	):
+		note = str((prime_meta.get("topic_mismatch") or {}).get("reason") or "").strip()
+		if note and note not in reply:
+			reply = f"{reply}\n\n_{note}_"
+		prime_meta["topic_mismatch_announced"] = True
+
 	request = turn.request if turn.meta.source == "prime" and turn.reply else "await_user"
 
 	state.chat.append(ChatMessage(role="assistant", content=reply, source=source))
 	state.prime = {
 		**state.prime,
+		**prime_meta,
 		"session_id": meta.session_id or state.prime.get("session_id"),
 		"model": meta.model or state.prime.get("model"),
 		"source": source,
@@ -243,14 +278,15 @@ def _agent_chat_turn(
 		status="done",
 	)
 
-	# Observe + intervene: agent research files → data room (our core job)
-	observe = observe_and_promote_research(
+	# Observe + intervene: work artifacts → data room
+	observe = promote_work_artifacts(
 		project_id,
-		before=before_research,
+		before=before_work,
 		force=request == "research",
 		artifact_kind=state.artifact_kind,
 	)
 	promoted = list(observe.get("promoted") or [])
+	quarantined = list(observe.get("quarantined") or [])
 	if promoted:
 		names = ", ".join(f"`{n}`" for n in promoted[:4])
 		more = f" (+{len(promoted) - 4} more)" if len(promoted) > 4 else ""
@@ -288,8 +324,34 @@ def _agent_chat_turn(
 		state.prime = {**state.prime, "request": "await_user"}
 		save_state(state)
 
-	# Observe: iterate while artifact exists — run inside this job (one builder).
+	if quarantined:
+		emit_event(
+			project_id,
+			"think",
+			label="Quarantined",
+			detail=", ".join(quarantined[:4]),
+			status="done",
+			meta={"quarantined": quarantined},
+		)
+		state = load_state(project_id)
+		qnames = ", ".join(f"`{n}`" for n in quarantined[:3])
+		state.chat.append(
+			ChatMessage(
+				role="assistant",
+				content=f"Kept {qnames} out of sources (secret or unsafe).",
+				source="system",
+			)
+		)
+		save_state(state)
+
+	# request=build while still planning — cheap prewarm, never claim Built
 	state = load_state(project_id)
+	request = str((state.prime or {}).get("request") or request)
+	if request == "build" and state.phase == "plan":
+		prewarm_for_build(project_id)
+		state = load_state(project_id)
+
+	# Observe: iterate while artifact exists — run inside this job (one builder).
 	request = str((state.prime or {}).get("request") or request)
 	if request == "iterate" and state.phase == "ready":
 		from .pipeline import _iterate_ui

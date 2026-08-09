@@ -27,6 +27,20 @@ Format is chosen on create (`artifact_kind`). Prompt keywords can hint; UI selec
 
 **Observer law.** Simulacra does not invent chat replies. It does notice when the agent did something that product infra must complete — research saved outside the data room, iterate requested, gates after Build — and runs that infra without waiting for the user to babysit files.
 
+### Observer intervene (product hooks)
+
+| Action | When |
+|--------|------|
+| **Promote work artifacts** | After chat turns — copy new `.json/.md/.txt/.csv/.pdf/.tsv` from `work/` (and research-named root files) into the data room; wire `research.json` when research-named |
+| **Quarantine secrets** | Reject `.env`, `*credential*`, `*secret*`, `id_rsa`, oversized files → `work/quarantine/` |
+| **Research scratch** | Ensure `work/research/` (+ README) before agent turns |
+| **Topic mismatch** | Soft warning once if vendor sample is attached but prompt looks unrelated — never hard-block |
+| **Fresh extract** | Before Build / iterate — re-scan when content fingerprint ≠ `plan_preview.fingerprint` |
+| **Preview drift** | Snapshot exposes `preview_stale`; heal clears `deploy_url` if `dist/index.html` is missing |
+| **Style from chat** | Dense / soft / editorial / dark / accent / … merges into `design_brief` and CSS tokens when an app exists |
+| **Duplicate warn** | Soft `warnings[]` on create when a similar prompt already exists for the tenant |
+| **Build prewarm** | On `request=build` in plan phase — cheap extract + scaffold sync + “Ready to Build”; does **not** claim Built |
+
 ## Loop (memorize)
 
 ```
