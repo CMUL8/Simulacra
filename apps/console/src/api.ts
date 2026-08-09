@@ -82,7 +82,14 @@ export type JobState = {
   label?: string | null;
 };
 
-export type Checkpoint = { id: string; label: string; created_at: string };
+export type Checkpoint = {
+  id: string;
+  label: string;
+  created_at: string;
+  current?: boolean;
+  raw_label?: string;
+  has_files?: boolean | string;
+};
 export type DataRoomFile = {
   name: string;
   size: number;

@@ -548,16 +548,20 @@ export default function App({
     }
   }
 
-  async function handleRollback() {
+  async function handleRollback(checkpointId?: string) {
     if (!snapshot) return;
     setBusy(true);
     setError(null);
     try {
-      const snap = await rollbackProject(snapshot.project.id);
+      const snap = await rollbackProject(snapshot.project.id, checkpointId);
       setSnapshot(snap);
+      if (snap.preview_url) {
+        setPreviewOpen(true);
+        setPreviewRefresh((n) => n + 1);
+      }
       await refreshProjects();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Rollback failed");
+      setError(err instanceof Error ? err.message : "Restore failed");
     } finally {
       setBusy(false);
     }

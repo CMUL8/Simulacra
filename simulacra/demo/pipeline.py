@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from .chat import infer_app_config
+from .checkpoints import list_checkpoints
 from .checkpoints import rollback as do_rollback
-from .checkpoints import save_checkpoint
+from .checkpoints import save_checkpoint, version_label
 from .deploy import refresh_app_data, start_preview, stop_preview, sync_app
 from .design_brief import (
 	apply_brief_css_tokens,
@@ -365,7 +366,7 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 		source = source if source in ("error", "heuristic", "timeout") else "heuristic"
 
 	state.chat.append(ChatMessage(role="assistant", content=body, source=source))
-	save_checkpoint(state, "Built")
+	save_checkpoint(state, "First build")
 	emit_event(pid, "done", label=f"{spec.label} ready", detail=state.deploy_url or "", status="done")
 	_purge_ephemeral_status(state)
 	save_state(state)
@@ -476,7 +477,7 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 	state = load_state(pid)
 	state.deploy_url = url
 	state.status = "ready"
-	save_checkpoint(state, "Build")
+	save_checkpoint(state, "First build")
 	emit_event(pid, "done", label="Build complete", detail=url, status="done")
 	save_state(state)
 	return state
@@ -504,7 +505,7 @@ def build_project(state: ProjectState, *, run_prime: bool = True) -> ProjectStat
 			source=str(source),
 		)
 	)
-	save_checkpoint(state, "Initial build")
+	save_checkpoint(state, "First build")
 	emit_event(pid, "done", label="Build complete", detail=state.deploy_url or "", status="done")
 	save_state(state)
 	return state
@@ -561,7 +562,7 @@ def start_follow_up(project_id: str, message: str) -> dict[str, Any]:
 
 def _iterate_ui(project_id: str, message: str) -> None:
 	state = load_state(project_id)
-	save_checkpoint(state, f"Before: {message[:40]}")
+	# Don't snapshot "Before:" — Versions menu only keeps meaningful restores
 	emit_event(project_id, "phase", label="Builder updating app", detail=message[:120], status="running")
 	rows = _load_rows(project_id)
 	# Preserve prior agent work — never wipe scaffold on chat iterate
@@ -628,7 +629,9 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	state = load_state(project_id)
 	state.deploy_url = url
 	state.status = "ready"
-	save_checkpoint(state, f"After: {message[:40]}")
+	# Only keep a version when something useful landed
+	if source in ("prime", "craft") or (changed and source != "error"):
+		save_checkpoint(state, version_label(message))
 	emit_event(project_id, "done", label="Preview updated", detail=url, status="done")
 	save_state(state)
 
@@ -899,7 +902,10 @@ def project_snapshot(project_id: str) -> dict:
 	else:
 		preview = {"columns": [], "rows": [], "row_count": 0}
 	return {
-		"project": state.to_dict(),
+		"project": {
+			**state.to_dict(),
+			"checkpoints": list_checkpoints(project_id),
+		},
 		"preview_data": preview,
 		"preview_url": url,
 		"job": state.job,

@@ -3,12 +3,12 @@ import {
   Globe,
   PanelLeft,
   PanelLeftClose,
-  RotateCcw,
   Square,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
-import type { AgentEvent, ChatMessage, DataRoomFile, Snapshot } from "../api";
+import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
 import { PromptComposer } from "./PromptComposer";
+import { VersionsMenu } from "./VersionsMenu";
 import { WaitStage } from "./WaitStage";
 
 type Props = {
@@ -29,7 +29,7 @@ type Props = {
   onCancel?: () => void;
   onOpenPreview: () => void;
   onGovernance: () => void;
-  onRollback?: () => void;
+  onRollback?: (checkpointId?: string) => void;
   onDismissError: () => void;
   onNew?: () => void;
 };
@@ -182,8 +182,9 @@ function isOrphanJobStatus(m: ChatMessage): boolean {
   const text = m.content.trim();
   // Old builds left "Building your app…" in chat forever — never show it.
   if (m.source === "system" && /^Building your\b/i.test(text)) return true;
-  // Legacy rollback jargon — hide; new undos use plain copy
+  // Legacy rollback jargon — hide; restores use plain copy
   if (/^Rolled back to checkpoint/i.test(text)) return true;
+  if (/^Undid — preview restored/i.test(text)) return true;
   return false;
 }
 
@@ -436,16 +437,11 @@ export function AgentShell({
         </div>
         <div className="agent-topbar-right">
           {!isPlan && project.checkpoints?.length > 0 && onRollback && (
-            <button
-              type="button"
-              className="topbar-link"
+            <VersionsMenu
+              versions={project.checkpoints as Checkpoint[]}
               disabled={busy}
-              onClick={onRollback}
-              title="Undo to the last good preview (keeps your sources and chat)"
-            >
-              <RotateCcw size={13} strokeWidth={1.75} />
-              Undo
-            </button>
+              onRestore={(id) => onRollback(id)}
+            />
           )}
           <button type="button" className="topbar-link" onClick={onGovernance} title="Account, policy & admin">
             Account

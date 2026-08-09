@@ -41,8 +41,8 @@ Create (+ format) → Prime chat (user steers)
 | **Build** | User hits Build → gates → format template → **builder customizes** → preview. Clears `prime.request`. | **Building…** → **Built** + Preview |
 | **Drive** | Chat → Prime; if `request=iterate` and artifact exists → `iterate_run` | Thinking → Preview updates → reply |
 | **Ship** | Gates pass → `deployed=true` + stable preview URL + chat receipt | **Shipped** + shareable link |
+| **Versions** | Restore an earlier preview by name (Added chart, First build, …). No forks. | Preview restored |
 | **Start over** | Escape hatch — wipe back to blank template, build again | Same as create deepen |
-| **Undo** | Restore last good checkpoint (keeps sources + chat) | Preview rolls back |
 
 ## Prime chat envelope
 
