@@ -45,6 +45,32 @@ def _load_rows(project_id: str) -> list[dict[str, Any]]:
 	return pq.read_table(path).to_pylist()
 
 
+def _change_summary_lines(
+	request: str,
+	changed_files: list[str],
+	*,
+	layout: bool,
+) -> list[str]:
+	"""Short bullets for chat — what the user asked + which files moved."""
+	lines: list[str] = []
+	note = (request or "").strip().replace("\n", " ")
+	if note:
+		lines.append(f"Request: {note[:160]}{'…' if len(note) > 160 else ''}")
+	labels = {
+		"src/App.tsx": "Layout / UI (`App.tsx`)",
+		"src/styles.css": "Styles (`styles.css`)",
+		"public/config.json": "Title & config",
+	}
+	if changed_files:
+		for rel in changed_files:
+			lines.append(labels.get(rel, rel))
+	elif layout:
+		lines.append("Layout / UI updated")
+	else:
+		lines.append("Preview refreshed")
+	return lines
+
+
 def _write_policy_snapshot(project_id: str) -> None:
 	root = project_dir(project_id)
 	payload = {
@@ -291,15 +317,24 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 		facts += f" · {len(vendors)} vendors"
 
 	source = state.prime.get("source") or "prime"
+	changed = [str(x) for x in (state.prime.get("changed_files") or []) if x]
+	if not changed and source in ("prime", "craft"):
+		changed = ["src/App.tsx", "src/styles.css"]
+	change_block = "\n".join(
+		f"- {line}"
+		for line in _change_summary_lines(state.prompt, changed, layout=source in ("prime", "craft"))
+	)
 	if source in ("prime", "craft"):
 		body = (
 			f"## {spec.label}: {state.app_config.title}\n\n"
 			f"{state.app_config.subtitle}\n\n"
 			f"**Sources:** {facts}\n"
 			f"{file_names}\n\n"
-			f"**Built.** Preview is ready — open it, then **chat to refine** "
-			f"(layout, copy, viz). **Ship** when you want an approved share link.\n\n"
-			f"Need a clean restart? Use **Rebuild from draft**."
+			"**What changed**\n"
+			f"{change_block}\n\n"
+			"Preview is ready — open it, then chat to refine. "
+			"**Ship** when you want an approved share link.\n\n"
+			"Need a clean restart? Use **Rebuild from draft**."
 		)
 		if source == "craft":
 			body = (
@@ -307,7 +342,9 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 				f"{state.app_config.subtitle}\n\n"
 				f"**Sources:** {facts}\n"
 				f"{file_names}\n\n"
-				"**Built.** Layout was personalized from your Style brief "
+				"**What changed**\n"
+				f"{change_block}\n\n"
+				"Layout was personalized from your Style brief "
 				"(craft fallback — agent file edits incomplete).\n\n"
 				"Open **Preview**, chat to refine, or **Ship** when ready."
 			)
@@ -369,15 +406,27 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 		"status": "ok" if build_meta.get("ok") or not build_meta.get("used") else "error",
 		"steps": build_meta.get("events") or 0,
 	}
+	changed = [str(x) for x in (build_meta.get("changed_files") or []) if x]
+	change_block = "\n".join(
+		f"- {line}"
+		for line in _change_summary_lines(
+			state.prompt, changed, layout=bool(build_meta.get("layout_customized"))
+		)
+	)
 	honesty = {
 		"prime": (
-			"**Built.** The builder customized your draft.\n\n"
-			"From here, **chat drives the builder** — ask for layout, viz, or copy changes. "
-			"When it looks right, open Preview → **Ship**."
+			"## Built\n\n"
+			"The builder customized your draft.\n\n"
+			"**What changed**\n"
+			f"{change_block}\n\n"
+			"Chat to refine layout, viz, or copy. When it looks right, open Preview → **Ship**."
 		),
 		"craft": (
-			"**Built.** Layout was personalized from your Style brief "
-			"(the agent did not finish file edits, so craft fallback applied).\n\n"
+			"## Built\n\n"
+			"Layout was personalized from your Style brief "
+			"(craft fallback — agent file edits incomplete).\n\n"
+			"**What changed**\n"
+			f"{change_block}\n\n"
 			"Open **Preview**, then chat to refine — or **Ship** when ready."
 		),
 		"heuristic": (
@@ -391,13 +440,17 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 	if build_meta.get("style_only") and source not in ("error", "craft", "prime"):
 		source = "heuristic"
 		honesty = (
-			"Styles applied from your Style chips. "
+			"## Partial update\n\n"
+			"Styles applied from your Style chips.\n\n"
+			"**What changed**\n"
+			f"{change_block}\n\n"
 			"The builder did not rewrite the layout — retry **Build app**."
 		)
 
 	state.prime["source"] = source
 	state.prime["style_only"] = bool(build_meta.get("style_only"))
 	state.prime["layout_customized"] = bool(build_meta.get("layout_customized"))
+	state.prime["changed_files"] = changed
 
 	# Mark Built BEFORE the long npm preview publish so waiters never see
 	# source=prime stuck on phase=build (the E2E race fault).
@@ -548,13 +601,25 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		"style_only": bool(meta.get("style_only")),
 	}
 
+	changed = [str(x) for x in (meta.get("changed_files") or []) if x]
+	change_lines = _change_summary_lines(message, changed, layout=bool(meta.get("layout_customized")))
+
 	if meta.get("ok") and meta.get("files_changed") and not meta.get("style_only"):
-		honesty = "**Updated.** Preview refreshed — keep chatting to drive the builder, or **Ship** when ready."
+		honesty = (
+			"## Updated\n\n"
+			"Preview refreshed with your request.\n\n"
+			"**What changed**\n"
+			+ "\n".join(f"- {line}" for line in change_lines)
+			+ "\n\nOpen **Preview** to check, keep chatting to refine, or **Ship** for a share link."
+		)
 		source = "prime" if meta.get("source") == "prime" else (meta.get("source") or "craft")
 	elif meta.get("style_only") or (meta.get("files_changed") and not meta.get("ok")):
 		honesty = (
-			"Applied style tokens from your note, but the builder did **not** finish editing the layout. "
-			"Rephrase and send again."
+			"## Partial update\n\n"
+			"Styles were applied, but the layout edit did **not** finish.\n\n"
+			"**What changed**\n"
+			+ "\n".join(f"- {line}" for line in change_lines)
+			+ "\n\nRephrase the change and send again."
 		)
 		source = "heuristic"
 	elif not meta.get("used"):
@@ -568,6 +633,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 
 	state.prime["source"] = source
 	state.prime["layout_customized"] = bool(meta.get("layout_customized"))
+	state.prime["changed_files"] = changed
 	state.chat.append(ChatMessage(role="assistant", content=honesty, source=source))
 	state.status = "publishing_preview"
 	save_state(state)
@@ -831,12 +897,12 @@ def approve_deploy(project_id: str, *, public_base: str | None = None) -> Projec
 			role="assistant",
 			content=(
 				"## Shipped\n\n"
-				"This build is **approved** for your team.\n\n"
-				f"**Share URL:** `{share}`\n\n"
-				"Open **Preview** → **Copy link** for the full URL if needed. "
-				"You can keep chatting — the builder will keep iterating on this project."
+				"Approved for your team. Share this preview:\n\n"
+				f"[Open preview]({share})\n\n"
+				f"`{share}`\n\n"
+				"Keep chatting to iterate — changes stay on this same link."
 			),
-			source="system",
+			source="ship",
 		)
 	)
 	save_state(state)

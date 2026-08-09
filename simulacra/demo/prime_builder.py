@@ -95,14 +95,33 @@ def _file_hash(path: Path) -> str:
 	return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _src_fingerprint(app_dir: Path) -> str:
-	h = hashlib.sha256()
-	for rel in ("src/App.tsx", "src/styles.css", "public/config.json"):
+_TRACKED_SRC = ("src/App.tsx", "src/styles.css", "public/config.json")
+
+
+def _src_hashes(app_dir: Path) -> dict[str, str]:
+	out: dict[str, str] = {}
+	for rel in _TRACKED_SRC:
 		path = app_dir / rel
 		if path.is_file():
-			h.update(rel.encode())
-			h.update(path.read_bytes())
+			out[rel] = _file_hash(path)
+	return out
+
+
+def _src_fingerprint(app_dir: Path) -> str:
+	h = hashlib.sha256()
+	for rel, digest in sorted(_src_hashes(app_dir).items()):
+		h.update(rel.encode())
+		h.update(digest.encode())
 	return h.hexdigest()
+
+
+def _changed_src_files(app_dir: Path, before: dict[str, str]) -> list[str]:
+	after = _src_hashes(app_dir)
+	changed = [rel for rel, digest in after.items() if before.get(rel) != digest]
+	for rel in before:
+		if rel not in after:
+			changed.append(rel)
+	return sorted(set(changed))
 
 
 def _app_tsx_hash(app_dir: Path) -> str:
@@ -376,6 +395,7 @@ def prime_build_app(
 
 	# Apply tokens first so the agent starts on-brand
 	apply_brief_css_tokens(app_dir, state.design_brief or {})
+	before_hashes = _src_hashes(app_dir)
 	before_fp = _src_fingerprint(app_dir)
 	before_app = _app_tsx_hash(app_dir)
 
@@ -390,6 +410,7 @@ def prime_build_app(
 	any_changed = _src_fingerprint(app_dir) != before_fp
 	meta["files_changed"] = any_changed
 	meta["layout_customized"] = app_changed
+	meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
 	meta["write_tools"] = int(meta.get("write_tools") or 0)
 	events_total = int(meta.get("events") or 0)
 
@@ -423,12 +444,14 @@ def prime_build_app(
 		any_changed = _src_fingerprint(app_dir) != before_fp
 		meta["files_changed"] = any_changed
 		meta["layout_customized"] = app_changed
+		meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
 
 	if app_changed:
 		meta["ok"] = True
 		meta["source"] = "prime"
 		meta["style_only"] = False
 		meta["error"] = None
+		meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
 		emit_event(
 			project_id,
 			"phase",
@@ -450,6 +473,7 @@ def prime_build_app(
 	meta["files_changed"] = crafted or any_changed
 	meta["layout_customized"] = crafted
 	meta["craft_fallback"] = True
+	meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
 
 	if crafted:
 		meta["ok"] = True
@@ -473,6 +497,7 @@ def prime_build_app(
 	meta["style_only"] = True
 	meta["files_changed"] = forced
 	meta["layout_customized"] = False
+	meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
 	emit_event(
 		project_id,
 		"think",

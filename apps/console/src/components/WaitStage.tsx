@@ -12,23 +12,17 @@ type Props = {
   variant?: "thread" | "overlay";
 };
 
-const CREATE_STAGES = [
-  "Scanning sources",
-  "Crafting scaffold",
-  "Builder customizing",
-  "Publishing preview",
-];
-const ITERATE_STAGES = ["Reading your note", "Editing the artifact", "Refreshing preview"];
+const CREATE_STAGES = ["Sources", "Scaffold", "Customize", "Preview"];
+const ITERATE_STAGES = ["Read", "Edit", "Refresh"];
 const TIPS = [
-  "This takes a minute — we’re writing real UI, not a mock.",
-  "Scaffold stays behind the scenes; you only see the Built result.",
-  "You can Stop anytime — last good preview is kept.",
+  "Usually under a minute — writing real UI.",
+  "Stop anytime; the last good preview stays.",
   "After this, chat drives every change.",
 ];
 
 function stagesFor(jobKind?: string | null): string[] {
   if (jobKind === "iterate_run") return ITERATE_STAGES;
-  if (jobKind === "reingest") return ["Re-ingesting sources", "Refreshing data", "Updating preview"];
+  if (jobKind === "reingest") return ["Re-ingest", "Refresh", "Preview"];
   return CREATE_STAGES;
 }
 
@@ -44,7 +38,6 @@ function inferStageIndex(stages: string[], traces: AgentEvent[]): number {
   if (latest.includes("craft") || latest.includes("scaffold") || latest.includes("preparing"))
     return Math.min(stages.length - 1, 1);
   if (latest.includes("scan") || latest.includes("extract") || latest.includes("gate")) return 0;
-  // Any running phase advances at least to mid
   if (traces.some((e) => e.status === "running")) return Math.min(stages.length - 1, 2);
   return Math.min(stages.length - 1, 1);
 }
@@ -85,14 +78,18 @@ export function WaitStage({
       aria-busy="true"
     >
       <div className="wait-stage-card">
-        <div className="wait-stage-orbit" aria-hidden>
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="wait-stage-copy">
-          <h3>{title}</h3>
-          {subtitle && <p className="wait-stage-sub">{subtitle}</p>}
+        <div className="wait-stage-top">
+          <div className="wait-stage-copy">
+            <div className="wait-stage-orbit" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </div>
+            <div>
+              <h3>{title}</h3>
+              {subtitle && <p className="wait-stage-sub">{subtitle}</p>}
+            </div>
+          </div>
           <div className="wait-stage-meta">
             <span className="wait-elapsed">{formatElapsed(elapsed)}</span>
             {onStop && (

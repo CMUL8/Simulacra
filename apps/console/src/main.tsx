@@ -3,6 +3,7 @@ import { StrictMode, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { clearAuth, fetchMe, setTenantId, setToken } from "./api";
+import { BG_IMAGES, bgPresetFromSearch } from "./bgPreset";
 import "./styles.css";
 
 type AuthConfig = {
@@ -13,10 +14,12 @@ type AuthConfig = {
 async function loadAuthConfig(): Promise<AuthConfig> {
   const base = import.meta.env.VITE_API_BASE ?? (import.meta.env.PROD ? "" : "/api");
   try {
-    const res = await fetch(`${base}/auth/config`);
+    const res = await fetch(`${base}/auth/config`, {
+      signal: AbortSignal.timeout(2500),
+    });
     if (res.ok) return res.json();
   } catch {
-    /* fall through */
+    /* fall through — local Vite without API should still show the landing */
   }
   const baked = (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined) || "";
   return {
@@ -87,9 +90,10 @@ function Root() {
   }, []);
 
   if (!config) {
+    const bg = bgPresetFromSearch();
     return (
-      <div className="landing landing-boot">
-        <img className="landing-hero-img" src="/images/hero-sky.jpg" alt="" aria-hidden />
+      <div className="landing landing-boot" data-bg={bg}>
+        <img className="landing-hero-img" src={BG_IMAGES[bg]} alt="" aria-hidden />
         <div className="landing-hero-veil" aria-hidden />
         <div className="landing-content">
           <h1 className="brand-mark">

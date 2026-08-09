@@ -29,6 +29,7 @@ import {
   type Snapshot,
   type Tenant,
 } from "./api";
+import { BG_IMAGES, bgPresetFromSearch } from "./bgPreset";
 import { AgentShell } from "./components/AgentShell";
 import { Landing } from "./components/Landing";
 import { PreviewDrawer } from "./components/PreviewDrawer";
@@ -407,9 +408,10 @@ export default function App({
   }, [authed, busy, dataAttached, handleStartPlanning, pendingFiles.length, prompt, resumeBuild]);
 
   if (authed === null) {
+    const bg = bgPresetFromSearch();
     return (
-      <div className="landing landing-boot">
-        <img className="landing-hero-img" src="/images/hero-sky.jpg" alt="" aria-hidden />
+      <div className="landing landing-boot" data-bg={bg}>
+        <img className="landing-hero-img" src={BG_IMAGES[bg]} alt="" aria-hidden />
         <div className="landing-hero-veil" aria-hidden />
         <div className="landing-content">
           <h1 className="brand-mark">

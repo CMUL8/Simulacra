@@ -1927,14 +1927,15 @@ body {
   color: var(--text);
 }
 .agent-center {
+  --thread-pad: 20px;
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-width: 760px;
+  max-width: 720px;
   width: 100%;
   margin: 0 auto;
-  padding: 0 var(--space-5);
+  padding: 0; /* one column — children share --thread-pad */
 }
 .agent-thread {
   flex: 1;
@@ -2003,35 +2004,39 @@ body {
   color: var(--text-bright);
 }
 
-/* Cursor-style document thread — aligned column, tint-only user turns */
+/* Cursor-style document thread — one left edge for every turn */
 .cursor-thread {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  max-width: 680px;
-  margin: 0 auto;
+  gap: var(--space-2);
+  max-width: none;
+  margin: 0;
   width: 100%;
 }
 .cursor-turn {
   animation: msg-in 0.2s ease-out;
   width: 100%;
   margin: 0;
-  /* Shared inset so user tint and assistant prose share one left edge */
-  padding: var(--space-4) var(--thread-inset);
-  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--thread-pad, 20px);
+  border-radius: 0;
   box-sizing: border-box;
 }
 .cursor-turn-user {
   background: var(--turn-user-bg);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: none;
+  border-radius: var(--radius-md);
+  margin: 0 var(--thread-pad, 20px);
+  width: auto;
+  padding: var(--space-3) var(--space-4);
 }
 .cursor-turn-assistant,
-.cursor-turn-plan {
+.cursor-turn-plan,
+.cursor-turn-wait {
   background: transparent;
-  border: 1px solid transparent; /* same box model as user — no stagger */
+  border: none;
 }
 .cursor-turn-status {
-  padding: var(--space-2) var(--thread-inset);
+  padding: var(--space-2) var(--thread-pad, 20px);
   background: transparent;
   border: none;
 }
@@ -2101,6 +2106,77 @@ body {
   border-radius: var(--radius-xs);
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-bright);
+  word-break: break-all;
+}
+.cursor-prose a.md-link,
+a.md-link {
+  color: #7eb6ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.cursor-prose a.md-link:hover,
+a.md-link:hover {
+  color: #a8ceff;
+}
+
+/* Ship receipt — clear CTA, clickable URL */
+.ship-receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ship-receipt-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
+}
+.ship-receipt-lead {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.ship-receipt-link {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #7eb6ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.ship-receipt-link:hover { color: #a8ceff; }
+.ship-receipt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+.ship-receipt-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-bright);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+.ship-receipt-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.ship-receipt-btn.ghost {
+  background: transparent;
+}
+.ship-receipt-foot {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.45;
 }
 
 /* Plan — document section, not a card */
@@ -2175,7 +2251,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: var(--space-2) var(--thread-inset);
+  padding: var(--space-2) var(--thread-pad, 20px);
   color: var(--text-dim);
   font-size: 13px;
 }
@@ -2219,41 +2295,47 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* Long-wait stage loader (create / build / iterate) — light / landing-aligned */
+/* Compact wait stage — sits in the chat column, not a floating white card */
 .wait-stage-thread {
-  padding: 8px var(--thread-inset) 18px;
+  padding: 0;
+  width: 100%;
 }
 .wait-stage-overlay {
-  /* Kept for API compat; prefer thread. No dark backdrop. */
   display: grid;
   place-items: center;
-  padding: 16px var(--thread-inset, 24px);
+  padding: 16px var(--thread-pad, 20px);
   background: transparent;
 }
+.cursor-turn-wait .wait-stage,
+.cursor-turn-wait .wait-stage-card {
+  width: 100%;
+}
 .wait-stage-card {
-  width: min(420px, 100%);
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  background:
-    linear-gradient(165deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.88));
-  border-radius: 18px;
-  padding: 22px 22px 18px;
-  box-shadow:
-    0 12px 40px rgba(40, 80, 120, 0.12),
-    0 1px 0 rgba(255, 255, 255, 0.8) inset;
-  color: #1a2430;
-  backdrop-filter: blur(16px) saturate(1.15);
-  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  padding: 12px 14px 12px;
+  box-shadow: none;
+  color: var(--text);
+}
+.wait-stage-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 .wait-stage-orbit {
   display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
+  gap: 5px;
+  flex-shrink: 0;
+  margin-top: 5px;
 }
 .wait-stage-orbit span {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #5ba3d9;
+  background: #7eb6ff;
   opacity: 0.35;
   animation: wait-orbit 1.35s ease-in-out infinite;
 }
@@ -2261,105 +2343,111 @@ body {
 .wait-stage-orbit span:nth-child(3) { animation-delay: 0.36s; }
 @keyframes wait-orbit {
   0%, 100% { transform: translateY(0) scale(0.85); opacity: 0.3; }
-  40% { transform: translateY(-4px) scale(1.15); opacity: 1; }
+  40% { transform: translateY(-3px) scale(1.1); opacity: 1; }
+}
+.wait-stage-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
 }
 .wait-stage-copy h3 {
   margin: 0;
-  font-family: var(--font-display, var(--font-ui));
-  font-size: 1.15rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  color: #141c24;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-bright);
 }
 .wait-stage-sub {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: rgba(26, 36, 48, 0.62);
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
   line-height: 1.4;
 }
 .wait-stage-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .wait-elapsed {
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: rgba(26, 36, 48, 0.55);
+  font-size: 11.5px;
+  color: var(--text-dim);
   letter-spacing: 0.04em;
 }
 .wait-stop {
-  margin-left: auto;
-  border: 1px solid rgba(26, 36, 48, 0.18);
-  background: rgba(255, 255, 255, 0.65);
-  color: #1a2430;
-  font-size: 12px;
-  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
 }
 .wait-stop:hover {
-  border-color: rgba(26, 36, 48, 0.32);
-  background: #fff;
+  color: var(--text-bright);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 .wait-bar {
-  margin-top: 16px;
-  height: 3px;
+  margin-top: 10px;
+  height: 2px;
   border-radius: 99px;
-  background: rgba(26, 36, 48, 0.08);
+  background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
 }
 .wait-bar i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #5ba3d9, #8ec5e8);
+  background: linear-gradient(90deg, #5b8fd9, #8eb6e8);
   transition: width 0.6s ease;
 }
 .wait-stages {
   list-style: none;
-  margin: 16px 0 0;
+  margin: 10px 0 0;
   padding: 0;
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
 }
 .wait-step {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: rgba(26, 36, 48, 0.4);
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  opacity: 0.55;
 }
-.wait-step.done { color: rgba(26, 36, 48, 0.72); }
+.wait-step.done { opacity: 0.85; }
 .wait-step.active {
-  color: #141c24;
+  opacity: 1;
+  color: var(--text-bright);
   font-weight: 600;
 }
 .wait-dot {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: currentColor;
-  opacity: 0.35;
   flex-shrink: 0;
 }
-.wait-step.done .wait-dot { opacity: 0.85; background: #5ba3d9; }
+.wait-step.done .wait-dot { background: #7eb6ff; }
 .wait-step.active .wait-dot {
-  opacity: 1;
-  background: #5ba3d9;
-  box-shadow: 0 0 0 3px rgba(91, 163, 217, 0.22);
+  background: #7eb6ff;
+  box-shadow: 0 0 0 3px rgba(126, 182, 255, 0.18);
   animation: wait-pulse 1.4s ease-in-out infinite;
 }
 @keyframes wait-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(91, 163, 217, 0.12); }
-  50% { box-shadow: 0 0 0 5px rgba(91, 163, 217, 0.24); }
+  0%, 100% { box-shadow: 0 0 0 2px rgba(126, 182, 255, 0.1); }
+  50% { box-shadow: 0 0 0 4px rgba(126, 182, 255, 0.22); }
 }
 .wait-tip {
-  margin: 16px 0 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: rgba(26, 36, 48, 0.5);
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
 }
 
 /* Policy pane (Account modal) */
@@ -2544,14 +2632,14 @@ body {
 
 .agent-composer-wrap {
   flex-shrink: 0;
-  padding-bottom: 18px;
+  padding: 0 var(--thread-pad, 20px) 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 .agent-loop-hint {
   margin: 0;
-  padding: 0 4px;
+  padding: 0;
   font-size: 12px;
   line-height: 1.4;
   color: var(--text-dim);

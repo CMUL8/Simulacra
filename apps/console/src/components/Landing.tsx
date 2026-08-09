@@ -1,6 +1,7 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactKind, DataRoomFile, Project } from "../api";
+import { BG_IMAGES, bgPresetFromSearch } from "../bgPreset";
 import { GuestAuthGate } from "./GuestAuthGate";
 import { SourcesPanel } from "./SourcesPanel";
 
@@ -85,17 +86,6 @@ function relativeWhen(iso?: string): string {
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Local preview: ?bg=sky|mist|dusk|field — default sky (photo). */
-function bgPresetFromSearch(): string {
-  try {
-    const v = new URLSearchParams(window.location.search).get("bg");
-    if (v && ["sky", "mist", "dusk", "field"].includes(v)) return v;
-  } catch {
-    /* ignore */
-  }
-  return "sky";
-}
-
 type Props = {
   prompt: string;
   artifactKind: ArtifactKind;
@@ -177,11 +167,7 @@ export function Landing({
 
   return (
     <div className="landing" ref={landingRef} data-bg={bgPreset}>
-      {bgPreset === "sky" ? (
-        <img className="landing-hero-img" src="/images/hero-sky.jpg" alt="" aria-hidden />
-      ) : (
-        <div className="landing-hero-wash" aria-hidden />
-      )}
+      <img className="landing-hero-img" src={BG_IMAGES[bgPreset]} alt="" aria-hidden />
       <div className="landing-hero-veil" aria-hidden />
 
       <header className="landing-nav">

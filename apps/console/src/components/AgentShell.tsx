@@ -42,10 +42,32 @@ function escapeHtml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function absolutizeUrl(url: string): string {
+  if (typeof window === "undefined") return url;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("/")) return `${window.location.origin}${url}`;
+  return url;
+}
+
 function inlineFormat(text: string) {
   let html = escapeHtml(text);
+  const codes: string[] = [];
+  html = html.replace(/`([^`]+)`/g, (_m, code: string) => {
+    codes.push(`<code>${code}</code>`);
+    return `\u0000C${codes.length - 1}\u0000`;
+  });
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/projects\/[^)\s]+)\)/g,
+    (_m, label: string, href: string) =>
+      `<a class="md-link" href="${escapeHtml(absolutizeUrl(href))}" target="_blank" rel="noopener noreferrer">${label}</a>`,
+  );
+  html = html.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, (_m, pre: string, url: string) => {
+    const clean = url.replace(/[.,;:!?)]+$/, "");
+    const trail = url.slice(clean.length);
+    return `${pre}<a class="md-link" href="${escapeHtml(clean)}" target="_blank" rel="noopener noreferrer">${escapeHtml(clean)}</a>${trail}`;
+  });
+  html = html.replace(/\u0000C(\d+)\u0000/g, (_m, i: string) => codes[Number(i)] || "");
   return html;
 }
 
@@ -53,10 +75,26 @@ function inlineFormat(text: string) {
 function absolutizeShareUrls(text: string): string {
   if (typeof window === "undefined") return text;
   const origin = window.location.origin;
-  return text.replace(
-    /(\*\*Share URL:\*\*[^\n`]*`?)(\/projects\/[^\s`]+)/g,
-    (_m, prefix: string, path: string) => `${prefix}${origin}${path}`,
-  );
+  return text
+    .replace(
+      /(\*\*Share URL:\*\*[^\n`]*`?)(\/projects\/[^\s`]+)/g,
+      (_m, prefix: string, path: string) => `${prefix}${origin}${path}`,
+    )
+    .replace(/\]\(\/projects\//g, `](${origin}/projects/`);
+}
+
+function extractShareUrl(text: string): string | null {
+  const md = text.match(/\]\((https?:\/\/[^)\s]+|\/projects\/[^)\s]+)\)/);
+  if (md?.[1]) return absolutizeUrl(md[1]);
+  const bare = text.match(/https?:\/\/[^\s`]+\/projects\/[^\s`]+/);
+  if (bare?.[0]) return bare[0];
+  const rel = text.match(/`(\/projects\/[^`]+)`/);
+  if (rel?.[1]) return absolutizeUrl(rel[1]);
+  return null;
+}
+
+function isShipMessage(m: ChatMessage): boolean {
+  return m.source === "ship" || /^##\s*Shipped\b/i.test(m.content.trim());
 }
 
 /** Document-style markdown — paragraphs, headings, lists (Cursor transcript feel). */
@@ -106,9 +144,47 @@ function MarkdownBody({ text }: { text: string }) {
   return <div className="cursor-prose">{nodes}</div>;
 }
 
+function ShipReceipt({
+  text,
+  onOpenPreview,
+}: {
+  text: string;
+  onOpenPreview: () => void;
+}) {
+  const share = extractShareUrl(text);
+  return (
+    <div className="ship-receipt">
+      <h3 className="ship-receipt-title">Shipped</h3>
+      <p className="ship-receipt-lead">Approved for your team. Share this preview:</p>
+      {share && (
+        <a className="ship-receipt-link" href={share} target="_blank" rel="noopener noreferrer">
+          {share}
+        </a>
+      )}
+      <div className="ship-receipt-actions">
+        <button type="button" className="ship-receipt-btn" onClick={onOpenPreview}>
+          Open preview
+        </button>
+        {share && (
+          <button
+            type="button"
+            className="ship-receipt-btn ghost"
+            onClick={() => void navigator.clipboard?.writeText(share)}
+          >
+            Copy link
+          </button>
+        )}
+      </div>
+      <p className="ship-receipt-foot">Keep chatting to iterate — changes stay on this same link.</p>
+    </div>
+  );
+}
+
 function turnKind(m: ChatMessage): TurnKind {
   if (m.role === "user") return "user";
-  if (m.source === "system") return "status";
+  if (isShipMessage(m)) return "assistant";
+  // Structured receipts (## Built / ## Updated) stay as assistant prose, not dim status lines
+  if (m.source === "system" && !/^##\s/m.test(m.content.trim())) return "status";
   if (m.role === "assistant" && /^##\s*Plan:/i.test(m.content.trim())) return "plan";
   return "assistant";
 }
@@ -180,9 +256,13 @@ function PlanSection({
       <div className="plan-section-actions">
         <button type="button" className="plan-preview-btn" disabled={!hasPreview} onClick={onOpenPreview}>
           <Globe size={14} />
-          {hasPreview ? "Open draft preview" : "Preparing draft…"}
+          {hasPreview ? "Open preview" : "Preview coming up…"}
         </button>
-        <span className="plan-section-hint">Builder is customizing — preview opens when Built</span>
+        <span className="plan-section-hint">
+          {hasPreview
+            ? "Live preview is ready in the side panel"
+            : "Hang tight — preview appears here when this step finishes"}
+        </span>
       </div>
     </div>
   );
@@ -208,6 +288,8 @@ function MessageTurn({
           <MarkdownBody text={message.content} />
           <PlanSection snapshot={snapshot} onOpenPreview={onOpenPreview} compact />
         </Fragment>
+      ) : isShipMessage(message) ? (
+        <ShipReceipt text={message.content} onOpenPreview={onOpenPreview} />
       ) : (
         <MarkdownBody text={message.content} />
       )}
@@ -261,9 +343,9 @@ export function AgentShell({
   const showStandalonePlan =
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
   const loopHint = isPlan
-    ? `Still building — hang tight. Then chat drives the builder.`
+    ? "Building in progress — chat unlocks when this finishes."
     : project.deployed
-      ? "Shipped — keep chatting to iterate; Preview has the share link."
+      ? "Shipped — keep chatting to iterate on the same preview link."
       : "Agent mode — each change request drives the builder. Questions ending in ? are Q&A only.";
 
   useEffect(() => {
@@ -340,19 +422,21 @@ export function AgentShell({
           )}
 
           {busy ? (
-            <WaitStage
-              variant="thread"
-              title={thinkingLabel.replace(/…$/, "")}
-              subtitle={
-                jobKind === "iterate_run"
-                  ? "Applying your change to the live preview"
-                  : `Scaffold stays behind the scenes — ${noun} lands Built`
-              }
-              jobKind={jobKind}
-              traces={traces}
-              startedAt={waitStartedAt}
-              onStop={onCancel}
-            />
+            <div className="cursor-turn cursor-turn-wait">
+              <WaitStage
+                variant="thread"
+                title={thinkingLabel.replace(/…$/, "")}
+                subtitle={
+                  jobKind === "iterate_run"
+                    ? "Applying your change — preview refreshes when done"
+                    : `Building your ${noun} — preview opens when this finishes`
+                }
+                jobKind={jobKind}
+                traces={traces}
+                startedAt={waitStartedAt}
+                onStop={onCancel}
+              />
+            </div>
           ) : null}
 
           <div ref={endRef} />
