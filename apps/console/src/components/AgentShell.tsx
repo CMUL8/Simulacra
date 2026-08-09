@@ -496,7 +496,7 @@ export function AgentShell({
                 title={thinkingLabel.replace(/…$/, "")}
                 subtitle={
                   jobKind === "agent_chat" || jobKind === "plan_ask" || (isPlan && waitingForOpen)
-                    ? "Prime is in chat — Simulacra will act when you or the agent need infra"
+                    ? "Working on your message"
                     : jobKind === "iterate_run"
                       ? "Applying your change — preview refreshes when done"
                       : `Building your ${noun} — preview opens when this finishes`

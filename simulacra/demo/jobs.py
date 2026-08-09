@@ -1,8 +1,9 @@
-"""Bounded, cancellable Prime jobs — one builder per project."""
+"""Bounded, cancellable jobs — one builder per project; admission for multi-tenant scale."""
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -15,6 +16,9 @@ from .events import emit_event
 from .runs import load_state, save_state
 
 log = logging.getLogger("simulacra.jobs")
+
+# Host-wide cap (one Railway/uvicorn process). Override with SIMULACRA_MAX_RUNNING_JOBS.
+MAX_RUNNING_JOBS = int(os.environ.get("SIMULACRA_MAX_RUNNING_JOBS", "48"))
 
 # APP_MAKER_CONTRACT + PRODUCT_SPEC §3A.6 defaults
 BOUNDS: dict[str, dict[str, float | int]] = {
@@ -52,6 +56,7 @@ class JobRecord:
 	cancel_requested: bool = False
 	error: str | None = None
 	label: str = ""
+	tenant_id: str = ""
 	tool_signatures: dict[str, int] = field(default_factory=dict)
 	result: Any = None
 	thread: threading.Thread | None = None
@@ -59,6 +64,32 @@ class JobRecord:
 
 _lock = threading.Lock()
 _jobs: dict[str, JobRecord] = {}  # project_id -> active job
+
+
+def _running_jobs() -> list[JobRecord]:
+	return [j for j in _jobs.values() if j.status == "running"]
+
+
+def _admit(project_id: str, *, tenant_id: str) -> None:
+	"""Raise JobConflictError if host or tenant is at capacity. Call under _lock."""
+	running = _running_jobs()
+	if len(running) >= MAX_RUNNING_JOBS:
+		raise JobConflictError(
+			f"Host busy ({len(running)}/{MAX_RUNNING_JOBS} jobs) — try again in a moment"
+		)
+	if tenant_id:
+		try:
+			from .tenants import get_tenant
+
+			cap = int(get_tenant(tenant_id).policy.max_concurrent_jobs or 2)
+		except Exception:  # noqa: BLE001
+			cap = 2
+		tenant_n = sum(1 for j in running if j.tenant_id == tenant_id)
+		if tenant_n >= cap:
+			raise JobConflictError(
+				f"Workspace limit reached ({tenant_n}/{cap} concurrent jobs). "
+				"Wait for one to finish, or stop a running job."
+			)
 
 
 def get_job(project_id: str) -> JobRecord | None:
@@ -196,15 +227,22 @@ def start_job(
 	target: Callable[[JobRecord], Any],
 ) -> JobRecord:
 	bounds = BOUNDS.get(kind, BOUNDS["build_run"])
+	try:
+		tenant_id = str(load_state(project_id).tenant_id or "")
+	except FileNotFoundError:
+		tenant_id = ""
+
 	with _lock:
 		existing = _jobs.get(project_id)
 		if existing and existing.status == "running":
 			raise JobConflictError(f"Project already has running job {existing.id} ({existing.kind})")
+		_admit(project_id, tenant_id=tenant_id)
 		job = JobRecord(
 			id=f"job_{uuid.uuid4().hex[:10]}",
 			project_id=project_id,
 			kind=kind,
 			label=label,
+			tenant_id=tenant_id,
 			deadline=time.monotonic() + float(bounds["timeout"]),
 			max_steps=int(bounds["max_steps"]),
 			stall_secs=float(bounds["stall"]),

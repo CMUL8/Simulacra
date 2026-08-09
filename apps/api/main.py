@@ -67,6 +67,18 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("simulacra.api")
 
+
+def _job_conflict_http(exc: Exception) -> HTTPException:
+	"""Map job admission / in-progress conflicts to 409."""
+	msg = str(exc)
+	low = msg.lower()
+	conflict = any(
+		k in low
+		for k in ("already", "busy", "limit reached", "concurrent", "workspace limit", "host busy")
+	)
+	return HTTPException(409 if conflict else 400, msg)
+
+
 app = FastAPI(title="Simulacra API", version="0.8.0")
 app.add_middleware(
 	CORSMiddleware,
@@ -701,7 +713,7 @@ def post_plan(
 	try:
 		return start_follow_up(project_id, body.message)
 	except ValueError as exc:
-		raise HTTPException(409 if "already" in str(exc).lower() else 400, str(exc)) from exc
+		raise _job_conflict_http(exc) from exc
 	except Exception as exc:
 		raise HTTPException(500, f"Chat failed: {exc}") from exc
 
@@ -762,7 +774,7 @@ def post_approve(
 		audit_request(request, ctx, "project.approve", project_id=project_id, job_id=result.get("job_id"))
 		return result
 	except ValueError as exc:
-		raise HTTPException(409 if "already" in str(exc).lower() else 400, str(exc)) from exc
+		raise _job_conflict_http(exc) from exc
 	except Exception as exc:
 		raise HTTPException(500, f"Build failed: {exc}") from exc
 
@@ -786,7 +798,7 @@ def post_chat(
 	try:
 		return start_follow_up(project_id, body.message)
 	except ValueError as exc:
-		raise HTTPException(409 if "already" in str(exc).lower() else 400, str(exc)) from exc
+		raise _job_conflict_http(exc) from exc
 
 
 @app.post("/projects/{project_id}/rollback")

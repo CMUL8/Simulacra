@@ -93,6 +93,20 @@ Every Prime chat turn returns JSON (Simulacra observes; does not invent replies)
 | `iterate_run` | Prime requested iterate — edit artifact (preserve prior work) |
 | `bootstrap` | Legacy create scaffold (tests); not live create |
 
+## Concurrency (multi-user)
+
+Isolation is **per project**, not a global chat name:
+
+| Layer | Rule |
+|-------|------|
+| **Session** | Prime session dir = `runs/{project_id}/work/prime-session/`; stable name `chat-{project_id}` for RLM resume within that project only |
+| **Jobs** | At most **one running job per project**. Parallel users = parallel projects |
+| **Tenant cap** | `tenant.policy.max_concurrent_jobs` (default **2**) — extra starts get conflict |
+| **Host cap** | `SIMULACRA_MAX_RUNNING_JOBS` (default **48**) across the process |
+| **Events** | SSE subscribers are keyed by `project_id`; faint progress lines are project-scoped |
+
+**Scale reality (≈1000 users × long chats):** many idle users are cheap (no job). Concurrent **active turns** are bounded by host + tenant caps; excess get a clear “busy / workspace limit” error rather than silently sharing sessions. True 1k simultaneous LLM turns needs horizontal workers + shared job queue — not this single-process in-memory map.
+
 ## Edge cases
 
 | Case | Behavior |

@@ -2474,6 +2474,61 @@ a.md-link:hover {
   box-shadow: 0 0 0 3px rgba(126, 182, 255, 0.18);
   animation: wait-pulse 1.4s ease-in-out infinite;
 }
+
+/* Cursor-style faint activity trail (tools / thinking) */
+.wait-stage-chat .wait-stage-card {
+  border: none;
+  background: transparent;
+  padding: 4px 0 8px;
+  box-shadow: none;
+}
+.wait-stage-chat .wait-stage-copy h3 {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.activity-feed {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 148px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 100%);
+}
+.wait-stage-chat .activity-feed {
+  margin-top: 6px;
+  max-height: 168px;
+}
+.activity-line {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  opacity: 0.42;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.01em;
+  transition: opacity 0.25s ease;
+}
+.activity-line.latest {
+  opacity: 0.72;
+}
+.activity-line.running {
+  opacity: 0.88;
+  color: var(--text);
+}
+.activity-line.running::after {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin-left: 6px;
+  margin-bottom: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: wait-orbit 1.2s ease-in-out infinite;
+}
 @keyframes wait-pulse {
   0%, 100% { box-shadow: 0 0 0 2px rgba(126, 182, 255, 0.1); }
   50% { box-shadow: 0 0 0 4px rgba(126, 182, 255, 0.22); }

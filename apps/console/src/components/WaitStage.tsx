@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgentEvent } from "../api";
+import { ActivityFeed } from "./ActivityFeed";
 
 type Props = {
   title: string;
@@ -19,6 +20,10 @@ const TIPS = [
   "Stop anytime; the last good preview stays.",
   "After this, chat drives every change.",
 ];
+
+function isChatJob(jobKind?: string | null): boolean {
+  return !jobKind || jobKind === "agent_chat" || jobKind === "plan_ask";
+}
 
 function stagesFor(jobKind?: string | null): string[] {
   if (jobKind === "iterate_run") return ITERATE_STAGES;
@@ -49,6 +54,14 @@ function formatElapsed(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** Events since wait started (or last ~40 if no clock). */
+function tracesForWait(traces: AgentEvent[], startedAt?: number | null): AgentEvent[] {
+  if (!startedAt) return traces.slice(-40);
+  const since = new Date(startedAt - 1500).toISOString();
+  const filtered = traces.filter((e) => !e.ts || e.ts >= since);
+  return filtered.length ? filtered : traces.slice(-40);
+}
+
 export function WaitStage({
   title,
   subtitle,
@@ -64,15 +77,17 @@ export function WaitStage({
     return () => window.clearInterval(id);
   }, []);
 
+  const chatMode = isChatJob(jobKind);
   const stages = useMemo(() => stagesFor(jobKind), [jobKind]);
   const active = inferStageIndex(stages, traces);
   const elapsed = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
   const tip = TIPS[Math.floor(elapsed / 18) % TIPS.length]!;
   const progress = ((active + 0.55) / stages.length) * 100;
+  const feedEvents = useMemo(() => tracesForWait(traces, startedAt), [traces, startedAt]);
 
   return (
     <div
-      className={`wait-stage wait-stage-${variant}`}
+      className={`wait-stage wait-stage-${variant}${chatMode ? " wait-stage-chat" : ""}`}
       role="status"
       aria-live="polite"
       aria-busy="true"
@@ -100,23 +115,27 @@ export function WaitStage({
           </div>
         </div>
 
-        <div className="wait-bar" aria-hidden>
-          <i style={{ width: `${Math.min(96, progress)}%` }} />
-        </div>
+        {!chatMode && (
+          <>
+            <div className="wait-bar" aria-hidden>
+              <i style={{ width: `${Math.min(96, progress)}%` }} />
+            </div>
+            <ol className="wait-stages">
+              {stages.map((label, i) => {
+                const state = i < active ? "done" : i === active ? "active" : "todo";
+                return (
+                  <li key={label} className={`wait-step ${state}`}>
+                    <span className="wait-dot" aria-hidden />
+                    <span>{label}</span>
+                  </li>
+                );
+              })}
+            </ol>
+            <p className="wait-tip">{tip}</p>
+          </>
+        )}
 
-        <ol className="wait-stages">
-          {stages.map((label, i) => {
-            const state = i < active ? "done" : i === active ? "active" : "todo";
-            return (
-              <li key={label} className={`wait-step ${state}`}>
-                <span className="wait-dot" aria-hidden />
-                <span>{label}</span>
-              </li>
-            );
-          })}
-        </ol>
-
-        <p className="wait-tip">{tip}</p>
+        <ActivityFeed events={feedEvents} live limit={chatMode ? 10 : 6} />
       </div>
     </div>
   );

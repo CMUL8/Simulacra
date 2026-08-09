@@ -215,8 +215,9 @@ def prime_chat_turn(
 		)
 	)
 
-	# One stable session name for the project lifetime — enables RLM resume.
-	session_name = "simulacra-chat"
+	# One stable session name per project — RLM resume within the project,
+	# never shared across users (session_dir is already per-project).
+	session_name = f"chat-{pid}"
 
 	if open_turn:
 		design = brief_to_prime_block(state.design_brief or {})

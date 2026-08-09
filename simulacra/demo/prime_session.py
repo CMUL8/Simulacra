@@ -141,7 +141,7 @@ async def _ask_async(
 		while not stop_hb.wait(20.0):
 			try:
 				note_event(project_id)
-				emit_event(project_id, "think", label="Agent thinking", status="running")
+				emit_event(project_id, "think", label="Thinking", status="running")
 			except Exception:  # noqa: BLE001
 				pass
 
