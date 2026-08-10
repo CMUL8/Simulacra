@@ -8,17 +8,37 @@ from .runs import AppConfig, ChatMessage, ProjectState
 def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfig:
 	cfg = existing or AppConfig()
 	lower = prompt.lower()
-	placeholder = existing is None or existing.title in ("", "Data Explorer", "Data App")
+	stock_titles = {
+		"",
+		"Data Explorer",
+		"Data App",
+		"Custom App",
+		"Vendor Risk Command Center",
+		"Vendor Risk Dashboard",
+	}
+	placeholder = existing is None or (existing.title or "").strip() in stock_titles
+
+	# "replace vendor sample with BJP" is NOT a vendor-risk product — don't rename to VRCC
+	vendor_topic = (
+		("vendor" in lower or "diligence" in lower)
+		and "bjp" not in lower
+		and "bharatiya" not in lower
+		and "bhartiya" not in lower
+		and not re.search(r"\breplace\b.*\bvendor\b", lower)
+		and not re.search(r"\bignore\b.*\b(vendor|sample|data)\b", lower)
+	)
 
 	if any(w in lower for w in ("game", "quiz", "flashcard", "learn", "learning", "training", "tutorial")):
 		if placeholder:
 			cfg.title = "Learning Game"
 		cfg.subtitle = "Practice with your source material"
-	elif "vendor" in lower or "risk" in lower or "diligence" in lower:
-		cfg.title = "Vendor Risk Command Center"
-		cfg.subtitle = "Third-party diligence · live risk posture"
+	elif vendor_topic and ("risk" in lower or "vendor" in lower or "diligence" in lower):
+		if placeholder:
+			cfg.title = "Vendor Risk Command Center"
+			cfg.subtitle = "Third-party diligence · live risk posture"
 	elif "sales" in lower or "revenue" in lower:
-		cfg.title = "Sales Analytics"
+		if placeholder:
+			cfg.title = "Sales Analytics"
 		cfg.subtitle = "Internal revenue view"
 	elif "analytics" in lower or "dashboard" in lower or "explore" in lower:
 		if placeholder:

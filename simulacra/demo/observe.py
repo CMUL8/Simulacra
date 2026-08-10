@@ -510,6 +510,43 @@ def duplicate_project_warnings(
 	return out
 
 
+def heal_display_title(state: ProjectState) -> ProjectState:
+	"""Unstick 'Vendor Risk Command Center' when the prompt is about something else.
+
+	Landing cards only show app_config.title — old keyword heuristics renamed
+	BJP/report projects to Vendor Risk whenever a brief mentioned 'vendor'.
+	"""
+	from .chat import infer_app_config
+
+	title = (state.app_config.title or "").strip()
+	stock = {"Vendor Risk Command Center", "Vendor Risk Dashboard"}
+	if title not in stock:
+		return state
+	prompt = (state.prompt or "").strip()
+	product = str((state.design_brief or {}).get("product_name") or "").strip()
+	lower = f"{prompt} {product}".lower()
+	# Real vendor projects keep the title
+	if ("vendor" in lower or "diligence" in lower) and not any(
+		x in lower for x in ("bjp", "bharatiya", "bhartiya", "replace vendor", "ignore")
+	):
+		return state
+	# Prefer design brief / prompt first line
+	if product and product not in stock and len(product) > 3:
+		state.app_config.title = product[:80]
+	else:
+		fixed = infer_app_config(prompt or product or "Report", None)
+		if fixed.title and fixed.title not in stock:
+			state.app_config.title = fixed.title[:80]
+		elif prompt:
+			clause = prompt.split("\n")[0].strip()[:60]
+			if clause:
+				state.app_config.title = clause[:1].upper() + clause[1:]
+	if state.design_brief is not None:
+		state.design_brief["product_name"] = state.app_config.title
+	save_state(state)
+	return load_state(state.id)
+
+
 def heal_broken_preview(state: ProjectState) -> ProjectState:
 	"""Clear orphan deploy_url; heal stuck building_* when no live job."""
 	from .jobs import get_job

@@ -708,6 +708,16 @@ body {
   color: #141414;
   min-height: 2.56em;
 }
+.landing-project-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #6a6a6a;
+}
 .landing-project-foot {
   display: flex;
   align-items: center;

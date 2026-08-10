@@ -232,12 +232,18 @@ def create_project(
 
 def list_projects(*, tenant_id: str | None = None) -> list[ProjectState]:
 	ensure_runs_dir()
+	from .observe import heal_display_title
+
 	out: list[ProjectState] = []
 	for path in sorted(RUNS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
 		if path.is_dir() and (path / "state.json").exists():
 			state = load_state(path.name)
 			if tenant_id and state.tenant_id != tenant_id:
 				continue
+			try:
+				state = heal_display_title(state)
+			except Exception:  # noqa: BLE001
+				pass
 			out.append(state)
 	return out
 

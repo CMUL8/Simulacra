@@ -932,10 +932,11 @@ def approve_deploy(project_id: str, *, public_base: str | None = None) -> Projec
 def project_snapshot(project_id: str) -> dict:
 	from .deploy import preview_path
 	from .jobs import get_job
-	from .observe import heal_broken_preview, preview_is_stale
+	from .observe import heal_broken_preview, heal_display_title, preview_is_stale
 
 	state = load_state(project_id)
 	state = heal_broken_preview(state)
+	state = heal_display_title(state)
 	# Heal ghost "running" after process restart (in-memory job gone)
 	live = get_job(project_id)
 	job = dict(state.job or {})

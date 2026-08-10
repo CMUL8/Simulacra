@@ -84,6 +84,42 @@ function kindKey(p: Project): string {
   return FORMAT_OPTIONS.some((f) => f.kind === k) ? k : "data_app";
 }
 
+const STOCK_TITLES = new Set([
+  "Vendor Risk Command Center",
+  "Vendor Risk Dashboard",
+  "Data Explorer",
+  "Data App",
+]);
+
+function projectCardTitle(p: Project): string {
+  const title = (p.app_config?.title || "").trim();
+  const prompt = (p.prompt || "").trim();
+  const product = (p.design_brief?.product_name || "").trim();
+  if (title && !STOCK_TITLES.has(title)) return title;
+  if (product && !STOCK_TITLES.has(product) && product.length > 3) return product;
+  if (prompt) {
+    const line = prompt.split("\n")[0]!.trim().slice(0, 72);
+    if (line) return line;
+  }
+  return title || p.goal || "Untitled";
+}
+
+function projectCardSummary(p: Project): string {
+  const sub = (p.app_config?.subtitle || "").trim();
+  if (sub && !["Built from your sources", "Data Explorer", "Chat with the agent — Build when ready"].includes(sub)) {
+    return sub.slice(0, 96);
+  }
+  const one = (p.design_brief?.one_liner || "").trim();
+  if (one && one !== sub) return one.slice(0, 96);
+  const prompt = (p.prompt || "").trim();
+  const title = projectCardTitle(p);
+  if (prompt && prompt !== title) {
+    const rest = prompt.length > title.length && prompt.startsWith(title) ? prompt.slice(title.length).trim() : prompt;
+    if (rest && rest !== title) return rest.slice(0, 96);
+  }
+  return "";
+}
+
 function relativeWhen(iso?: string): string {
   if (!iso) return "";
   const t = Date.parse(iso);
@@ -323,7 +359,8 @@ export function Landing({
             <ul className="landing-project-grid">
               {recent.map((p) => {
                 const kind = kindKey(p);
-                const title = p.app_config?.title || p.goal || "Untitled";
+                const title = projectCardTitle(p);
+                const summary = projectCardSummary(p);
                 const when = relativeWhen(p.created_at);
                 return (
                   <li key={p.id}>
@@ -340,6 +377,7 @@ export function Landing({
                         </span>
                       </span>
                       <span className="landing-project-title">{title}</span>
+                      {summary ? <span className="landing-project-summary">{summary}</span> : null}
                       <span className="landing-project-foot">
                         {p.row_count ? <span>{p.row_count.toLocaleString()} rows</span> : <span>No rows yet</span>}
                         {when ? <span>{when}</span> : null}
