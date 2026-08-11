@@ -193,6 +193,15 @@ export default function App({
     };
   }, []);
 
+  // Deep-link password reset: /#reset=spr_…
+  useEffect(() => {
+    const hash = window.location.hash || "";
+    if (!/(?:^|#|&)reset=/.test(hash)) return;
+    setAuthMode("login");
+    setProfileTab("auth");
+    setProfileOpen(true);
+  }, []);
+
   const refreshProjects = useCallback(async () => {
     try {
       setProjects(await listProjects());

@@ -21,6 +21,7 @@ USERS_PATH = DATA_DIR / "users.json"
 KEYS_PATH = DATA_DIR / "api_keys.json"
 SESSIONS_PATH = DATA_DIR / "sessions.json"
 MEMBERSHIPS_PATH = DATA_DIR / "memberships.json"
+RESET_TOKENS_PATH = DATA_DIR / "password_reset_tokens.json"
 
 Role = Literal["owner", "admin", "member", "viewer"]
 ROLE_RANK = {"viewer": 1, "member": 2, "admin": 3, "owner": 4}
@@ -575,6 +576,155 @@ def login_user(email: str, password: str) -> tuple[User, str]:
 	if user.status != "active":
 		raise PermissionError("User suspended")
 	return user, create_session(user.id)
+
+
+def update_password(user_id: str, new_password: str) -> User:
+	"""Set a new password hash for an existing user."""
+	if len(new_password) < 8:
+		raise ValueError("Password must be at least 8 characters")
+	user = get_user(user_id)
+	if user is None:
+		raise KeyError(f"Unknown user {user_id}")
+	hashed = _hash_password(new_password)
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_update_user_password
+
+		pg_update_user_password(user_id, hashed)
+	else:
+		store = _users()
+		for raw in store.get("users", []):
+			if raw["id"] == user_id:
+				raw["password_hash"] = hashed
+				break
+		_save(USERS_PATH, store)
+	user.password_hash = hashed
+	return user
+
+
+def _revoke_sessions(user_id: str) -> None:
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_delete_sessions_for_user
+
+		pg_delete_sessions_for_user(user_id)
+		return
+	store = _sessions()
+	store["sessions"] = [s for s in store.get("sessions", []) if s.get("user_id") != user_id]
+	_save(SESSIONS_PATH, store)
+
+
+def _reset_store() -> dict[str, Any]:
+	return _load(RESET_TOKENS_PATH, {"tokens": []})
+
+
+def public_app_origin() -> str:
+	explicit = (os.environ.get("SIMULACRA_PUBLIC_URL") or "").strip().rstrip("/")
+	if explicit:
+		return explicit
+	domain = (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip().rstrip("/")
+	if domain:
+		if domain.startswith("http://") or domain.startswith("https://"):
+			return domain
+		return f"https://{domain}"
+	return ""
+
+
+def create_password_reset(user_id: str, *, ttl_minutes: int = 60) -> str:
+	"""Issue a single-use password reset token (plaintext returned once)."""
+	user = get_user(user_id)
+	if user is None:
+		raise KeyError(f"Unknown user {user_id}")
+	if user.status != "active":
+		raise PermissionError("User suspended")
+	token = f"spr_{secrets.token_urlsafe(32)}"
+	exp = _now() + timedelta(minutes=ttl_minutes)
+	row = {
+		"token_hash": _hash_token(token),
+		"user_id": user_id,
+		"expires_at": exp.isoformat(),
+		"used_at": None,
+		"created_at": _now().isoformat(),
+	}
+	from .db import using_postgres
+
+	if using_postgres():
+		from .pg_store import pg_insert_reset_token
+
+		pg_insert_reset_token(row)
+		return token
+	store = _reset_store()
+	# Drop expired / used
+	fresh = []
+	for t in store.get("tokens", []):
+		if t.get("used_at"):
+			continue
+		if datetime.fromisoformat(t["expires_at"]) <= _now():
+			continue
+		fresh.append(t)
+	fresh.append(row)
+	store["tokens"] = fresh
+	_save(RESET_TOKENS_PATH, store)
+	return token
+
+
+def request_password_reset(email: str) -> dict[str, Any]:
+	"""Start reset for an email. Always ok=True; include reset_url when account exists.
+
+	No email sender yet — the console shows the one-time link inline.
+	"""
+	out: dict[str, Any] = {"ok": True, "expires_in_minutes": 60}
+	user = get_user_by_email(email)
+	if user is None or user.status != "active":
+		return out
+	token = create_password_reset(user.id, ttl_minutes=60)
+	origin = public_app_origin()
+	out["token"] = token
+	out["reset_url"] = f"{origin}/#reset={token}" if origin else f"#reset={token}"
+	return out
+
+
+def reset_password_with_token(token: str, new_password: str) -> User:
+	"""Consume a reset token and set a new password. Invalidates other sessions."""
+	token = (token or "").strip()
+	if not token.startswith("spr_"):
+		raise PermissionError("Invalid or expired reset link")
+	if len(new_password) < 8:
+		raise ValueError("Password must be at least 8 characters")
+	th = _hash_token(token)
+	from .db import using_postgres
+
+	row: dict[str, Any] | None = None
+	if using_postgres():
+		from .pg_store import pg_find_reset_token, pg_mark_reset_used
+
+		row = pg_find_reset_token(th)
+		if not row or row.get("used_at"):
+			raise PermissionError("Invalid or expired reset link")
+		if datetime.fromisoformat(row["expires_at"]) <= _now():
+			raise PermissionError("Invalid or expired reset link")
+		user = update_password(row["user_id"], new_password)
+		pg_mark_reset_used(th)
+		_revoke_sessions(user.id)
+		return user
+
+	store = _reset_store()
+	for t in store.get("tokens", []):
+		if not hmac.compare_digest(t.get("token_hash", ""), th):
+			continue
+		row = t
+		break
+	if not row or row.get("used_at"):
+		raise PermissionError("Invalid or expired reset link")
+	if datetime.fromisoformat(row["expires_at"]) <= _now():
+		raise PermissionError("Invalid or expired reset link")
+	user = update_password(row["user_id"], new_password)
+	row["used_at"] = _now().isoformat()
+	_save(RESET_TOKENS_PATH, store)
+	_revoke_sessions(user.id)
+	return user
 
 
 def user_tenants(user: User) -> list[dict[str, Any]]:

@@ -4128,6 +4128,19 @@ a.md-link:hover {
   color: var(--text-dim);
   line-height: 1.4;
 }
+.login-reset-link {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  word-break: break-all;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.login-reset-link a {
+  color: var(--text-bright);
+}
 .admin-page {
   min-height: 100vh;
   padding: 24px 28px 48px;

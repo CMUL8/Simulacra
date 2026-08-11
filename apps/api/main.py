@@ -33,6 +33,8 @@ from simulacra.demo.identity import (
 	login_user,
 	register_user,
 	remove_membership,
+	request_password_reset,
+	reset_password_with_token,
 	revoke_api_key,
 	user_tenants,
 )
@@ -146,6 +148,15 @@ class LoginBody(BaseModel):
 	password: str
 
 
+class ForgotPasswordBody(BaseModel):
+	email: str = Field(min_length=3)
+
+
+class ResetPasswordBody(BaseModel):
+	token: str = Field(min_length=8)
+	password: str = Field(min_length=8)
+
+
 class InviteBody(BaseModel):
 	email: str
 	role: str = "member"
@@ -248,6 +259,25 @@ def auth_login(body: LoginBody) -> dict:
 		"tenants": tenants,
 		"tenant_id": tenants[0]["id"] if tenants else default_tenant_id(),
 	}
+
+
+@app.post("/auth/forgot-password")
+def auth_forgot_password(body: ForgotPasswordBody) -> dict:
+	"""Start a password reset. Returns a one-time link while email delivery is unset."""
+	return request_password_reset(body.email.strip())
+
+
+@app.post("/auth/reset-password")
+def auth_reset_password(body: ResetPasswordBody) -> dict:
+	try:
+		user = reset_password_with_token(body.token.strip(), body.password)
+	except PermissionError as exc:
+		raise HTTPException(400, str(exc)) from exc
+	except ValueError as exc:
+		raise HTTPException(400, str(exc)) from exc
+	except KeyError as exc:
+		raise HTTPException(404, str(exc)) from exc
+	return {"ok": True, "email": user.email}
 
 
 @app.get("/auth/me")

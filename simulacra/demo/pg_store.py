@@ -143,6 +143,14 @@ def pg_insert_user(data: dict[str, Any]) -> None:
 		)
 
 
+def pg_update_user_password(user_id: str, password_hash: str) -> None:
+	with connection() as conn:
+		conn.execute(
+			"UPDATE users SET password_hash = %s WHERE id = %s",
+			(password_hash, user_id),
+		)
+
+
 # ── Memberships ──────────────────────────────────────────────────────
 
 
@@ -224,6 +232,54 @@ def pg_find_session(token_hash: str) -> dict[str, Any] | None:
 		"expires_at": _iso(r["expires_at"]),
 		"created_at": _iso(r["created_at"]),
 	}
+
+
+def pg_delete_sessions_for_user(user_id: str) -> None:
+	with connection() as conn:
+		conn.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
+
+
+def pg_insert_reset_token(data: dict[str, Any]) -> None:
+	with connection() as conn:
+		conn.execute(
+			"""
+			INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, used_at, created_at)
+			VALUES (%(token_hash)s, %(user_id)s, %(expires_at)s, %(used_at)s, %(created_at)s)
+			""",
+			{
+				"token_hash": data["token_hash"],
+				"user_id": data["user_id"],
+				"expires_at": data["expires_at"],
+				"used_at": data.get("used_at"),
+				"created_at": data.get("created_at") or datetime.now(UTC).isoformat(),
+			},
+		)
+		conn.execute("DELETE FROM password_reset_tokens WHERE expires_at < NOW() AND used_at IS NOT NULL")
+
+
+def pg_find_reset_token(token_hash: str) -> dict[str, Any] | None:
+	with connection() as conn:
+		r = conn.execute(
+			"SELECT * FROM password_reset_tokens WHERE token_hash = %s",
+			(token_hash,),
+		).fetchone()
+	if not r:
+		return None
+	return {
+		"token_hash": r["token_hash"],
+		"user_id": r["user_id"],
+		"expires_at": _iso(r["expires_at"]),
+		"used_at": _iso(r["used_at"]) if r.get("used_at") else None,
+		"created_at": _iso(r["created_at"]),
+	}
+
+
+def pg_mark_reset_used(token_hash: str) -> None:
+	with connection() as conn:
+		conn.execute(
+			"UPDATE password_reset_tokens SET used_at = %s WHERE token_hash = %s",
+			(datetime.now(UTC).isoformat(), token_hash),
+		)
 
 
 # ── API keys ─────────────────────────────────────────────────────────

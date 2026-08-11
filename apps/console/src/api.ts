@@ -311,6 +311,22 @@ export async function register(
   return data;
 }
 
+export async function forgotPassword(
+  email: string,
+): Promise<{ ok: boolean; reset_url?: string; token?: string; expires_in_minutes?: number }> {
+  return json("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword(token: string, password: string): Promise<{ ok: boolean; email: string }> {
+  return json("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+}
+
 export async function fetchMe(): Promise<{
   user: AuthUser;
   tenant_id: string;

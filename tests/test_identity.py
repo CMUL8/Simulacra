@@ -32,6 +32,7 @@ def _isolated_data(tmp_path, monkeypatch):
 	monkeypatch.setattr(identity, "KEYS_PATH", data / "api_keys.json")
 	monkeypatch.setattr(identity, "SESSIONS_PATH", data / "sessions.json")
 	monkeypatch.setattr(identity, "MEMBERSHIPS_PATH", data / "memberships.json")
+	monkeypatch.setattr(identity, "RESET_TOKENS_PATH", data / "password_reset_tokens.json")
 	monkeypatch.setattr(tenants_mod, "TENANTS_PATH", tenants / "tenants.json")
 	monkeypatch.setattr(paths, "RUNS_DIR", runs)
 	monkeypatch.setattr(audit, "AUDIT_DIR", data / "audit")
@@ -71,6 +72,34 @@ def test_stale_default_tenant_header_recovers():
 	assert ctx.tenant_id != "default"
 	ctx_none = resolve_auth(f"Bearer {token}", tenant_header=None)
 	assert ctx_none.tenant_id == ctx.tenant_id
+
+
+def test_password_reset_flow():
+	from simulacra.demo.identity import (
+		ensure_bootstrap,
+		login_user,
+		register_user,
+		request_password_reset,
+		reset_password_with_token,
+	)
+
+	ensure_bootstrap()
+	register_user("cara@acme.com", "oldpassword1", name="Cara", tenant_name="CaraCo")
+	req = request_password_reset("cara@acme.com")
+	assert req["ok"] is True
+	assert req.get("token", "").startswith("spr_")
+	reset_password_with_token(req["token"], "newpassword9")
+	user, _ = login_user("cara@acme.com", "newpassword9")
+	assert user.email == "cara@acme.com"
+	# reused token fails
+	import pytest
+
+	with pytest.raises(PermissionError):
+		reset_password_with_token(req["token"], "anotherpass1")
+	# unknown email still ok (no leak)
+	quiet = request_password_reset("nobody@missing.test")
+	assert quiet["ok"] is True
+	assert "token" not in quiet
 
 
 def test_rbac_viewer_cannot_write():
