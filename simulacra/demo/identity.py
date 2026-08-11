@@ -426,20 +426,22 @@ def resolve_auth(
 	token = authorization.split(" ", 1)[1].strip()
 	# Clerk session JWTs (when CMUL8 Clerk is configured)
 	if not token.startswith("sst_") and not token.startswith("ska_"):
-		from .clerk_auth import clerk_enabled, ensure_clerk_user, resolve_tenant_id, verify_clerk_jwt
+		from .clerk_auth import clerk_enabled, ensure_clerk_user, verify_clerk_jwt
 
 		if clerk_enabled():
 			claims = verify_clerk_jwt(token)
 			user, tid_from_org = ensure_clerk_user(claims)
-			tid = (tenant_header or "").strip() or tid_from_org
-			if tid == "*":
-				if not user.is_platform_admin:
-					raise PermissionError("Platform admin required for cross-tenant access")
-				return AuthContext(user=user, tenant_id="*", role="owner", auth_via="clerk")
-			assert_tenant_active(tid)
-			membership = get_membership(tid, user.id)
-			role: Role = "owner" if user.is_platform_admin else (membership.role if membership else "member")
-			return AuthContext(user=user, tenant_id=tid, role=role, auth_via="clerk")
+			header = (tenant_header or "").strip()
+			# Prefer org mapping when client still has stale "default"
+			chosen = header
+			if not chosen or (chosen == default_tenant_id() and not get_membership(chosen, user.id)):
+				chosen = tid_from_org or header
+			return _auth_context_for_user(
+				user,
+				tenant_header=chosen or "",
+				auth_via="clerk",
+				allow_stale_header=True,
+			)
 
 	found = _user_from_token(token)
 	if not found:
@@ -448,26 +450,52 @@ def resolve_auth(
 	if user.status != "active":
 		raise PermissionError("User suspended")
 
-	tid = (tenant_header or "").strip() or default_tenant_id()
+	return _auth_context_for_user(
+		user,
+		tenant_header=(tenant_header or "").strip(),
+		auth_via=via,
+		allow_stale_header=True,
+	)
+
+
+def _auth_context_for_user(
+	user: User,
+	*,
+	tenant_header: str,
+	auth_via: str,
+	allow_stale_header: bool = True,
+) -> AuthContext:
+	"""Pick a tenant the user can actually access.
+
+	Stale ``X-Tenant-Id: default`` from the console used to 403 members of other
+	workspaces and clear their session — landing then showed zero project cards.
+	"""
+	tid = (tenant_header or "").strip()
 	if tid == "*":
 		if not user.is_platform_admin:
 			raise PermissionError("Platform admin required for cross-tenant access")
-		return AuthContext(user=user, tenant_id="*", role="owner", auth_via=via)
+		return AuthContext(user=user, tenant_id="*", role="owner", auth_via=auth_via)
 
-	assert_tenant_active(tid)
+	mine = list_memberships(user_id=user.id)
 	if user.is_platform_admin:
-		return AuthContext(user=user, tenant_id=tid, role="owner", auth_via=via)
+		if not tid:
+			tid = default_tenant_id()
+		assert_tenant_active(tid)
+		return AuthContext(user=user, tenant_id=tid, role="owner", auth_via=auth_via)
 
-	membership = get_membership(tid, user.id)
-	if not membership:
-		# fall back to first membership if header missing/default unknown
-		mine = list_memberships(user_id=user.id)
-		if not tenant_header and mine:
-			m0 = mine[0]
-			assert_tenant_active(m0.tenant_id)
-			return AuthContext(user=user, tenant_id=m0.tenant_id, role=m0.role, auth_via=via)
-		raise PermissionError(f"Not a member of tenant {tid}")
-	return AuthContext(user=user, tenant_id=tid, role=membership.role, auth_via=via)
+	if tid:
+		membership = get_membership(tid, user.id)
+		if membership:
+			assert_tenant_active(tid)
+			return AuthContext(user=user, tenant_id=tid, role=membership.role, auth_via=auth_via)
+		if not allow_stale_header or not mine:
+			raise PermissionError(f"Not a member of tenant {tid}")
+
+	if not mine:
+		raise PermissionError("No tenant membership")
+	m0 = mine[0]
+	assert_tenant_active(m0.tenant_id)
+	return AuthContext(user=user, tenant_id=m0.tenant_id, role=m0.role, auth_via=auth_via)
 
 
 def _bootstrap_dev_context(tenant_header: str | None) -> AuthContext:

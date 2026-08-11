@@ -241,11 +241,16 @@ export type AuthSession = {
 };
 
 export function getTenantId(): string {
-  return localStorage.getItem(TENANT_KEY) || "default";
+  // Empty until login/me sets a real workspace — never invent "default".
+  // Sending X-Tenant-Id: default 403s users who only belong to another tenant
+  // and the console clears the session → landing with zero project cards.
+  return localStorage.getItem(TENANT_KEY) || "";
 }
 
 export function setTenantId(id: string) {
-  localStorage.setItem(TENANT_KEY, id);
+  const tid = (id || "").trim();
+  if (!tid) localStorage.removeItem(TENANT_KEY);
+  else localStorage.setItem(TENANT_KEY, tid);
 }
 
 export function getToken(): string | null {
@@ -264,9 +269,10 @@ export function clearAuth() {
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-Tenant-Id": getTenantId(),
     ...((init?.headers as Record<string, string>) || {}),
   };
+  const tid = getTenantId();
+  if (tid) headers["X-Tenant-Id"] = tid;
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API}${path}`, {
@@ -459,7 +465,9 @@ export async function uploadProjectFiles(
   const body = new FormData();
   for (const f of files) body.append("files", f);
   const q = opts?.reingest === false ? "?reingest=false" : "?reingest=true";
-  const headers: Record<string, string> = { "X-Tenant-Id": getTenantId() };
+  const headers: Record<string, string> = {};
+  const tid = getTenantId();
+  if (tid) headers["X-Tenant-Id"] = tid;
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API}/projects/${id}/upload${q}`, {

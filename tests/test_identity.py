@@ -59,6 +59,20 @@ def test_register_creates_tenant():
 	assert token.startswith("sst_")
 
 
+def test_stale_default_tenant_header_recovers():
+	"""Console used to send X-Tenant-Id: default and kick non-default members out."""
+	from simulacra.demo.identity import ensure_bootstrap, register_user, resolve_auth
+
+	ensure_bootstrap()
+	user, token = register_user("bob@acme.com", "password12345", name="Bob", tenant_name="BobCo")
+	# Wrong/stale header must not 403 — recover to Bob's workspace
+	ctx = resolve_auth(f"Bearer {token}", tenant_header="default")
+	assert ctx.user.id == user.id
+	assert ctx.tenant_id != "default"
+	ctx_none = resolve_auth(f"Bearer {token}", tenant_header=None)
+	assert ctx_none.tenant_id == ctx.tenant_id
+
+
 def test_rbac_viewer_cannot_write():
 	from simulacra.demo.identity import (
 		AuthContext,

@@ -27,11 +27,13 @@ type Props = { onBack: () => void; embedded?: boolean };
 async function downloadAudit(format: string) {
   const token = getToken();
   const base = import.meta.env.VITE_API_BASE ?? (import.meta.env.PROD ? "" : "/api");
+  const headers: Record<string, string> = {
+    Authorization: token ? `Bearer ${token}` : "",
+  };
+  const tid = getTenantId();
+  if (tid) headers["X-Tenant-Id"] = tid;
   const res = await fetch(`${base}/admin/audit/export?format=${encodeURIComponent(format)}&limit=1000`, {
-    headers: {
-      Authorization: token ? `Bearer ${token}` : "",
-      "X-Tenant-Id": getTenantId(),
-    },
+    headers,
   });
   if (!res.ok) throw new Error(await res.text());
   const blob = await res.blob();
