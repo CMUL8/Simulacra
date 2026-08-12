@@ -52,6 +52,23 @@ def test_strips_code_filenames_from_change_summary() -> None:
 	out = sanitize_agent_reply(raw)
 	assert "App.tsx" not in out
 	assert "styles.css" not in out
-	assert "Layout & structure" in out
-	assert "Title & framing" in out
-	assert "Visual styling" in out or "Styles" not in out or "(" not in out
+	assert "Title & config" not in out or "Title & framing" in out
+
+
+def test_change_summary_has_no_file_inventory() -> None:
+	from simulacra.demo.pipeline import _change_summary_lines, _honesty_change_note
+
+	lines = _change_summary_lines(
+		"denser layout",
+		["src/App.tsx", "src/styles.css", "public/config.json"],
+		layout=True,
+	)
+	joined = "\n".join(lines)
+	assert "App.tsx" not in joined
+	assert "styles.css" not in joined
+	assert "Layout" not in joined
+	assert "Title" not in joined
+	assert "Request: denser layout" in joined
+	note = _honesty_change_note("x", ["src/App.tsx"], layout=True)
+	assert "What changed" not in note
+	assert "App.tsx" not in note

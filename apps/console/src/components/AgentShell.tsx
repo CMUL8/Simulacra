@@ -60,19 +60,25 @@ function absolutizeUrl(url: string): string {
 }
 
 function scrubCodeFilenames(text: string): string {
-  return text
+  // Drop legacy "What changed" inventories (Title/Layout/Styles/App.tsx bullets)
+  let out = text.replace(
+    /(?:^|\n)\s*\*{0,2}What changed\*{0,2}\s*\n(?:[ \t]*[-*].*\n?)*/gi,
+    "\n",
+  );
+  out = out.replace(
+    /^\s*[-*]\s*(?:Title\s*&\s*(?:config|framing)|Layout\s*(?:\/\s*UI|&\s*structure).*|Styles?(?:\s*\(.*\))?|Visual styling|Content update|Data view|Summary metrics|Research content)\s*$/gim,
+    "",
+  );
+  out = out
     .replace(
       /\s*\((?:`?(?:src\/)?(?:App\.tsx|styles\.css|main\.tsx)`?|`?[\w./-]+\.(?:tsx?|jsx?|css)`?)\)/gi,
       "",
     )
     .replace(/\b(?:src\/)?(?:App\.tsx|styles\.css|main\.tsx)\b/gi, "")
     .replace(/`[^`\n]*\.(?:tsx?|jsx?|css|py)`/gi, "")
-    .replace(/Layout\s*\/\s*UI/gi, "Layout & structure")
-    .replace(/Title\s*&\s*config/gi, "Title & framing")
-    .replace(/^(\s*[-*]\s*)Styles\b.*$/gim, "$1Visual styling")
-    .replace(/^(\s*[-*]\s*)Layout\s*&\s*structure\b.*$/gim, "$1Layout & structure")
-    .replace(/\s*\((?:App|Styles)\)\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ");
+  return out;
 }
 
 function inlineFormat(text: string) {

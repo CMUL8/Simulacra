@@ -65,42 +65,20 @@ def _change_summary_lines(
 	*,
 	layout: bool,
 ) -> list[str]:
-	"""Short bullets for chat — user ask + product surface, never code paths."""
-	lines: list[str] = []
+	"""User-facing note only — never list files, paths, or internal surfaces."""
+	del changed_files, layout  # kept for call-site compatibility
 	note = (request or "").strip().replace("\n", " ")
 	if note:
-		lines.append(f"Request: {note[:160]}{'…' if len(note) > 160 else ''}")
-	labels = {
-		"src/App.tsx": "Layout & structure",
-		"src/styles.css": "Visual styling",
-		"public/config.json": "Title & framing",
-		"public/data.json": "Data view",
-		"public/analytics.json": "Summary metrics",
-		"public/research.json": "Research content",
-	}
-	if changed_files:
-		seen: set[str] = set()
-		for rel in changed_files:
-			label = labels.get(rel)
-			if not label:
-				# Never leak raw paths / filenames into chat
-				lower = rel.lower()
-				if lower.endswith((".tsx", ".ts", ".jsx", ".js", ".css")):
-					label = "Layout & structure" if "style" not in lower else "Visual styling"
-				elif lower.endswith((".json", ".md", ".csv")):
-					label = "Content update"
-				else:
-					continue
-			if label in seen:
-				continue
-			seen.add(label)
-			lines.append(label)
-	elif layout:
-		lines.append("Layout & structure updated")
-	else:
-		lines.append("Preview refreshed")
-	return lines
+		return [f"Request: {note[:160]}{'…' if len(note) > 160 else ''}"]
+	return []
 
+
+def _honesty_change_note(request: str, changed_files: list[str], *, layout: bool) -> str:
+	"""One optional request line — no What-changed inventory."""
+	lines = _change_summary_lines(request, changed_files, layout=layout)
+	if not lines:
+		return ""
+	return "\n".join(f"- {line}" for line in lines) + "\n\n"
 
 _CONTINUE_RE = re.compile(
 	r"^\s*(continue|retry|again|same|keep going|try again|go ahead)\b",
@@ -375,9 +353,8 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	changed = [str(x) for x in (state.prime.get("changed_files") or []) if x]
 	if not changed and source in ("prime", "craft"):
 		changed = ["src/App.tsx", "src/styles.css"]
-	change_block = "\n".join(
-		f"- {line}"
-		for line in _change_summary_lines(state.prompt, changed, layout=source in ("prime", "craft"))
+	req_note = _honesty_change_note(
+		state.prompt, changed, layout=source in ("prime", "craft")
 	)
 	if source in ("prime", "craft"):
 		body = (
@@ -385,8 +362,7 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 			f"{state.app_config.subtitle}\n\n"
 			f"**Sources:** {facts}\n"
 			f"{file_names}\n\n"
-			"**What changed**\n"
-			f"{change_block}\n\n"
+			f"{req_note}"
 			"Preview is ready — open it, then chat to refine. "
 			"**Ship** when you want an approved share link.\n\n"
 			"Need a clean restart? Use **Rebuild from draft**."
@@ -397,8 +373,7 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 				f"{state.app_config.subtitle}\n\n"
 				f"**Sources:** {facts}\n"
 				f"{file_names}\n\n"
-				"**What changed**\n"
-				f"{change_block}\n\n"
+				f"{req_note}"
 				"Preview is ready (layout applied from your brief). "
 				"Open **Preview**, chat to refine style or content, or **Ship** when ready."
 			)
@@ -474,25 +449,20 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 		"steps": build_meta.get("events") or 0,
 	}
 	changed = [str(x) for x in (build_meta.get("changed_files") or []) if x]
-	change_block = "\n".join(
-		f"- {line}"
-		for line in _change_summary_lines(
-			state.prompt, changed, layout=bool(build_meta.get("layout_customized"))
-		)
+	req_note = _honesty_change_note(
+		state.prompt, changed, layout=bool(build_meta.get("layout_customized"))
 	)
 	honesty = {
 		"prime": (
 			"## Built\n\n"
 			"The builder customized your draft.\n\n"
-			"**What changed**\n"
-			f"{change_block}\n\n"
+			f"{req_note}"
 			"Chat to refine layout, viz, or copy. When it looks right, open Preview → **Ship**."
 		),
 		"craft": (
 			"## Built\n\n"
 			"Preview is ready — layout applied from your brief.\n\n"
-			"**What changed**\n"
-			f"{change_block}\n\n"
+			f"{req_note}"
 			"Open **Preview**, chat to refine style or content, or **Ship** when ready."
 		),
 		"heuristic": (
@@ -508,8 +478,7 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 		honesty = (
 			"## Partial update\n\n"
 			"Styles applied from your Style chips.\n\n"
-			"**What changed**\n"
-			f"{change_block}\n\n"
+			f"{req_note}"
 			"The builder did not rewrite the layout — retry **Build**."
 		)
 
@@ -746,9 +715,11 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	}
 
 	changed = [str(x) for x in (meta.get("changed_files") or []) if x]
-	change_lines = _change_summary_lines(message, changed, layout=bool(meta.get("layout_customized")))
-	if research_bundle and kind == "report":
-		change_lines = ["Research content wired into the report", *change_lines]
+	req_note = _honesty_change_note(
+		message, changed, layout=bool(meta.get("layout_customized"))
+	)
+	if research_bundle and kind == "report" and not req_note:
+		req_note = "- Research content wired into the report\n\n"
 
 	# Full "## Updated" only for real prime content wins — not craft / style_only
 	content_win = (
@@ -762,18 +733,16 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		honesty = (
 			"## Updated\n\n"
 			"Preview refreshed with your request.\n\n"
-			"**What changed**\n"
-			+ "\n".join(f"- {line}" for line in change_lines)
-			+ "\n\nOpen **Preview** to check, keep chatting to refine, or **Ship** for a share link."
+			f"{req_note}"
+			"Open **Preview** to check, keep chatting to refine, or **Ship** for a share link."
 		)
 		source = "prime"
 	elif research_ready:
 		honesty = (
 			"## Preview refreshed\n\n"
 			"Report content now comes from your research — not the vendor sample layout.\n\n"
-			"**What changed**\n"
-			+ "\n".join(f"- {line}" for line in change_lines)
-			+ "\n\nOpen **Preview** to check, or keep chatting to refine."
+			f"{req_note}"
+			"Open **Preview** to check, or keep chatting to refine."
 		)
 		source = "prime" if meta.get("source") == "prime" else "craft"
 	elif (
@@ -784,9 +753,8 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		honesty = (
 			"## Preview refreshed\n\n"
 			"Report layout was updated from your brief.\n\n"
-			"**What changed**\n"
-			+ "\n".join(f"- {line}" for line in change_lines)
-			+ "\n\nOpen **Preview** to check, or keep chatting to refine."
+			f"{req_note}"
+			"Open **Preview** to check, or keep chatting to refine."
 		)
 		source = "craft"
 	elif meta.get("style_only") or meta.get("source") == "craft" or (
@@ -795,9 +763,8 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		honesty = (
 			"## Partial update\n\n"
 			"Styles landed; the layout rewrite is still in progress.\n\n"
-			"**What changed**\n"
-			+ "\n".join(f"- {line}" for line in change_lines)
-			+ "\n\nSend the same ask again (or **continue**) and I'll keep rewriting the layout — "
+			f"{req_note}"
+			"Send the same ask again (or **continue**) and I'll keep rewriting the layout — "
 			"no need to split the request or rebuild from scratch."
 		)
 		source = "craft" if meta.get("source") == "craft" else "heuristic"

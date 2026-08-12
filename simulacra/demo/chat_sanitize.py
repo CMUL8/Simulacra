@@ -32,6 +32,11 @@ _CHOICE_DUMP = re.compile(
 _APP_SHOW_HEAD = re.compile(
 	r"(?i)^\s{0,3}#{1,3}\s*what the (app|report|deck|artifact) can show\b"
 )
+_WHAT_CHANGED_HEAD = re.compile(r"(?i)^\s{0,3}(\*{0,2}|#{1,3}\s*)what changed\b")
+_INVENTORY_BULLET = re.compile(
+	r"(?i)^\s*[-*]\s*(title\s*&\s*(config|framing)|layout\s*(/\s*ui|&\s*structure)|"
+	r"styles?(?:\s*\(.*\))?|visual styling|content update)\b"
+)
 _VENDOR_LEADERBOARD = re.compile(r"(?i)vendor\s+leaderboard")
 _HASH_HEAD = re.compile(r"^\s{0,3}(#{1,3})\s+(.+)$")
 
@@ -119,6 +124,18 @@ def sanitize_agent_reply(text: str) -> str:
 		if _APP_SHOW_HEAD.match(line):
 			out.append("")
 			out.append("In the preview")
+			i += 1
+			continue
+		if _WHAT_CHANGED_HEAD.match(line):
+			i += 1
+			while i < len(lines) and (
+				not lines[i].strip() or _INVENTORY_BULLET.match(lines[i]) or _CODE_FILE_PAREN.search(lines[i])
+				or _CODE_FILE_BARE.search(lines[i])
+				or re.match(r"(?i)^\s*[-*]\s*(request:|layout|title|styles?|visual|content)\b", lines[i])
+			):
+				i += 1
+			continue
+		if _INVENTORY_BULLET.match(line):
 			i += 1
 			continue
 		m_head = _HASH_HEAD.match(line)
