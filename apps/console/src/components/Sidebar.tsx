@@ -155,7 +155,9 @@ export function Sidebar({
                       <Folder size={14} className="project-folder" />
                     )}
                     <span className="project-title">{p.app_config?.title || "Untitled"}</span>
-                    {isBusy ? <span className="project-activity" aria-label="Working" /> : null}
+                    {isBusy ? (
+                      <span className="project-activity" aria-label="Working in background" title="Working in background" />
+                    ) : null}
                   </button>
                   {isActive && onNewChat ? (
                     <button

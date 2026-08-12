@@ -143,6 +143,7 @@ type Props = {
   prompt: string;
   artifactKind: ArtifactKind;
   busy: boolean;
+  busyProjectIds?: Record<string, boolean>;
   files: DataRoomFile[];
   pendingFiles?: File[];
   dataAttached: boolean;
@@ -169,6 +170,7 @@ export function Landing({
   prompt,
   artifactKind,
   busy,
+  busyProjectIds = {},
   files,
   pendingFiles = [],
   dataAttached,
@@ -383,18 +385,19 @@ export function Landing({
                 const title = projectCardTitle(p);
                 const summary = projectCardSummary(p);
                 const when = relativeWhen(p.created_at);
+                const working = Boolean(busyProjectIds[p.id]);
                 return (
                   <li key={p.id}>
                     <button
                       type="button"
-                      className={`landing-project-card kind-${kind}`}
+                      className={`landing-project-card kind-${kind}${working ? " working" : ""}`}
                       disabled={busy}
                       onClick={() => onOpenProject?.(p.id)}
                     >
                       <span className="landing-project-card-top">
                         <span className="landing-project-kind">{kindShort(p)}</span>
-                        <span className={`landing-project-phase phase-${p.deployed ? "shipped" : p.phase}`}>
-                          {phaseLabel(p)}
+                        <span className={`landing-project-phase phase-${working ? "working" : p.deployed ? "shipped" : p.phase}`}>
+                          {working ? "Working" : phaseLabel(p)}
                         </span>
                       </span>
                       <span className="landing-project-title">{title}</span>

@@ -301,7 +301,7 @@ function ShipReceipt({
   );
 }
 
-def isOrphanJobStatus(m: ChatMessage): boolean {
+function isOrphanJobStatus(m: ChatMessage): boolean {
   const text = m.content.trim();
   // Old builds left "Building your app…" in chat forever — never show it.
   if (m.source === "system" && /^Building your\b/i.test(text)) return true;

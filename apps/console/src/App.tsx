@@ -137,6 +137,7 @@ export default function App({
   const [resumeBuild, setResumeBuild] = useState(false);
   const [jobLive, setJobLive] = useState(false);
   const [busyProjects, setBusyProjects] = useState<Record<string, boolean>>({});
+  const [bgNotice, setBgNotice] = useState<string | null>(null);
   const pollById = useRef<Record<string, number>>({});
   const viewedIdRef = useRef<string | null>(null);
   const [waitStartedAt, setWaitStartedAt] = useState<number | null>(null);
@@ -155,6 +156,12 @@ export default function App({
       setWaitStartedAt(null);
     }
   }, [running]);
+
+  useEffect(() => {
+    if (!bgNotice) return;
+    const t = window.setTimeout(() => setBgNotice(null), 4200);
+    return () => window.clearTimeout(t);
+  }, [bgNotice]);
 
   useEffect(() => {
     if (draftBootstrapped.current) return;
@@ -270,6 +277,10 @@ export default function App({
           }
 
           if (done) {
+            const title =
+              snap.project.app_config?.title ||
+              snap.project.prompt?.slice(0, 40) ||
+              "Project";
             markProjectBusy(id, false);
             stopPolling(id);
             if (viewing) {
@@ -283,6 +294,8 @@ export default function App({
               if (snap.preview_url && !String(snap.preview_url).includes("127.0.0.1")) {
                 setPreviewOpen(true);
               }
+            } else if (!staleRunning && !timedOut) {
+              setBgNotice(`${title} finished in the background`);
             }
             await refreshProjects();
           } else {
@@ -549,6 +562,12 @@ export default function App({
 
   async function loadProject(id: string) {
     // Switching projects must not cancel background jobs or clear other polls.
+    const leavingId = viewedIdRef.current;
+    if (leavingId && leavingId !== id && (busyProjects[leavingId] || pollById.current[leavingId])) {
+      const leaving = projects.find((p) => p.id === leavingId);
+      const name = leaving?.app_config?.title || "Previous project";
+      setBgNotice(`${name} keeps working in the background`);
+    }
     viewedIdRef.current = id;
     setError(null);
     setInput("");
@@ -793,7 +812,14 @@ export default function App({
   }
 
   function handleNew() {
-    stopPolling();
+    // Leave the workspace — do NOT kill background jobs / polls.
+    const leavingId = viewedIdRef.current;
+    if (leavingId && (busyProjects[leavingId] || pollById.current[leavingId])) {
+      const leaving = projects.find((p) => p.id === leavingId);
+      const name = leaving?.app_config?.title || "Project";
+      setBgNotice(`${name} keeps working in the background`);
+    }
+    viewedIdRef.current = null;
     setSnapshot(null);
     setMode("landing");
     setGoal("");
@@ -806,6 +832,7 @@ export default function App({
     setPreviewOpen(false);
     setSidebarOpen(false);
     setBusy(false);
+    setJobLive(false);
     clearLandingDraft();
     setResumeBuild(false);
     setGuestGateOpen(false);
@@ -818,12 +845,14 @@ export default function App({
   }
 
   if (mode === "landing") {
+    const bgBusyCount = Object.keys(busyProjects).length;
     return (
       <>
         <Landing
           prompt={prompt}
           artifactKind={artifactKind}
           busy={busy}
+          busyProjectIds={busyProjects}
           files={fixtureFiles}
           pendingFiles={pendingFiles}
           dataAttached={dataAttached}
@@ -845,6 +874,15 @@ export default function App({
           onLogin={() => openAccount("account")}
           onDismissError={() => setError(null)}
         />
+        {bgBusyCount > 0 || bgNotice ? (
+          <div className="bg-job-toast" role="status">
+            {bgNotice ||
+              `${bgBusyCount} project${bgBusyCount === 1 ? "" : "s"} working in the background`}
+            <button type="button" onClick={() => setBgNotice(null)} aria-label="Dismiss">
+              ×
+            </button>
+          </div>
+        ) : null}
         <ProfileManageModal
           open={profileOpen}
           onClose={() => setProfileOpen(false)}
@@ -892,6 +930,14 @@ export default function App({
       )}
 
       <div className="agent-main">
+        {bgNotice ? (
+          <div className="bg-job-toast nest" role="status">
+            {bgNotice}
+            <button type="button" onClick={() => setBgNotice(null)} aria-label="Dismiss">
+              ×
+            </button>
+          </div>
+        ) : null}
         <AgentShell
           variant={agentVariant}
           snapshot={snapshot}
