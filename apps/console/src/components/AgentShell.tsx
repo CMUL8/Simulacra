@@ -818,6 +818,12 @@ export function AgentShell({
           ref={threadRef}
           onScroll={onThreadScroll}
         >
+          {visibleChat.length === 0 && !busy ? (
+            <div className="thread-first">
+              <p>Describe what to change. Preview updates after each message.</p>
+            </div>
+          ) : null}
+
           {visibleChat.map((m, i) => (
             <Fragment key={i}>
               {i === lastAssistantIdx && lastThought && !busy && chatWait ? (

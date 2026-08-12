@@ -6,9 +6,8 @@ import {
   Search,
   Settings,
   Trash2,
-  X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import type { AuthUser, ChatThreadSummary, DataRoomFile, Project } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -24,14 +23,12 @@ type Props = {
   collapsed: boolean;
   user?: AuthUser | null;
   workspaceLabel?: string;
-  focusSearch?: boolean;
-  onFocusSearchConsumed?: () => void;
   onNew: () => void;
   onSelect: (id: string) => void;
   onSelectChat?: (projectId: string, chatId: string) => void;
   onNewChat?: (projectId: string) => void;
   onDeleteChat?: (projectId: string, chatId: string) => void;
-  onToggle: () => void;
+  onSearch?: () => void;
   onHome?: () => void;
   onAccount?: () => void;
 };
@@ -101,65 +98,17 @@ export function Sidebar({
   collapsed,
   user = null,
   workspaceLabel = "Workspace",
-  focusSearch = false,
-  onFocusSearchConsumed,
   onNew,
   onSelect,
   onSelectChat,
   onNewChat,
   onDeleteChat,
-  onToggle,
+  onSearch,
   onHome,
   onAccount,
 }: Props) {
-  const [query, setQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
   const [dataRoomOpen, setDataRoomOpen] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!focusSearch) return;
-    setSearchOpen(true);
-    onFocusSearchConsumed?.();
-  }, [focusSearch, onFocusSearchConsumed]);
-
-  useEffect(() => {
-    if (!searchOpen) return;
-    searchRef.current?.focus();
-  }, [searchOpen]);
-
-  useEffect(() => {
-    if (!searchOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
-      if (query) {
-        setQuery("");
-        return;
-      }
-      setSearchOpen(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [searchOpen, query]);
-
   const visibleFiles = useMemo(() => userFacingFiles(files), [files]);
-  const q = query.trim().toLowerCase();
-  const filteredProjects = useMemo(() => {
-    if (!q) return projects;
-    return projects.filter((p) => {
-      const title = (p.app_config?.title || "").toLowerCase();
-      const prompt = (p.prompt || "").toLowerCase();
-      const chatHit = chatsFor(p).some((c) => c.title.toLowerCase().includes(q));
-      return title.includes(q) || prompt.includes(q) || p.id.toLowerCase().includes(q) || chatHit;
-    });
-  }, [projects, q]);
-
-  const filteredFiles = useMemo(() => {
-    if (!q) return visibleFiles;
-    return visibleFiles.filter(
-      (f) => f.name.toLowerCase().includes(q) || humanSourceLabel(f.name).toLowerCase().includes(q),
-    );
-  }, [visibleFiles, q]);
 
   if (collapsed) return null;
 
@@ -178,39 +127,16 @@ export function Sidebar({
           <Plus size={16} strokeWidth={1.5} aria-hidden />
           New project
         </button>
-        {searchOpen ? (
-          <div className="bui-sidebar-search">
-            <Search size={16} strokeWidth={1.5} aria-hidden />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search"
-              aria-label="Search projects"
-            />
-            <button
-              type="button"
-              className="search-clear"
-              aria-label="Close search"
-              onClick={() => {
-                setQuery("");
-                setSearchOpen(false);
-              }}
-            >
-              <X size={14} strokeWidth={1.5} />
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="bui-nav-btn"
-            onClick={() => setSearchOpen(true)}
-            title="Search (⌘K)"
-          >
-            <Search size={16} strokeWidth={1.5} aria-hidden />
-            Search
-          </button>
-        )}
+        <button
+          type="button"
+          className="bui-nav-btn"
+          onClick={() => onSearch?.()}
+          title="Search (⌘K)"
+        >
+          <Search size={16} strokeWidth={1.5} aria-hidden />
+          Search
+          <kbd className="bui-nav-kbd">⌘K</kbd>
+        </button>
       </div>
 
       <div className="sidebar-section grow projects-section">
@@ -218,8 +144,8 @@ export function Sidebar({
           <span>Projects</span>
         </div>
         <ul className="project-list nested">
-          {filteredProjects.length === 0 && <li className="empty">{q ? "No matches" : "No projects"}</li>}
-          {filteredProjects.map((p) => {
+          {projects.length === 0 && <li className="empty">No projects</li>}
+          {projects.map((p) => {
             const isActive = activeId === p.id;
             const chats = chatsFor(p);
             const isBusy = Boolean(busyProjectIds[p.id]);
@@ -311,17 +237,17 @@ export function Sidebar({
           aria-expanded={dataRoomOpen}
         >
           <span>Data Room</span>
-          <span className="badge quiet">{filteredFiles.length}</span>
+          <span className="badge quiet">{visibleFiles.length}</span>
         </button>
         {dataRoomOpen ? (
           <ul className="file-list quiet" aria-label="Data room files">
-            {filteredFiles.map((f) => (
+            {visibleFiles.map((f) => (
               <li key={f.name} className="file-row" title={f.name}>
                 <FileTypeIcon ext={f.type} />
                 <span className="file-name">{humanSourceLabel(f.name)}</span>
               </li>
             ))}
-            {filteredFiles.length === 0 && <li className="empty">Empty</li>}
+            {visibleFiles.length === 0 && <li className="empty">Empty</li>}
           </ul>
         ) : null}
       </div>
@@ -350,10 +276,6 @@ export function Sidebar({
           <Settings size={16} strokeWidth={1.5} />
         </button>
       </div>
-
-      <button type="button" className="sidebar-collapse" onClick={onToggle} aria-label="Collapse sidebar">
-        ‹
-      </button>
     </aside>
   );
 }

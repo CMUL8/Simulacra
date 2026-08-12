@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 type Props = {
-  left: React.ReactNode;
-  right: React.ReactNode;
+  left: ReactNode;
+  right: ReactNode;
   defaultWidth?: number;
   minWidth?: number;
   maxWidth?: number;
+  /** Hide the sized pane and show the other. */
   hidden?: boolean;
+  /** Which pane has a fixed width. Default left (legacy). */
+  sized?: "left" | "right";
 };
 
 export function ResizableSplit({
@@ -16,6 +19,7 @@ export function ResizableSplit({
   minWidth = 300,
   maxWidth = 640,
   hidden = false,
+  sized = "left",
 }: Props) {
   const [width, setWidth] = useState(defaultWidth);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -24,10 +28,12 @@ export function ResizableSplit({
   const onMove = useCallback(
     (e: MouseEvent) => {
       if (!dragging.current || !containerRef.current) return;
-      const left = containerRef.current.getBoundingClientRect().left;
-      setWidth(Math.min(maxWidth, Math.max(minWidth, e.clientX - left)));
+      const rect = containerRef.current.getBoundingClientRect();
+      const next =
+        sized === "right" ? rect.right - e.clientX : e.clientX - rect.left;
+      setWidth(Math.min(maxWidth, Math.max(minWidth, next)));
     },
-    [minWidth, maxWidth],
+    [minWidth, maxWidth, sized],
   );
 
   const onUp = useCallback(() => {
@@ -46,25 +52,30 @@ export function ResizableSplit({
   }, [onMove, onUp]);
 
   if (hidden) {
-    return <div className="split split-collapsed">{right}</div>;
+    return <div className="split split-collapsed">{sized === "right" ? left : right}</div>;
   }
 
+  const sizedStyle = { width };
+  const startDrag = () => {
+    dragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
   return (
-    <div className="split" ref={containerRef}>
-      <div className="split-left" style={{ width }}>
+    <div className={`split${sized === "right" ? " split-right-sized" : ""}`} ref={containerRef}>
+      <div className={sized === "left" ? "split-left" : "split-flex"} style={sized === "left" ? sizedStyle : undefined}>
         {left}
       </div>
       <div
         className="split-handle"
         role="separator"
         aria-orientation="vertical"
-        onMouseDown={() => {
-          dragging.current = true;
-          document.body.style.cursor = "col-resize";
-          document.body.style.userSelect = "none";
-        }}
+        onMouseDown={startDrag}
       />
-      <div className="split-right">{right}</div>
+      <div className={sized === "right" ? "split-left split-right-pane" : "split-right"} style={sized === "right" ? sizedStyle : undefined}>
+        {right}
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { ArrowUp, AtSign, ChevronDown, Square } from "lucide-react";
+import { ArrowUp, AtSign, Square } from "lucide-react";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import type { DataRoomFile } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
@@ -167,7 +167,6 @@ export function PromptComposer({
         <div className="composer-trailing">
           <span className="model-tag" title={`${modeTag} mode`}>
             {modeTag}
-            <ChevronDown size={12} strokeWidth={1.5} />
           </span>
           {busy ? (
             <button

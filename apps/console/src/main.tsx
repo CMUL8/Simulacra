@@ -3,7 +3,6 @@ import { StrictMode, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { clearAuth, fetchMe, setTenantId, setToken } from "./api";
-import { BG_IMAGES, bgPresetFromSearch } from "./bgPreset";
 import "./styles.css";
 
 type AuthConfig = {
@@ -90,15 +89,10 @@ function Root() {
   }, []);
 
   if (!config) {
-    const bg = bgPresetFromSearch();
     return (
-      <div className="landing landing-boot" data-bg={bg}>
-        <img className="landing-hero-img" src={BG_IMAGES[bg]} alt="" aria-hidden />
-        <div className="landing-hero-veil" aria-hidden />
+      <div className="landing landing-boot">
         <div className="landing-content">
-          <h1 className="brand-mark">
-            Simu<em>lacra</em>
-          </h1>
+          <h1 className="boot-mark">Simulacra</h1>
           <p className="landing-boot-status">Opening…</p>
         </div>
       </div>

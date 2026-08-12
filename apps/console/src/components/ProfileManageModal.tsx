@@ -73,9 +73,7 @@ export function ProfileManageModal({
         {!isGuestAuth && (
           <aside className="acct-rail">
             <div className="acct-rail-head">
-              <span className="acct-brand">
-                Simu<em>lacra</em>
-              </span>
+              <span className="acct-brand">Simulacra</span>
               <p className="acct-rail-sub">Workspace controls</p>
             </div>
 

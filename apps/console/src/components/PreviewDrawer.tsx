@@ -11,7 +11,6 @@ type Props = {
   onRefresh: () => void;
   onDeploy?: () => void;
   busy?: boolean;
-  /** Bump to force iframe reload after style apply */
   refreshToken?: number;
 };
 
@@ -38,6 +37,7 @@ export function resolvePreviewSrc(raw: string | null | undefined, bust = 0): str
   return u.toString();
 }
 
+/** Preview as a workspace pane — not a modal overlay. */
 export function PreviewDrawer({
   open,
   snapshot,
@@ -67,128 +67,126 @@ export function PreviewDrawer({
   if (!open) return null;
 
   return (
-    <div className="preview-drawer-overlay" onClick={onClose}>
-      <aside className="preview-drawer" onClick={(e) => e.stopPropagation()}>
-        <header className="preview-drawer-head">
-          <div className="preview-drawer-tabs">
+    <aside className="preview-pane" aria-label="Preview">
+      <header className="preview-drawer-head">
+        <div className="preview-drawer-tabs">
+          <button
+            type="button"
+            className={tab === "preview" ? "active" : ""}
+            onClick={() => setTab("preview")}
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            className={tab === "data" ? "active" : ""}
+            onClick={() => setTab("data")}
+          >
+            <Table2 size={14} strokeWidth={1.5} />
+            Data
+          </button>
+        </div>
+        <div className="preview-drawer-actions">
+          {canDeploy && (
             <button
               type="button"
-              className={tab === "preview" ? "active" : ""}
-              onClick={() => setTab("preview")}
+              className="composer-action emphasis preview-deploy-btn"
+              disabled={busy}
+              onClick={onDeploy}
+              title="Approve this preview for your team"
+              aria-label="Ship — approve this preview for your team"
             >
-              Preview
+              Ship
             </button>
+          )}
+          {project?.deployed && (
+            <span className="chrome-chip ok" title="Approved share link">
+              Shipped
+            </span>
+          )}
+          {project?.deployed && previewUrl && (
             <button
               type="button"
-              className={tab === "data" ? "active" : ""}
-              onClick={() => setTab("data")}
+              className="composer-action"
+              onClick={() => {
+                const abs = previewUrl.startsWith("http")
+                  ? previewUrl
+                  : `${window.location.origin}${previewUrl}`;
+                void navigator.clipboard?.writeText(abs);
+              }}
+              title="Copy share URL"
             >
-              <Table2 size={13} />
-              Data
+              Copy link
             </button>
-          </div>
-          <div className="preview-drawer-actions">
-            {canDeploy && (
+          )}
+          {previewUrl && tab === "preview" && (
+            <>
               <button
                 type="button"
-                className="approve-btn preview-deploy-btn"
-                disabled={busy}
-                onClick={onDeploy}
-                title="Approve this preview for your team"
-                aria-label="Ship — approve this preview for your team"
-              >
-                Ship
-              </button>
-            )}
-            {project?.deployed && (
-              <span className="source-chip source-prime" title="Approved share link">
-                Shipped
-              </span>
-            )}
-            {project?.deployed && previewUrl && (
-              <button
-                type="button"
-                className="ghost-btn quiet"
+                className="icon-btn"
                 onClick={() => {
-                  const abs = previewUrl.startsWith("http")
-                    ? previewUrl
-                    : `${window.location.origin}${previewUrl}`;
-                  void navigator.clipboard?.writeText(abs);
+                  setFrameKey((k) => k + 1);
+                  onRefresh();
                 }}
-                title="Copy share URL"
+                title="Refresh"
               >
-                Copy link
+                <RefreshCw size={14} strokeWidth={1.5} />
               </button>
-            )}
-            {previewUrl && tab === "preview" && (
-              <>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => {
-                    setFrameKey((k) => k + 1);
-                    onRefresh();
-                  }}
-                  title="Refresh"
-                >
-                  <RefreshCw size={14} />
-                </button>
-                <a href={previewUrl} target="_blank" rel="noreferrer" className="icon-btn" title="Open in tab">
-                  <ExternalLink size={14} />
-                </a>
-              </>
-            )}
-            <button type="button" className="icon-btn" onClick={onClose} title="Close">
-              <PanelRightClose size={14} />
-            </button>
-          </div>
-        </header>
+              <a href={previewUrl} target="_blank" rel="noreferrer" className="icon-btn" title="Open in tab">
+                <ExternalLink size={14} strokeWidth={1.5} />
+              </a>
+            </>
+          )}
+          <button type="button" className="icon-btn" onClick={onClose} title="Close preview">
+            <PanelRightClose size={14} strokeWidth={1.5} />
+          </button>
+        </div>
+      </header>
 
-        <div className="preview-drawer-body">
-          {tab === "preview" &&
-            (previewUrl ? (
-              <iframe
-                key={`${previewUrl}-${frameKey}`}
-                src={previewUrl}
-                title="App preview"
-                className="preview-drawer-frame"
-              />
-            ) : (
-              <div className="preview-drawer-empty">
-                <p>
-                  {snapshot?.preview_url?.includes("127.0.0.1")
-                    ? "This project still points at an old local preview. Start a new project or hit Build app again."
-                    : "Preview will appear when the draft is ready."}
-                </p>
-              </div>
-            ))}
-          {tab === "data" && (
-            <div className="data-table-wrap drawer-data">
-              <table>
-                <thead>
-                  <tr>
+      <div className="preview-drawer-body">
+        {tab === "preview" &&
+          (previewUrl ? (
+            <iframe
+              key={`${previewUrl}-${frameKey}`}
+              src={previewUrl}
+              title="App preview"
+              className="preview-drawer-frame"
+            />
+          ) : (
+            <div className="preview-drawer-empty">
+              <p>
+                {snapshot?.preview_url?.includes("127.0.0.1")
+                  ? "This project still points at an old local preview. Start a new project or hit Build again."
+                  : "Preview appears here when the draft is ready."}
+              </p>
+            </div>
+          ))}
+        {tab === "data" && (
+          <div className="data-table-wrap drawer-data">
+            <table>
+              <thead>
+                <tr>
+                  {(snapshot?.preview_data.columns ?? []).map((c) => (
+                    <th key={c}>{c.replace(/_/g, " ")}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(snapshot?.preview_data.rows ?? []).slice(0, 100).map((row, i) => (
+                  <tr key={i}>
                     {(snapshot?.preview_data.columns ?? []).map((c) => (
-                      <th key={c}>{c.replace(/_/g, " ")}</th>
+                      <td key={c} className={c === "risk_level" ? `risk-${row[c]}` : ""}>
+                        {String(row[c] ?? "")}
+                      </td>
                     ))}
                   </tr>
-                </thead>
-                <tbody>
-                  {(snapshot?.preview_data.rows ?? []).slice(0, 100).map((row, i) => (
-                    <tr key={i}>
-                      {(snapshot?.preview_data.columns ?? []).map((c) => (
-                        <td key={c} className={c === "risk_level" ? `risk-${row[c]}` : ""}>
-                          {String(row[c] ?? "")}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="table-foot">{snapshot?.preview_data.row_count ?? 0} rows</p>
-            </div>
-          )}
-        </div>
-      </aside>
-    </div>
+                ))}
+              </tbody>
+            </table>
+            <p className="table-foot">{snapshot?.preview_data.row_count ?? 0} rows</p>
+          </div>
+        )}
+      </div>
+    </aside>
   );
 }

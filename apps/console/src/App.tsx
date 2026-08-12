@@ -30,18 +30,39 @@ import {
   type Snapshot,
   type Tenant,
 } from "./api";
-import { BG_IMAGES, bgPresetFromSearch } from "./bgPreset";
 import { AgentShell } from "./components/AgentShell";
+import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { Landing } from "./components/Landing";
 import { PreviewDrawer } from "./components/PreviewDrawer";
 import { ProfileManageModal, type ProfileTab } from "./components/ProfileManageModal";
 import { Sidebar } from "./components/Sidebar";
-import { StatusBar } from "./components/StatusBar";
+import { ResizableSplit } from "./components/ui/ResizableSplit";
 import { useEventStream } from "./hooks/useEventStream";
 
 type AppMode = "landing" | "plan" | "workspace";
 
 const LANDING_DRAFT_KEY = "simulacra.landingDraft";
+const SIDEBAR_KEY = "simulacra.sidebarOpen";
+
+function readSidebarOpen(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const v = localStorage.getItem(SIDEBAR_KEY);
+    if (v === "0") return false;
+    if (v === "1") return window.innerWidth > 900;
+  } catch {
+    /* ignore */
+  }
+  return window.innerWidth > 900;
+}
+
+function writeSidebarOpen(open: boolean) {
+  try {
+    localStorage.setItem(SIDEBAR_KEY, open ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
 
 type LandingDraft = {
   prompt: string;
@@ -113,8 +134,9 @@ export default function App({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [mode, setMode] = useState<AppMode>("landing");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [previewRefresh, setPreviewRefresh] = useState(0);
   const [projects, setProjects] = useState<Project[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -129,7 +151,6 @@ export default function App({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [apiOk, setApiOk] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileTab, setProfileTab] = useState<ProfileTab>("account");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -141,7 +162,6 @@ export default function App({
   const pollById = useRef<Record<string, number>>({});
   const viewedIdRef = useRef<string | null>(null);
   const [waitStartedAt, setWaitStartedAt] = useState<number | null>(null);
-  const [sidebarFocusSearch, setSidebarFocusSearch] = useState(false);
   const draftBootstrapped = useRef(false);
   const resumeStarted = useRef(false);
 
@@ -159,6 +179,19 @@ export default function App({
   }, [running]);
 
   useEffect(() => {
+    function onResize() {
+      if (window.innerWidth <= 900) return;
+      try {
+        if (localStorage.getItem(SIDEBAR_KEY) !== "0") setSidebarOpen(true);
+      } catch {
+        setSidebarOpen(true);
+      }
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
     if (!bgNotice) return;
     const t = window.setTimeout(() => setBgNotice(null), 4200);
     return () => window.clearTimeout(t);
@@ -166,15 +199,19 @@ export default function App({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
-      if (mode === "landing") return;
-      e.preventDefault();
-      setSidebarOpen(true);
-      setSidebarFocusSearch(true);
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        if (!authed) return;
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      if (e.key === "Escape" && previewOpen && !paletteOpen && !profileOpen) {
+        setPreviewOpen(false);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mode]);
+  }, [authed, previewOpen, paletteOpen, profileOpen]);
 
   useEffect(() => {
     if (draftBootstrapped.current) return;
@@ -235,9 +272,8 @@ export default function App({
   const refreshProjects = useCallback(async () => {
     try {
       setProjects(await listProjects());
-      setApiOk(true);
     } catch {
-      setApiOk(false);
+      /* list failed — keep last known projects */
     }
   }, []);
 
@@ -457,7 +493,6 @@ export default function App({
       setSnapshot(snap);
       setMode(snap.project.phase === "ready" ? "workspace" : "plan");
       setInput("");
-      setSidebarOpen(false);
       await refreshProjects();
       if (snap.job?.status === "running" || snap.project.job?.status === "running") {
         setJobLive(true);
@@ -498,15 +533,10 @@ export default function App({
   }, [authed, busy, handleStartPlanning, prompt, resumeBuild]);
 
   if (authed === null) {
-    const bg = bgPresetFromSearch();
     return (
-      <div className="landing landing-boot" data-bg={bg}>
-        <img className="landing-hero-img" src={BG_IMAGES[bg]} alt="" aria-hidden />
-        <div className="landing-hero-veil" aria-hidden />
+      <div className="landing landing-boot">
         <div className="landing-content">
-          <h1 className="brand-mark">
-            Simu<em>lacra</em>
-          </h1>
+          <h1 className="boot-mark">Simulacra</h1>
           <p className="landing-boot-status">Opening…</p>
         </div>
       </div>
@@ -812,7 +842,6 @@ export default function App({
       mergeProjectMeta(snap);
       setMode(snap.project.phase === "ready" ? "workspace" : "plan");
       setInput("");
-      setSidebarOpen(true);
       // Creating a chat must not wipe an in-flight job on this project
       const stillBusy = Boolean(busyProjects[projectId] || pollById.current[projectId]);
       setBusy(stillBusy);
@@ -854,7 +883,6 @@ export default function App({
     setInput("");
     setError(null);
     setPreviewOpen(false);
-    setSidebarOpen(false);
     setBusy(false);
     setJobLive(false);
     clearLandingDraft();
@@ -867,6 +895,50 @@ export default function App({
     setProfileTab(tab);
     setProfileOpen(true);
   }
+
+  function persistSidebar(open: boolean) {
+    setSidebarOpen(open);
+    writeSidebarOpen(open);
+  }
+
+  const paletteItems: PaletteItem[] = [
+    {
+      id: "new",
+      label: "New project",
+      group: "Action",
+      onSelect: handleNew,
+    },
+    ...(snapshot
+      ? [
+          {
+            id: "preview",
+            label: previewOpen ? "Hide preview" : "Show preview",
+            group: "Action",
+            disabled: !snapshot.preview_url,
+            onSelect: () => setPreviewOpen((v) => !v),
+          },
+          {
+            id: "chat",
+            label: "New chat",
+            group: "Action",
+            onSelect: () => void handleNewChat(snapshot.project.id),
+          },
+        ]
+      : []),
+    {
+      id: "account",
+      label: "Account",
+      group: "Action",
+      onSelect: () => openAccount("account"),
+    },
+    ...projects.slice(0, 20).map((p) => ({
+      id: `p-${p.id}`,
+      label: p.app_config?.title || "Untitled",
+      hint: p.phase === "ready" ? "Built" : p.phase === "plan" ? "Plan" : p.phase,
+      group: "Project",
+      onSelect: () => void loadProject(p.id),
+    })),
+  ];
 
   if (mode === "landing") {
     const bgBusyCount = Object.keys(busyProjects).length;
@@ -907,6 +979,11 @@ export default function App({
             </button>
           </div>
         ) : null}
+        <CommandPalette
+          open={paletteOpen}
+          items={paletteItems}
+          onClose={() => setPaletteOpen(false)}
+        />
         <ProfileManageModal
           open={profileOpen}
           onClose={() => setProfileOpen(false)}
@@ -934,74 +1011,95 @@ export default function App({
 
   return (
     <div className="shell agent-layout">
-      {sidebarOpen && (
-        <Sidebar
-          projects={projects}
-          activeId={snapshot.project.id}
-          activeChatId={snapshot.project.active_chat_id}
-          busyProjectIds={busyProjects}
-          files={projectFiles}
-          focus="projects"
-          collapsed={false}
-          user={user}
-          workspaceLabel={
-            tenants.find((t) => t.id === getTenantId())?.name || tenants[0]?.name || "Workspace"
-          }
-          focusSearch={sidebarFocusSearch}
-          onFocusSearchConsumed={() => setSidebarFocusSearch(false)}
-          onNew={handleNew}
-          onHome={handleNew}
-          onAccount={() => openAccount("account")}
-          onSelect={loadProject}
-          onSelectChat={handleSelectChat}
-          onNewChat={handleNewChat}
-          onDeleteChat={handleDeleteChat}
-          onToggle={() => setSidebarOpen(false)}
-        />
-      )}
+      {sidebarOpen ? (
+        <>
+          <button
+            type="button"
+            className="sidebar-scrim"
+            aria-label="Close sidebar"
+            onClick={() => persistSidebar(false)}
+          />
+          <Sidebar
+            projects={projects}
+            activeId={snapshot.project.id}
+            activeChatId={snapshot.project.active_chat_id}
+            busyProjectIds={busyProjects}
+            files={projectFiles}
+            focus="projects"
+            collapsed={false}
+            user={user}
+            workspaceLabel={
+              tenants.find((t) => t.id === getTenantId())?.name || tenants[0]?.name || "Workspace"
+            }
+            onNew={handleNew}
+            onHome={handleNew}
+            onAccount={() => openAccount("account")}
+            onSelect={loadProject}
+            onSelectChat={handleSelectChat}
+            onNewChat={handleNewChat}
+            onDeleteChat={handleDeleteChat}
+            onSearch={() => setPaletteOpen(true)}
+          />
+        </>
+      ) : null}
 
-      <div className="agent-main">
-        {bgNotice ? (
-          <div className="bg-job-toast nest" role="status">
-            {bgNotice}
-            <button type="button" onClick={() => setBgNotice(null)} aria-label="Dismiss">
-              ×
-            </button>
+      <ResizableSplit
+        sized="right"
+        hidden={!previewOpen}
+        defaultWidth={480}
+        minWidth={300}
+        maxWidth={720}
+        left={
+          <div className="agent-main">
+            {bgNotice ? (
+              <div className="bg-job-toast nest" role="status">
+                {bgNotice}
+                <button type="button" onClick={() => setBgNotice(null)} aria-label="Dismiss">
+                  ×
+                </button>
+              </div>
+            ) : null}
+            <AgentShell
+              variant={agentVariant}
+              snapshot={snapshot}
+              files={projectFiles}
+              input={input}
+              busy={running}
+              error={error}
+              traces={traces}
+              sidebarOpen={sidebarOpen}
+              waitStartedAt={waitStartedAt}
+              onToggleSidebar={() => persistSidebar(!sidebarOpen)}
+              onInput={setInput}
+              onSend={handleSend}
+              onRetry={handleRetry}
+              onApprove={handleApprove}
+              onRebuild={handleApprove}
+              onCancel={running ? handleCancel : undefined}
+              onOpenPreview={() => setPreviewOpen((v) => !v)}
+              onGovernance={() => openAccount("account")}
+              onRollback={mode === "workspace" ? handleRollback : undefined}
+              onDismissError={() => setError(null)}
+            />
           </div>
-        ) : null}
-        <AgentShell
-          variant={agentVariant}
-          snapshot={snapshot}
-          files={projectFiles}
-          input={input}
-          busy={running}
-          error={error}
-          traces={traces}
-          sidebarOpen={sidebarOpen}
-          waitStartedAt={waitStartedAt}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          onInput={setInput}
-          onSend={handleSend}
-          onRetry={handleRetry}
-          onApprove={handleApprove}
-          onRebuild={handleApprove}
-          onCancel={running ? handleCancel : undefined}
-          onOpenPreview={() => setPreviewOpen(true)}
-          onGovernance={() => openAccount("account")}
-          onRollback={mode === "workspace" ? handleRollback : undefined}
-          onDismissError={() => setError(null)}
-        />
-        <StatusBar project={snapshot.project} apiOk={apiOk} />
-      </div>
+        }
+        right={
+          <PreviewDrawer
+            open={previewOpen}
+            snapshot={snapshot}
+            onClose={() => setPreviewOpen(false)}
+            onRefresh={() => loadProject(snapshot.project.id)}
+            onDeploy={handleDeploy}
+            busy={running}
+            refreshToken={previewRefresh}
+          />
+        }
+      />
 
-      <PreviewDrawer
-        open={previewOpen}
-        snapshot={snapshot}
-        onClose={() => setPreviewOpen(false)}
-        onRefresh={() => loadProject(snapshot.project.id)}
-        onDeploy={handleDeploy}
-        busy={running}
-        refreshToken={previewRefresh}
+      <CommandPalette
+        open={paletteOpen}
+        items={paletteItems}
+        onClose={() => setPaletteOpen(false)}
       />
 
       <ProfileManageModal

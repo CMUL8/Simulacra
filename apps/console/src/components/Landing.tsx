@@ -1,7 +1,6 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactKind, DataRoomFile, Project } from "../api";
-import { BG_IMAGES, bgPresetFromSearch } from "../bgPreset";
 import { GuestAuthGate } from "./GuestAuthGate";
 import { SourcesPanel } from "./SourcesPanel";
 
@@ -194,7 +193,6 @@ export function Landing({
 }: Props) {
   const [formatTouched, setFormatTouched] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [bgPreset] = useState(bgPresetFromSearch);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const landingRef = useRef<HTMLDivElement>(null);
   const projectsRef = useRef<HTMLElement>(null);
@@ -233,15 +231,10 @@ export function Landing({
   }
 
   return (
-    <div className="landing" ref={landingRef} data-bg={bgPreset}>
-      <img className="landing-hero-img" src={BG_IMAGES[bgPreset]} alt="" aria-hidden />
-      <div className="landing-hero-veil" aria-hidden />
-
+    <div className="landing" ref={landingRef}>
       <header className="landing-nav">
         <div className="landing-nav-pill">
-          <span className="landing-nav-brand">
-            Simu<em>lacra</em>
-          </span>
+          <span className="landing-nav-brand">Simulacra</span>
 
           <nav className="landing-nav-links" aria-label="Primary">
             {authed && recent.length > 0 && (
@@ -265,9 +258,7 @@ export function Landing({
       </header>
 
       <div className="landing-content" id="start">
-        <h1 className="brand-mark">
-          Simu<em>lacra</em>
-        </h1>
+        <h1 className="brand-mark">Simulacra</h1>
         <p className="landing-sub">
           Describe what you need. Pick a format — the agent opens in chat to steer sources
           and scope, then you Build, refine, and Ship.
