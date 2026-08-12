@@ -15,6 +15,13 @@ _MANIFEST_HEAD = re.compile(
 _ADDED_SOURCES_LINE = re.compile(
 	r"(?i)^\s*added\b.+\bto (your |the )?sources?\b\.?\s*$"
 )
+_CHOICE_DUMP = re.compile(
+	r"(?is)(what I'?d do differently|want me to try|targeted iterates?|"
+	r"rebuild (fresh )?from scratch|either way gets you|"
+	r"break the (visual|content) refresh into smaller|"
+	r"content rewrites? stalled|bundled too many|content layer timed out|"
+	r"styling layer.{0,40}landed fine)"
+)
 _APP_SHOW_HEAD = re.compile(
 	r"(?i)^\s{0,3}#{1,3}\s*what the (app|report|deck|artifact) can show\b"
 )
@@ -81,6 +88,9 @@ def sanitize_agent_reply(text: str) -> str:
 	"""Strip markdown file tables and soften path-heavy copy for chat."""
 	if not text or not text.strip():
 		return text
+	# Kill "split vs rebuild" lectures — product should just iterate
+	if _CHOICE_DUMP.search(text):
+		return "Updating the layout now — charts, stats, and structure in one pass."
 	lines = text.replace("\r\n", "\n").split("\n")
 	out: list[str] = []
 	i = 0

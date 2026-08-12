@@ -178,6 +178,8 @@ def _envelope_schema_block() -> str:
 		"and an artifact exists, set request=iterate with a clear brief and do the work.\n"
 		"- If the previous turn was a partial update, and the user says continue/retry/same ask, "
 		"set request=iterate with the prior visual brief — do not lecture about scope.\n"
+		"- Never write 'What I would do differently' or ask 'Want me to try A or B?'. "
+		"Just iterate. Short reply like 'Updating the layout now.'\n"
 	)
 
 

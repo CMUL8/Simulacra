@@ -668,6 +668,42 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		delta_note=message,
 		kind="iterate_run",
 	)
+	# Heavy visual asks often land CSS first — keep going on App.tsx without asking the user.
+	if meta.get("style_only") or (
+		meta.get("files_changed") and not meta.get("layout_customized")
+	):
+		emit_event(
+			project_id,
+			"phase",
+			label="Continuing layout rewrite",
+			detail="Styles landed — rewriting App.tsx for the visual ask",
+			status="running",
+		)
+		extend_job_budget(project_id, extra_secs=360.0, extra_steps=40)
+		meta2 = prime_build_app(
+			app_dir,
+			(
+				f"{state.prompt}\n\nFollow-up: {message}\n\n"
+				"CRITICAL: styles.css is already updated. Rewrite src/App.tsx only — "
+				"charts, large stats, timeline, comparison panels. Do not ask to split the work."
+			),
+			project_id=project_id,
+			row_count=len(rows),
+			delta_note=message,
+			kind="iterate_run",
+		)
+		if meta2.get("layout_customized") or (
+			meta2.get("ok") and not meta2.get("style_only") and meta2.get("source") == "prime"
+		):
+			meta = meta2
+		else:
+			# Merge file lists so honesty reflects both passes
+			merged = sorted(
+				set(str(x) for x in (meta.get("changed_files") or []) if x)
+				| set(str(x) for x in (meta2.get("changed_files") or []) if x)
+			)
+			meta = {**meta, **meta2, "changed_files": merged, "retry_pass": True}
+
 	source = meta.get("source") or ("prime" if meta.get("ok") else "heuristic")
 	state = load_state(project_id)
 	_iterate_merge_app_config(state, message)
@@ -741,11 +777,11 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	):
 		honesty = (
 			"## Partial update\n\n"
-			"Styles landed, but the layout rewrite did not finish in time.\n\n"
+			"Styles landed; the layout rewrite is still in progress.\n\n"
 			"**What changed**\n"
 			+ "\n".join(f"- {line}" for line in change_lines)
-			+ "\n\nSay **continue** (or send the same ask again) — I'll keep going on the layout. "
-			"You do not need to rephrase or split the request."
+			+ "\n\nSend the same ask again (or **continue**) and I'll keep rewriting the layout — "
+			"no need to split the request or rebuild from scratch."
 		)
 		source = "craft" if meta.get("source") == "craft" else "heuristic"
 	elif not meta.get("used"):
@@ -754,7 +790,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	else:
 		honesty = (
 			"Builder did not finish this change. Last good preview kept — "
-			"say **continue** and I'll retry the same request."
+			"send the same ask again and I'll retry."
 		)
 		source = meta.get("source") or "error"
 

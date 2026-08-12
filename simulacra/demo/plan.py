@@ -352,8 +352,8 @@ def _agent_chat_turn(
 	# "continue" / "retry" after a partial update should keep working — not stall on chat waffle.
 	from .pipeline import resolve_iterate_brief
 
+	msg = (message or "").strip()
 	if state.phase == "ready":
-		msg = (message or "").strip()
 		if msg and re.match(
 			r"^\s*(continue|retry|again|same|keep going|try again|go ahead)\b",
 			msg,
@@ -362,6 +362,10 @@ def _agent_chat_turn(
 			request = "iterate"
 			if not (turn.brief or "").strip():
 				turn.brief = resolve_iterate_brief(state, None, message)
+		# Visual/layout asks must iterate — never leave the user with a "split vs rebuild" essay.
+		elif request != "iterate" and _looks_like_layout_ask(msg):
+			request = "iterate"
+			turn.brief = (turn.brief or msg).strip() or msg
 
 	if request == "iterate" and state.phase == "ready":
 		brief = resolve_iterate_brief(state, turn.brief, message)
@@ -375,6 +379,17 @@ def _agent_chat_turn(
 			save_state(state)
 
 	return load_state(project_id)
+
+
+_LAYOUT_ASK = re.compile(
+	r"(?i)\b(denser|layout|visual|chart|sparkline|timeline|donut|bar chart|"
+	r"comparison panel|stat cards?|scannable|visual[- ]first|rewrite.*(app|report|ui)|"
+	r"make it (look|more) (like|visual)|redesign)\b"
+)
+
+
+def _looks_like_layout_ask(message: str) -> bool:
+	return bool(message and _LAYOUT_ASK.search(message))
 
 
 def approve_plan(project_id: str) -> ProjectState:
