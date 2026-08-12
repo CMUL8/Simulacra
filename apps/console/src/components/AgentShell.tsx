@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
+import { userFacingFiles } from "../lib/userFacingFiles";
 import { AnswerBlock, humanSourceLabel } from "./agent/AnswerBlock";
 import { ApprovalCard } from "./agent/ApprovalCard";
 import {
@@ -460,8 +461,7 @@ function MessageTurn({
   const kind = turnKind(message);
   const sources =
     kind === "assistant" && isLatestAssistant
-      ? files
-          .filter((f) => !/^(design_brief|plan_preview|kernel-state|agent_context|extract_report)\b/i.test(f.name))
+      ? userFacingFiles(files)
           .slice(0, 8)
           .map((f) => ({ id: f.name, label: humanSourceLabel(f.name) }))
       : [];
@@ -701,7 +701,7 @@ export function AgentShell({
                 jobKind={jobKind}
                 jobStatus={snapshot.job?.status || project.job?.status}
                 phase={project.phase}
-                fileCount={files.length}
+                fileCount={userFacingFiles(files).length}
                 traces={traces}
                 startedAt={waitStartedAt}
                 onStop={onCancel}

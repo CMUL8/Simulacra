@@ -39,6 +39,16 @@ KNOWN_UNSUPPORTED = {
 	".zip",
 }
 
+# Agent/runtime artifacts — never surface as user "sources"
+_INTERNAL_ROOM_NAMES = {
+	"design_brief.json",
+	"plan_preview.json",
+	"kernel-state.json",
+	"kernel_state.json",
+	"agent_context.json",
+	"extract_report.json",
+}
+
 
 class SourceError(ValueError):
 	"""User-facing sources error."""
@@ -177,6 +187,8 @@ def list_source_files(project_id: str) -> list[SourceFile]:
 	out: list[SourceFile] = []
 	for path in sorted(root.rglob("*")):
 		if not path.is_file():
+			continue
+		if path.name.lower() in _INTERNAL_ROOM_NAMES:
 			continue
 		rel = str(path.relative_to(root))
 		size = path.stat().st_size

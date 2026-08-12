@@ -86,14 +86,48 @@ def default_brief(*, prompt: str = "", artifact_kind: str | None = None) -> dict
 
 	brief = copy.deepcopy(DEFAULT_BRIEF)
 	if prompt:
-		title = prompt.strip().split(".")[0][:60].strip()
-		if len(title) > 8:
+		title = title_from_prompt(prompt)
+		if len(title) > 3:
 			brief["product_name"] = title
-			brief["one_liner"] = prompt.strip()[:120]
+			brief["one_liner"] = one_liner_from_prompt(prompt, title)
 	kind = normalize_kind(artifact_kind) if artifact_kind else None
 	if kind:
 		brief = _deep_merge(brief, brief_defaults_for(kind))
 	return brief
+
+
+_TITLE_PREFIX = re.compile(
+	r"^(?:please\s+)?(?:write|create|make|build|generate|draft|produce)\s+"
+	r"(?:me\s+)?(?:a|an|the)\s+"
+	r"(?:short\s+|quick\s+|detailed\s+|full\s+)?"
+	r"(?:report|memo|deck|slides?|presentation|app|dashboard|one[- ]?pager|brief)?\s*"
+	r"(?:about|on|for|covering|regarding)?\s*",
+	re.I,
+)
+
+
+def title_from_prompt(prompt: str) -> str:
+	"""Human product title — not the raw imperative prompt."""
+	line = (prompt or "").strip().split("\n")[0].strip()
+	if not line:
+		return "Untitled"
+	cleaned = _TITLE_PREFIX.sub("", line).strip(" .,:;-")
+	if len(cleaned) < 4:
+		cleaned = line
+	cleaned = cleaned[:72].strip()
+	if cleaned and cleaned[0].islower():
+		cleaned = cleaned[0].upper() + cleaned[1:]
+	return cleaned or "Untitled"
+
+
+def one_liner_from_prompt(prompt: str, title: str) -> str:
+	raw = (prompt or "").strip()
+	if not raw:
+		return "Built with Simulacra"
+	# Avoid echoing the imperative as the subtitle
+	if raw.lower().startswith(("write ", "create ", "make ", "build ", "generate ")):
+		return f"{title} — research brief"
+	return raw[:120]
 
 
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

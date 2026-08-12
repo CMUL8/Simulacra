@@ -5,6 +5,8 @@ type Props = {
   label?: string;
   startedAt?: number | null;
   compact?: boolean;
+  /** Just the 3×3 grid — use as thinking glyph. */
+  iconOnly?: boolean;
 };
 
 function formatElapsed(sec: number): string {
@@ -15,7 +17,17 @@ function formatElapsed(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export function PixelLoader({ label = "Working", startedAt, compact }: Props) {
+function PixelGrid({ compact }: { compact?: boolean }) {
+  return (
+    <div className={`bui-pixel-grid${compact ? " compact" : ""}`} aria-hidden>
+      {Array.from({ length: 9 }, (_, i) => (
+        <i key={i} style={{ animationDelay: `${(i % 3) * 0.12 + Math.floor(i / 3) * 0.08}s` }} />
+      ))}
+    </div>
+  );
+}
+
+export function PixelLoader({ label = "Working", startedAt, compact, iconOnly }: Props) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 100);
@@ -23,13 +35,13 @@ export function PixelLoader({ label = "Working", startedAt, compact }: Props) {
   }, []);
   const sec = startedAt ? Math.max(0, (now - startedAt) / 1000) : 0;
 
+  if (iconOnly) {
+    return <PixelGrid compact={compact ?? true} />;
+  }
+
   return (
     <div className={`bui-loader${compact ? " compact" : ""}`} aria-live="polite">
-      <div className="bui-pixel-grid" aria-hidden>
-        {Array.from({ length: 9 }, (_, i) => (
-          <i key={i} style={{ animationDelay: `${(i % 3) * 0.12 + Math.floor(i / 3) * 0.08}s` }} />
-        ))}
-      </div>
+      <PixelGrid compact={compact} />
       <div className="bui-loader-copy">
         <span className="bui-loader-label">{label}</span>
         {startedAt != null ? <span className="bui-loader-time">{formatElapsed(sec)}</span> : null}
@@ -37,3 +49,5 @@ export function PixelLoader({ label = "Working", startedAt, compact }: Props) {
     </div>
   );
 }
+
+export { PixelGrid, formatElapsed };

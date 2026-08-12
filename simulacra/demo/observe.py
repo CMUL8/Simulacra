@@ -73,6 +73,17 @@ def _work_candidates(root: Path) -> list[Path]:
 			return
 		if rel.startswith("work/quarantine/"):
 			return
+		# Runtime / agent internals — never promote into the user data room
+		base = path.name.lower()
+		if base in {
+			"design_brief.json",
+			"plan_preview.json",
+			"kernel-state.json",
+			"kernel_state.json",
+			"agent_context.json",
+			"extract_report.json",
+		}:
+			return
 		try:
 			resolved = path.resolve()
 		except OSError:
@@ -513,40 +524,47 @@ def duplicate_project_warnings(
 
 
 def heal_display_title(state: ProjectState) -> ProjectState:
-	"""Unstick 'Vendor Risk Command Center' when the prompt is about something else.
-
-	Landing cards only show app_config.title — old keyword heuristics renamed
-	BJP/report projects to Vendor Risk whenever a brief mentioned 'vendor'.
-	"""
+	"""Unstick stock vendor titles and raw imperative prompts as product names."""
 	from .chat import infer_app_config
+	from .design_brief import title_from_prompt
 
 	title = (state.app_config.title or "").strip()
 	stock = {"Vendor Risk Command Center", "Vendor Risk Dashboard"}
-	if title not in stock:
-		return state
 	prompt = (state.prompt or "").strip()
 	product = str((state.design_brief or {}).get("product_name") or "").strip()
 	lower = f"{prompt} {product}".lower()
-	# Real vendor projects keep the title
-	if ("vendor" in lower or "diligence" in lower) and not any(
-		x in lower for x in ("bjp", "bharatiya", "bhartiya", "replace vendor", "ignore")
-	):
-		return state
-	# Prefer design brief / prompt first line
-	if product and product not in stock and len(product) > 3:
-		state.app_config.title = product[:80]
-	else:
-		fixed = infer_app_config(prompt or product or "Report", None)
-		if fixed.title and fixed.title not in stock:
-			state.app_config.title = fixed.title[:80]
-		elif prompt:
-			clause = prompt.split("\n")[0].strip()[:60]
-			if clause:
-				state.app_config.title = clause[:1].upper() + clause[1:]
-	if state.design_brief is not None:
-		state.design_brief["product_name"] = state.app_config.title
-	save_state(state)
-	return load_state(state.id)
+	dirty = False
+
+	if title in stock:
+		# Real vendor projects keep the title
+		if ("vendor" in lower or "diligence" in lower) and not any(
+			x in lower for x in ("bjp", "bharatiya", "bhartiya", "replace vendor", "ignore")
+		):
+			return state
+		if product and product not in stock and len(product) > 3:
+			state.app_config.title = product[:80]
+		else:
+			fixed = infer_app_config(prompt or product or "Report", None)
+			if fixed.title and fixed.title not in stock:
+				state.app_config.title = fixed.title[:80]
+			elif prompt:
+				state.app_config.title = title_from_prompt(prompt)[:80]
+		dirty = True
+	elif prompt and title.lower().startswith(("write ", "create ", "make ", "build ", "generate ")):
+		state.app_config.title = title_from_prompt(prompt)[:80]
+		dirty = True
+
+	if dirty:
+		if state.design_brief is not None:
+			state.design_brief["product_name"] = state.app_config.title
+			liner = str(state.design_brief.get("one_liner") or "")
+			if liner.lower().startswith(("write ", "create ", "make ", "build ")) or liner == "Built with Simulacra":
+				state.design_brief["one_liner"] = f"{state.app_config.title} — research brief"
+			if state.app_config.subtitle in ("", "Built with Simulacra", "Built from your sources"):
+				state.app_config.subtitle = str(state.design_brief.get("one_liner") or "")[:120]
+		save_state(state)
+		return load_state(state.id)
+	return state
 
 
 def heal_broken_preview(state: ProjectState) -> ProjectState:

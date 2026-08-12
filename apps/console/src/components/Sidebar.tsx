@@ -1,6 +1,7 @@
 import { CheckCircle2, Clock, FolderOpen, Home, Plus, Search, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { DataRoomFile, Project } from "../api";
+import { userFacingFiles } from "../lib/userFacingFiles";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { humanSourceLabel } from "./agent/AnswerBlock";
 import { Tooltip } from "./ui/Tooltip";
@@ -54,6 +55,7 @@ export function Sidebar({
 }: Props) {
   const [query, setQuery] = useState("");
 
+  const visibleFiles = useMemo(() => userFacingFiles(files), [files]);
   const q = query.trim().toLowerCase();
   const filteredProjects = useMemo(() => {
     if (!q) return projects;
@@ -65,9 +67,11 @@ export function Sidebar({
   }, [projects, q]);
 
   const filteredFiles = useMemo(() => {
-    if (!q) return files;
-    return files.filter((f) => f.name.toLowerCase().includes(q) || humanSourceLabel(f.name).toLowerCase().includes(q));
-  }, [files, q]);
+    if (!q) return visibleFiles;
+    return visibleFiles.filter(
+      (f) => f.name.toLowerCase().includes(q) || humanSourceLabel(f.name).toLowerCase().includes(q),
+    );
+  }, [visibleFiles, q]);
 
   if (collapsed) return null;
 
@@ -89,20 +93,6 @@ export function Sidebar({
             placeholder="Quick search…"
             aria-label="Search projects and sources"
           />
-        </div>
-        <div className="bui-sidebar-actions">
-          {onHome ? (
-            <button type="button" className="bui-sidebar-link" onClick={onHome}>
-              <Home size={14} />
-              Home
-            </button>
-          ) : null}
-          <Tooltip label="New project">
-            <button type="button" className="bui-sidebar-new" onClick={onNew}>
-              <Plus size={14} strokeWidth={2} />
-              New
-            </button>
-          </Tooltip>
         </div>
       </div>
 
@@ -140,7 +130,7 @@ export function Sidebar({
             <FolderOpen size={12} style={{ marginRight: 6, opacity: 0.7 }} />
             Data room
           </span>
-          <span className="badge">{files.length}</span>
+          <span className="badge">{filteredFiles.length}</span>
         </div>
         <ul className="file-list">
           {filteredFiles.map((f) => (
@@ -154,6 +144,21 @@ export function Sidebar({
           ))}
           {filteredFiles.length === 0 && <li className="empty">{q ? "No matches" : "No files yet"}</li>}
         </ul>
+      </div>
+
+      <div className="bui-sidebar-foot">
+        {onHome ? (
+          <button type="button" className="bui-sidebar-link" onClick={onHome}>
+            <Home size={14} />
+            Home
+          </button>
+        ) : null}
+        <Tooltip label="New project">
+          <button type="button" className="bui-sidebar-new" onClick={onNew}>
+            <Plus size={14} strokeWidth={2} />
+            New
+          </button>
+        </Tooltip>
       </div>
 
       <button type="button" className="sidebar-collapse" onClick={onToggle} aria-label="Collapse sidebar">

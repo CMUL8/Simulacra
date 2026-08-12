@@ -95,10 +95,23 @@ function projectCardTitle(p: Project): string {
   const title = (p.app_config?.title || "").trim();
   const prompt = (p.prompt || "").trim();
   const product = (p.design_brief?.product_name || "").trim();
-  if (title && !STOCK_TITLES.has(title)) return title;
-  if (product && !STOCK_TITLES.has(product) && product.length > 3) return product;
+  const clean = (raw: string) =>
+    raw
+      .replace(
+        /^(?:please\s+)?(?:write|create|make|build|generate|draft)\s+(?:me\s+)?(?:a|an|the)\s+(?:short\s+|quick\s+)?(?:report|memo|deck|slides?|app|dashboard|one[- ]?pager|brief)?\s*(?:about|on|for|covering)?\s*/i,
+        "",
+      )
+      .replace(/^./, (c) => c.toUpperCase())
+      .slice(0, 72)
+      .trim();
+  if (title && !STOCK_TITLES.has(title)) {
+    const t = clean(title);
+    if (t.length > 3) return t;
+    return title;
+  }
+  if (product && !STOCK_TITLES.has(product) && product.length > 3) return clean(product) || product;
   if (prompt) {
-    const line = prompt.split("\n")[0]!.trim().slice(0, 72);
+    const line = clean(prompt.split("\n")[0]!.trim());
     if (line) return line;
   }
   return title || p.goal || "Untitled";
@@ -185,6 +198,7 @@ export function Landing({
   onGuestGateDismiss,
   onDismissError,
 }: Props) {
+  const [formatTouched, setFormatTouched] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [bgPreset] = useState(bgPresetFromSearch);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -201,6 +215,18 @@ export function Landing({
   useEffect(() => {
     if (!gated) promptRef.current?.focus();
   }, [gated]);
+
+  // Soft-switch format from prompt language unless the user already picked one.
+  useEffect(() => {
+    if (formatTouched) return;
+    const lower = prompt.toLowerCase();
+    let next: ArtifactKind | null = null;
+    if (/\b(slide deck|board deck|presentation|powerpoint|keynote|slides)\b/.test(lower)) next = "slides";
+    else if (/\b(one[- ]?pager|one[- ]?page|single page brief|1-pager)\b/.test(lower)) next = "one_pager";
+    else if (/\b(report|memo|write-up|long-form|narrative brief)\b/.test(lower)) next = "report";
+    else if (/\b(dashboard|command center|explorer|ops console|data app)\b/.test(lower)) next = "data_app";
+    if (next && next !== artifactKind) onArtifactKind(next);
+  }, [prompt, formatTouched, artifactKind, onArtifactKind]);
 
   function scrollToProjects() {
     const root = landingRef.current;
@@ -270,7 +296,10 @@ export function Landing({
               className={f.kind === artifactKind ? "format-chip on" : "format-chip"}
               disabled={busy || gated}
               title={f.hint}
-              onClick={() => onArtifactKind(f.kind)}
+              onClick={() => {
+                setFormatTouched(true);
+                onArtifactKind(f.kind);
+              }}
             >
               {f.label}
             </button>

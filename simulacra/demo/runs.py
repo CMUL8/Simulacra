@@ -197,6 +197,10 @@ def create_project(
 
 	kind = normalize_kind(artifact_kind) if artifact_kind else (infer_kind_from_prompt(prompt) or "data_app")
 	kind = normalize_kind(kind)
+	# Prompt can outrank a default App selection when it clearly asks for another format
+	inferred = infer_kind_from_prompt(prompt)
+	if inferred and inferred != kind and kind == "data_app":
+		kind = inferred
 	brief = design_brief if design_brief else default_brief(prompt=prompt, artifact_kind=kind)
 	if design_brief:
 		# Ensure IA knows the chosen format even when a custom brief is passed

@@ -1,10 +1,11 @@
 /**
- * Thinking — expandable traces (Beautiful UI 02 / Cursor pattern).
- * Tabs: Steps · Reasoning · Search · Coding
+ * Thinking — expandable traces (Beautiful UI 02).
+ * Live glyph = pixel grid (same as loader). Clean unique states only.
  */
-import { ChevronDown, Sparkle } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentEvent } from "../../api";
+import { PixelLoader } from "./PixelLoader";
 
 export type ThoughtSnapshot = {
   events: AgentEvent[];
@@ -24,7 +25,7 @@ type Props = {
 };
 
 const NOISE =
-  /^(session ready|turn finished|agent started|agent|agent opening|agent replied|agent ready|research noted|quarantined|working|using tool|tool|using|sandbox:.*|ipython|notebook|python|repl|rlm|ready)$/i;
+  /^(session ready|turn finished|agent started|agent|agent opening|agent replied|agent ready|research noted|quarantined|working|using tool|tool|using|sandbox:.*|ipython|notebook|python|repl|rlm|ready|building app|reading sources)$/i;
 
 export function tracesForWait(traces: AgentEvent[], startedAt?: number | null): AgentEvent[] {
   if (!startedAt) return traces.slice(-50);
@@ -81,23 +82,37 @@ function categorize(e: AgentEvent): Tab {
 
 function linesFor(events: AgentEvent[], tab: Tab): { id: string; text: string; running: boolean }[] {
   const out: { id: string; text: string; running: boolean }[] = [];
+  const seen = new Set<string>();
   for (const e of events) {
     if (e.type === "done" || e.type === "error" || e.type === "message") continue;
     const raw = polish((e.label || "").trim());
     if (!raw || NOISE.test(raw)) continue;
     if (categorize(e) !== tab) continue;
-    const prev = out[out.length - 1];
-    if (prev && prev.text === raw) {
-      prev.running = e.status === "running";
+    const key = raw.toLowerCase();
+    if (seen.has(key)) {
+      const prev = out.find((r) => r.text.toLowerCase() === key);
+      if (prev) prev.running = e.status === "running";
       continue;
     }
+    seen.add(key);
     out.push({
       id: e.id || `${e.type}:${raw}:${e.ts}`,
       text: raw,
       running: e.status === "running",
     });
   }
-  return out.slice(-12);
+  return out.slice(-8);
+}
+
+function latestState(events: AgentEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.type === "done" || e.type === "error" || e.type === "message") continue;
+    const raw = polish((e.label || "").trim());
+    if (!raw || NOISE.test(raw)) continue;
+    return raw;
+  }
+  return null;
 }
 
 const TABS: { id: Tab; label: string }[] = [
@@ -116,7 +131,7 @@ export function ThinkingTrail({
   defaultOpen,
 }: Props) {
   const [now, setNow] = useState(() => Date.now());
-  const [open, setOpen] = useState(defaultOpen ?? live);
+  const [open, setOpen] = useState(defaultOpen ?? false);
   const [tab, setTab] = useState<Tab>("steps");
 
   useEffect(() => {
@@ -130,30 +145,41 @@ export function ThinkingTrail({
       setOpen(defaultOpen);
       return;
     }
-    setOpen(live);
+    // Stay collapsed by default — pixel + current state is enough
+    if (!live) setOpen(false);
   }, [live, defaultOpen]);
 
   const feedEvents = useMemo(() => tracesForWait(events, startedAt), [events, startedAt]);
   const counts = useMemo(() => {
     const c: Record<Tab, number> = { steps: 0, reasoning: 0, search: 0, coding: 0 };
+    const seen: Record<Tab, Set<string>> = {
+      steps: new Set(),
+      reasoning: new Set(),
+      search: new Set(),
+      coding: new Set(),
+    };
     for (const e of feedEvents) {
       if (e.type === "done" || e.type === "error" || e.type === "message") continue;
       const raw = polish((e.label || "").trim());
       if (!raw || NOISE.test(raw)) continue;
-      c[categorize(e)] += 1;
+      const t = categorize(e);
+      const key = raw.toLowerCase();
+      if (seen[t].has(key)) continue;
+      seen[t].add(key);
+      c[t] += 1;
     }
     return c;
   }, [feedEvents]);
 
-  // Prefer a tab that has content while live
   useEffect(() => {
-    if (!live) return;
+    if (!live || !open) return;
     const order: Tab[] = ["steps", "coding", "search", "reasoning"];
     const hit = order.find((t) => counts[t] > 0);
     if (hit && counts[tab] === 0) setTab(hit);
-  }, [counts, live, tab]);
+  }, [counts, live, open, tab]);
 
   const lines = useMemo(() => linesFor(feedEvents, tab), [feedEvents, tab]);
+  const current = useMemo(() => latestState(feedEvents), [feedEvents]);
   const elapsedSec = useMemo(() => {
     if (!startedAt) return 0;
     const end = live ? now : endedAt || now;
@@ -161,7 +187,7 @@ export function ThinkingTrail({
   }, [startedAt, endedAt, live, now]);
 
   const summary = live
-    ? `Thinking · ${formatThoughtElapsed(elapsedSec)}`
+    ? formatThoughtElapsed(elapsedSec)
     : `Thought for ${formatThoughtElapsed(elapsedSec)}`;
 
   return (
@@ -173,8 +199,13 @@ export function ThinkingTrail({
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
         >
-          <Sparkle size={14} className="bui-thinking-star" aria-hidden />
-          <span>{summary}</span>
+          {live ? (
+            <PixelLoader iconOnly compact />
+          ) : (
+            <span className="bui-thinking-dot" aria-hidden />
+          )}
+          <span className="bui-thinking-label">{summary}</span>
+          {live && current ? <span className="bui-thinking-now">{current}</span> : null}
           <ChevronDown size={14} className="bui-thinking-chevron" aria-hidden />
         </button>
         {live && onStop ? (

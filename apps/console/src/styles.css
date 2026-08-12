@@ -4499,7 +4499,8 @@ a.md-link:hover {
   gap: 2px;
   flex-shrink: 0;
 }
-.bui-loader.compact .bui-pixel-grid {
+.bui-loader.compact .bui-pixel-grid,
+.bui-pixel-grid.compact {
   width: 16px;
   height: 16px;
   gap: 1.5px;
@@ -5000,10 +5001,106 @@ a.md-link:hover {
   font-size: 12.5px;
   outline: none;
 }
-.bui-sidebar-actions {
+.bui-sidebar-foot {
   display: flex;
   gap: 6px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
 }
+.bui-build-wait {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0 2px;
+  max-width: 28rem;
+}
+.bui-build-wait-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bui-build-wait-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.bui-build-wait-elapsed {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.bui-build-wait-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+.bui-thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.35);
+  flex-shrink: 0;
+}
+.bui-thinking-label {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.bui-thinking-now {
+  color: var(--text);
+  font-size: 12.5px;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.bui-thinking-summary .bui-pixel-grid {
+  margin-right: 2px;
+}
+.bui-tasks.compact {
+  gap: 2px;
+}
+.bui-tasks.compact .bui-task {
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  grid-template-columns: 16px 1fr;
+  gap: 8px;
+}
+.bui-tasks.compact .bui-task-title {
+  font-size: 12.5px;
+  font-weight: 450;
+  color: var(--text-dim);
+}
+.bui-tasks.compact .bui-task-running .bui-task-title {
+  color: var(--text);
+}
+.bui-tasks.compact .bui-task-completed .bui-task-title {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+.bui-tasks.compact .bui-task-title em {
+  font-style: normal;
+  opacity: 0.65;
+}
+.bui-tasks.compact .bui-task-icon {
+  width: 14px;
+  height: 14px;
+  border-width: 1px;
+  box-shadow: none;
+  background: transparent;
+}
+.wait-stage-build .wait-stage-card,
+.wait-stage-build .bui-wait-card {
+  display: none;
+}
+
 .bui-sidebar-link,
 .bui-sidebar-new {
   flex: 1;

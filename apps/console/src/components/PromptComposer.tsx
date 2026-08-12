@@ -1,6 +1,7 @@
 import { ArrowUp, AtSign, ChevronDown, Square } from "lucide-react";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import type { DataRoomFile } from "../api";
+import { userFacingFiles } from "../lib/userFacingFiles";
 
 type Props = {
   value: string;
@@ -39,7 +40,7 @@ export function PromptComposer({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [value]);
 
-  const filtered = files.filter((f) =>
+  const filtered = userFacingFiles(files).filter((f) =>
     f.name.toLowerCase().includes(mentionFilter.toLowerCase()),
   );
 

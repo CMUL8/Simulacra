@@ -3,8 +3,6 @@ import type { AgentEvent } from "../api";
 import { PixelLoader } from "./agent/PixelLoader";
 import { TaskRows, tasksFromJob } from "./agent/TaskRows";
 import { ThinkingTrail, formatThoughtElapsed, tracesForWait } from "./agent/ThinkingTrail";
-import { ToolChips } from "./agent/ToolChips";
-import { ActivityFeed } from "./ActivityFeed";
 
 type Props = {
   title: string;
@@ -18,12 +16,6 @@ type Props = {
   onStop?: () => void;
   variant?: "thread" | "overlay";
 };
-
-const TIPS = [
-  "Usually under a minute — writing real UI.",
-  "Stop anytime; the last good preview stays.",
-  "After this, chat drives every change.",
-];
 
 function isChatJob(jobKind?: string | null): boolean {
   return !jobKind || jobKind === "agent_chat" || jobKind === "plan_ask";
@@ -49,49 +41,43 @@ export function WaitStage({
 
   const chatMode = isChatJob(jobKind);
   const elapsed = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
-  const tip = TIPS[Math.floor(elapsed / 18) % TIPS.length]!;
   const feedEvents = useMemo(() => tracesForWait(traces, startedAt), [traces, startedAt]);
   const tasks = useMemo(
-    () => tasksFromJob({ jobKind, jobStatus, phase, fileCount }),
-    [jobKind, jobStatus, phase, fileCount],
+    () => tasksFromJob({ jobKind, jobStatus, phase, fileCount, events: feedEvents }),
+    [jobKind, jobStatus, phase, fileCount, feedEvents],
   );
 
   if (chatMode) {
     return (
       <div className="wait-stage wait-stage-chat" role="status" aria-live="polite" aria-busy="true">
-        <div className="bui-wait-chat-head">
-          <PixelLoader label="Churning" startedAt={startedAt} compact />
-        </div>
         <ThinkingTrail events={traces} live startedAt={startedAt} onStop={onStop} />
-        <ToolChips events={feedEvents} />
       </div>
     );
   }
 
+  const shortTitle = (title || "Building").replace(/\s*…\s*$/, "");
+
   return (
     <div
-      className={`wait-stage wait-stage-${variant}`}
+      className={`wait-stage wait-stage-${variant} wait-stage-build`}
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="wait-stage-card bui-wait-card">
-        <div className="wait-stage-top">
-          <PixelLoader label={title || "Building"} startedAt={startedAt} />
-          <div className="wait-stage-meta">
-            <span className="wait-elapsed">{formatThoughtElapsed(elapsed)}</span>
-            {onStop && (
-              <button type="button" className="wait-stop" onClick={onStop}>
+      <div className="bui-build-wait">
+        <div className="bui-build-wait-head">
+          <PixelLoader label={shortTitle} compact />
+          <div className="bui-build-wait-actions">
+            <span className="bui-build-wait-elapsed">{formatThoughtElapsed(elapsed)}</span>
+            {onStop ? (
+              <button type="button" className="bui-thinking-stop" onClick={onStop}>
                 Stop
               </button>
-            )}
+            ) : null}
           </div>
         </div>
-        {subtitle ? <p className="wait-stage-sub">{subtitle}</p> : null}
-        <TaskRows tasks={tasks} />
-        <ToolChips events={feedEvents} limit={5} />
-        <p className="wait-tip">{tip}</p>
-        <ActivityFeed events={feedEvents} live limit={4} />
+        {subtitle ? <p className="bui-build-wait-sub">{subtitle}</p> : null}
+        <TaskRows tasks={tasks} compact />
       </div>
     </div>
   );
