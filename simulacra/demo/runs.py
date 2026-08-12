@@ -186,7 +186,7 @@ def create_chat(
 		seed.append(ChatMessage(role="user", content=prompt.strip(), source="system"))
 	thread = ChatThread(
 		id=cid,
-		title=_title_from_text(title or prompt, "New chat"),
+		title=_title_from_text(title or prompt, "Chat"),
 		messages=seed,
 		prompt=prompt.strip(),
 		artifact_kind=kind,
@@ -197,6 +197,25 @@ def create_chat(
 	state.chat = list(seed)
 	if mode == "own" and kind:
 		state.artifact_kind = kind
+	save_state(state)
+	return load_state(project_id)
+
+
+def delete_chat(project_id: str, chat_id: str) -> ProjectState:
+	"""Remove a chat thread. Keeps at least one chat under the project."""
+	state = load_state(project_id)
+	sync_chat_threads(state)
+	if len(state.chats) <= 1:
+		raise ValueError("Cannot delete the only chat in this project")
+	if not any(t.id == chat_id for t in state.chats):
+		# Already gone — heal and return
+		save_state(state)
+		return load_state(project_id)
+	state.chats = [t for t in state.chats if t.id != chat_id]
+	if state.active_chat_id == chat_id:
+		nxt = state.chats[0]
+		state.active_chat_id = nxt.id
+		state.chat = list(nxt.messages)
 	save_state(state)
 	return load_state(project_id)
 

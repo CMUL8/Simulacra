@@ -45,10 +45,26 @@ def test_activate_valid_chat_still_switches(project: str) -> None:
 	create_chat(project, title="Second")
 	state = load_state(project)
 	other = next(t.id for t in state.chats if t.id != state.active_chat_id)
-	# Switch back to first
 	first = next(t.id for t in state.chats if t.id != other)
-	# Activate the non-active one
 	switched = activate_chat(project, other)
 	assert switched.active_chat_id == other
 	back = activate_chat(project, first)
 	assert back.active_chat_id == first
+
+
+def test_delete_chat(project: str) -> None:
+	from simulacra.demo.runs import create_chat, delete_chat
+
+	create_chat(project, title="Extra")
+	state = load_state(project)
+	assert len(state.chats) >= 2
+	victim = state.active_chat_id
+	other = next(t.id for t in state.chats if t.id != victim)
+	out = delete_chat(project, victim)
+	assert victim not in {t.id for t in out.chats}
+	assert out.active_chat_id == other
+	# Cannot delete last remaining chat
+	import pytest
+
+	with pytest.raises(ValueError, match="only chat"):
+		delete_chat(project, other)

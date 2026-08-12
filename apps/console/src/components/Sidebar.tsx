@@ -1,22 +1,17 @@
 import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Clock,
   Folder,
   FolderOpen,
   Home,
   MessageSquare,
   Plus,
   Search,
-  XCircle,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ChatThreadSummary, DataRoomFile, Project } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { humanSourceLabel } from "./agent/AnswerBlock";
-import { Tooltip } from "./ui/Tooltip";
 
 type Props = {
   projects: Project[];
@@ -29,6 +24,7 @@ type Props = {
   onSelect: (id: string) => void;
   onSelectChat?: (projectId: string, chatId: string) => void;
   onNewChat?: (projectId: string) => void;
+  onDeleteChat?: (projectId: string, chatId: string) => void;
   onToggle: () => void;
   onHome?: () => void;
 };
@@ -38,7 +34,7 @@ function relativeWhen(iso?: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "";
   const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
-  if (mins < 1) return "now";
+  if (mins < 1) return "";
   if (mins < 60) return `${mins}m`;
   const hrs = Math.round(mins / 60);
   if (hrs < 48) return `${hrs}h`;
@@ -47,31 +43,14 @@ function relativeWhen(iso?: string): string {
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function StatusIcon({ status, gates }: { status: string; gates: string }) {
-  if (gates === "pass" && status === "deployed") return <CheckCircle2 size={12} className="status-icon pass" />;
-  if (gates === "fail" || status === "failed") return <XCircle size={12} className="status-icon fail" />;
-  return <Clock size={12} className="status-icon pending" />;
-}
-
-function statusTitle(p: Project): string {
-  if (p.deployed || p.status === "deployed") return "Shipped";
-  if (p.phase === "ready" || p.status === "ready") return "Built";
-  if (p.phase === "plan" || p.status === "planning" || p.status === "draft") return "Draft";
-  const status = (p.status || "").toLowerCase();
-  if (["building_app", "publishing_preview", "approved"].includes(status)) return "Building";
-  if (["extracting", "gating"].includes(status)) return "Scanning";
-  if (status === "failed") return "Failed";
-  return p.phase === "build" ? "Building" : "Draft";
-}
-
 function chatsFor(p: Project): ChatThreadSummary[] {
   const idx = p.chat_index || p.chats;
   if (idx && idx.length) return idx;
-  const title = (p.chat?.[0]?.content || p.prompt || "Main chat").split("\n")[0]!.slice(0, 56);
+  const title = (p.chat?.[0]?.content || p.prompt || "Chat").split("\n")[0]!.slice(0, 48);
   return [
     {
       id: p.active_chat_id || "main",
-      title: title || "Main chat",
+      title: title || "Chat",
       updated_at: p.created_at || new Date().toISOString(),
       active: true,
       message_count: p.chat?.length || 0,
@@ -80,35 +59,35 @@ function chatsFor(p: Project): ChatThreadSummary[] {
   ];
 }
 
-function shortFileLabel(name: string): string {
-  const label = humanSourceLabel(name);
-  const first = label.split(/\s+/)[0] || label;
-  return first.length > 14 ? `${first.slice(0, 13)}…` : first;
+function chatLabel(c: ChatThreadSummary, index: number): string {
+  const t = (c.title || "").trim();
+  if (!t || /^new chat$/i.test(t) || /^chat$/i.test(t) || /^main chat$/i.test(t)) {
+    return index === 0 ? "Chat" : `Chat ${index + 1}`;
+  }
+  return t;
 }
 
-/** Cursor-like sidebar: section actions, lean rows, icon-first data room. */
+/** Cursor-like project → chats rail. No tooltip flash; delete on hover. */
 export function Sidebar({
   projects,
   activeId,
   activeChatId,
   files,
-  focus,
   collapsed,
   onNew,
   onSelect,
   onSelectChat,
   onNewChat,
+  onDeleteChat,
   onToggle,
   onHome,
 }: Props) {
   const [query, setQuery] = useState("");
-  const [dataRoomOpen, setDataRoomOpen] = useState(true);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [dataRoomOpen, setDataRoomOpen] = useState(false);
 
   useEffect(() => {
-    if (!activeId) return;
-    setExpanded((prev) => (prev[activeId] ? prev : { ...prev, [activeId]: true }));
-  }, [activeId]);
+    // Keep data room collapsed by default — less chrome noise
+  }, []);
 
   const visibleFiles = useMemo(() => userFacingFiles(files), [files]);
   const q = query.trim().toLowerCase();
@@ -132,89 +111,68 @@ export function Sidebar({
   if (collapsed) return null;
 
   return (
-    <aside className={`sidebar bui-sidebar ${focus === "files" ? "focus-files" : ""}`}>
+    <aside className="sidebar bui-sidebar">
       <div className="bui-sidebar-top">
         <div className="bui-sidebar-brand">
           <span className="bui-sidebar-mark">S</span>
-          <div>
-            <strong>Simulacra</strong>
-            <em>Workspace</em>
-          </div>
+          <strong>Simulacra</strong>
         </div>
         <div className="bui-sidebar-search">
           <Search size={13} aria-hidden />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search…"
-            aria-label="Search projects and sources"
+            placeholder="Search"
+            aria-label="Search projects"
           />
         </div>
       </div>
 
       <div className="sidebar-section grow projects-section">
-        <div className="sidebar-head title-case with-actions">
+        <div className="sidebar-head title-case">
           <span>Projects</span>
-          <div className="sidebar-head-actions">
-            <span className="badge quiet">{filteredProjects.length}</span>
-            {onNewChat && activeId ? (
-              <Tooltip label="New chat">
-                <button
-                  type="button"
-                  className="sidebar-head-btn"
-                  onClick={() => onNewChat(activeId)}
-                  aria-label="New chat in active project"
-                >
-                  <Plus size={14} />
-                </button>
-              </Tooltip>
-            ) : null}
-          </div>
         </div>
         <ul className="project-list nested">
-          {filteredProjects.length === 0 && <li className="empty">No projects yet</li>}
+          {filteredProjects.length === 0 && <li className="empty">No projects</li>}
           {filteredProjects.map((p) => {
-            const open = Boolean(expanded[p.id]) || p.id === activeId;
+            const isActive = activeId === p.id;
             const chats = chatsFor(p);
-            const isActiveProject = activeId === p.id;
-            const st = statusTitle(p);
             return (
-              <li key={p.id} className={`project-group${isActiveProject ? " on" : ""}`}>
-                <div className="project-row">
+              <li key={p.id} className={`project-group${isActive ? " on" : ""}`}>
+                <div className={`project-row${isActive ? " active" : ""}`}>
                   <button
                     type="button"
-                    className="project-twist"
-                    aria-label={open ? "Collapse chats" : "Expand chats"}
-                    onClick={() => setExpanded((prev) => ({ ...prev, [p.id]: !open }))}
+                    className="project-item"
+                    onClick={() => onSelect(p.id)}
                   >
-                    {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                  <button
-                    type="button"
-                    className={`project-item ${isActiveProject ? "active" : ""}`}
-                    onClick={() => {
-                      setExpanded((prev) => ({ ...prev, [p.id]: true }));
-                      onSelect(p.id);
-                    }}
-                    title={`${p.app_config?.title || "Untitled"} · ${st}`}
-                  >
-                    {open ? (
+                    {isActive ? (
                       <FolderOpen size={14} className="project-folder" />
                     ) : (
                       <Folder size={14} className="project-folder" />
                     )}
                     <span className="project-title">{p.app_config?.title || "Untitled"}</span>
-                    <span className="project-status" title={st} aria-label={st}>
-                      <StatusIcon status={p.status} gates={p.gates_status} />
-                    </span>
                   </button>
+                  {isActive && onNewChat ? (
+                    <button
+                      type="button"
+                      className="row-action"
+                      aria-label="New chat"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNewChat(p.id);
+                      }}
+                    >
+                      <Plus size={13} />
+                    </button>
+                  ) : null}
                 </div>
-                {open ? (
+                {isActive ? (
                   <ul className="chat-list">
-                    {chats.map((c) => {
-                      const chatActive = isActiveProject && (activeChatId || p.active_chat_id) === c.id;
+                    {chats.map((c, i) => {
+                      const chatActive = (activeChatId || p.active_chat_id) === c.id;
+                      const canDelete = Boolean(onDeleteChat) && chats.length > 1;
                       return (
-                        <li key={c.id}>
+                        <li key={c.id} className="chat-row">
                           <button
                             type="button"
                             className={`chat-item${chatActive ? " active" : ""}`}
@@ -222,12 +180,24 @@ export function Sidebar({
                               if (onSelectChat) onSelectChat(p.id, c.id);
                               else onSelect(p.id);
                             }}
-                            title={c.title}
                           >
                             <MessageSquare size={12} className="chat-icon" />
-                            <span className="chat-title">{c.title}</span>
+                            <span className="chat-title">{chatLabel(c, i)}</span>
                             <span className="chat-age">{relativeWhen(c.updated_at)}</span>
                           </button>
+                          {canDelete ? (
+                            <button
+                              type="button"
+                              className="row-action danger"
+                              aria-label="Delete chat"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteChat?.(p.id, c.id);
+                              }}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          ) : null}
                         </li>
                       );
                     })}
@@ -242,46 +212,35 @@ export function Sidebar({
       <div className={`sidebar-section data-room-section${dataRoomOpen ? "" : " collapsed"}`}>
         <button
           type="button"
-          className="sidebar-head title-case collapsible with-actions"
+          className="sidebar-head title-case collapsible"
           onClick={() => setDataRoomOpen((v) => !v)}
           aria-expanded={dataRoomOpen}
         >
-          <span>
-            {dataRoomOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            Data Room
-          </span>
+          <span>Data Room</span>
           <span className="badge quiet">{filteredFiles.length}</span>
         </button>
         {dataRoomOpen ? (
-          <ul className="file-list compact-icons" aria-label="Data room files">
+          <ul className="file-list quiet" aria-label="Data room files">
             {filteredFiles.map((f) => (
-              <li key={f.name}>
-                <Tooltip label={`${humanSourceLabel(f.name)} · ${(f.size / 1024).toFixed(1)} KB`}>
-                  <button type="button" className="file-chip" title={f.name}>
-                    <FileTypeIcon ext={f.type} />
-                    <span>{shortFileLabel(f.name)}</span>
-                  </button>
-                </Tooltip>
+              <li key={f.name} className="file-row" title={f.name}>
+                <FileTypeIcon ext={f.type} />
+                <span className="file-name">{humanSourceLabel(f.name)}</span>
               </li>
             ))}
-            {filteredFiles.length === 0 && <li className="empty">{q ? "No matches" : "Empty"}</li>}
+            {filteredFiles.length === 0 && <li className="empty">Empty</li>}
           </ul>
         ) : null}
       </div>
 
       <div className="bui-sidebar-foot">
         {onHome ? (
-          <Tooltip label="Home">
-            <button type="button" className="bui-sidebar-link icon-only" onClick={onHome} aria-label="Home">
-              <Home size={15} />
-            </button>
-          </Tooltip>
-        ) : null}
-        <Tooltip label="New project">
-          <button type="button" className="bui-sidebar-new icon-only" onClick={onNew} aria-label="New project">
-            <Plus size={16} strokeWidth={2} />
+          <button type="button" className="bui-sidebar-link icon-only" onClick={onHome} aria-label="Home">
+            <Home size={15} />
           </button>
-        </Tooltip>
+        ) : null}
+        <button type="button" className="bui-sidebar-new icon-only" onClick={onNew} aria-label="New project">
+          <Plus size={16} strokeWidth={2} />
+        </button>
       </div>
 
       <button type="button" className="sidebar-collapse" onClick={onToggle} aria-label="Collapse sidebar">

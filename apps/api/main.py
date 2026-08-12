@@ -912,6 +912,21 @@ def post_activate_chat(
 		raise HTTPException(400, str(exc)) from exc
 
 
+@app.delete("/projects/{project_id}/chats/{chat_id}")
+def delete_project_chat(
+	project_id: str,
+	chat_id: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict:
+	from .runs import delete_chat
+
+	try:
+		delete_chat(project_id, chat_id)
+		return project_snapshot(project_id)
+	except ValueError as exc:
+		raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/projects/{project_id}/rollback")
 def post_rollback(
 	project_id: str,

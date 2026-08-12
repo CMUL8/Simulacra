@@ -7,6 +7,7 @@ import {
   createProject,
   createChat,
   activateChat,
+  deleteChat,
   deployProject,
   fetchMe,
   getProject,
@@ -672,7 +673,7 @@ export default function App({
     setBusy(true);
     setError(null);
     try {
-      const snap = await createChat(projectId, { title: "New chat" });
+      const snap = await createChat(projectId, { title: "Chat" });
       setSnapshot(snap);
       mergeProjectMeta(snap);
       setMode(snap.project.phase === "ready" ? "workspace" : "plan");
@@ -683,6 +684,18 @@ export default function App({
       setError(err instanceof Error ? err.message : "Could not create chat");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleDeleteChat(projectId: string, chatId: string) {
+    setError(null);
+    try {
+      const snap = await deleteChat(projectId, chatId);
+      setSnapshot(snap);
+      mergeProjectMeta(snap);
+      await refreshProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete chat");
     }
   }
 
@@ -779,6 +792,7 @@ export default function App({
           onSelect={loadProject}
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
+          onDeleteChat={handleDeleteChat}
           onToggle={() => setSidebarOpen(false)}
         />
       )}

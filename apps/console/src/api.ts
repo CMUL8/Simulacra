@@ -576,6 +576,12 @@ export async function activateChat(projectId: string, chatId: string): Promise<S
   });
 }
 
+export async function deleteChat(projectId: string, chatId: string): Promise<Snapshot> {
+  return json(`/projects/${projectId}/chats/${encodeURIComponent(chatId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function cancelProjectJob(id: string): Promise<Snapshot> {
   return json(`/projects/${id}/cancel`, { method: "POST" });
 }
