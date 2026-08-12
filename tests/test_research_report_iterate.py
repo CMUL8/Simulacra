@@ -26,6 +26,8 @@ def report_scaffold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[st
 	monkeypatch.setattr(paths_mod, "RUNS_DIR", runs)
 	monkeypatch.setattr(runs_mod, "RUNS_DIR", runs)
 	monkeypatch.delenv("SIMULACRA_USE_PRIME", raising=False)
+	monkeypatch.setattr("simulacra.demo.prime_builder.prime_enabled", lambda: False)
+	monkeypatch.setattr("simulacra.demo.prime_hook.prime_enabled", lambda: False)
 	monkeypatch.setattr(
 		"simulacra.demo.tenants.assert_under_project_quota",
 		lambda *_a, **_k: None,
@@ -77,7 +79,7 @@ def test_report_craft_marker_only_is_style_only(report_scaffold: tuple[str, Path
 	meta = prime_build_app(app, "Polish the report", project_id=pid, row_count=0)
 	assert meta["style_only"] is True
 	assert meta["layout_customized"] is False
-	assert meta["source"] == "craft"
+	assert meta["source"] == "style"
 	# Marker may be present, but this is not an "## Updated" content win
 	assert meta.get("ok") is True
 
@@ -144,7 +146,7 @@ def test_ensure_research_aware_rewrites_old_app(report_scaffold: tuple[str, Path
 	assert ensure_research_aware_report_app(app) is True
 	tsx = (app / "src" / "App.tsx").read_text()
 	assert "research.json" in tsx
-	assert "narrativeMode" in tsx or "researchSections" in tsx
+	assert "sections" in tsx
 
 
 def test_craft_with_research_is_layout_customized(report_scaffold: tuple[str, Path]) -> None:
@@ -161,7 +163,7 @@ def test_craft_with_research_is_layout_customized(report_scaffold: tuple[str, Pa
 	meta = prime_build_app(app, "Rebuild report from research", project_id=pid, row_count=0)
 	assert meta["layout_customized"] is True
 	assert meta["style_only"] is False
-	assert meta["source"] == "craft"
+	assert meta["source"] == "prime"
 	assert "research.json" in (app / "src" / "App.tsx").read_text()
 
 
@@ -174,7 +176,7 @@ def test_parse_research_payload_key_findings() -> None:
 	parsed = parse_research_payload(raw)
 	assert parsed["title"] == "Topic"
 	assert any(s["heading"] == "Overview" for s in parsed["sections"])
-	assert any(s["heading"] == "Key findings" for s in parsed["sections"])
+	assert any(s["heading"] == "Key points" for s in parsed["sections"])
 
 
 def test_iterate_does_not_rename_report_to_vendor_risk(report_scaffold: tuple[str, Path]) -> None:

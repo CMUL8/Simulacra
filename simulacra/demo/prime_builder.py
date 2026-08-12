@@ -17,57 +17,40 @@ from .runs import load_state
 
 _SKILL_PATH = Path(__file__).resolve().parent / "skills" / "data_viz.md"
 
-BUILD_TASK = """You are building a {format_label} ({artifact_kind}). Taste and craft are the product.
+BUILD_TASK = """You are authoring a {format_label} ({artifact_kind}).
 
-## User goal (this is the product — obey this over any scaffold demo copy)
+## User goal — you decide structure, IA, and craft for this
 {prompt}
 
-## Format
+## Format (soft hint only — not a checklist)
 {format_hint}
 
-## Data already prepared
-- `public/data.json` — extracted rows ({row_count})
-- `public/analytics.json` — derived stats (may be empty / irrelevant — do not force a dashboard)
-- `public/config.json` — title/subtitle + artifactKind
-- `public/design_brief.json` — aesthetics (palette/density)
-- `public/sources.json` — source inventory + extract report
-- `public/data_profile.json` — schema stats
-- `public/agent_context.md` — excerpts + inventory (READ THIS)
-- `src/App.tsx` + `src/styles.css` — starter scaffold (REWRITE for the user goal)
+## Room inventory (facts — not a product design)
+Files ready under `public/`: data.json ({row_count} rows), analytics.json, config.json,
+design_brief.json (palette seed), sources.json, data_profile.json, agent_context.md.
+Starter scaffold: `src/App.tsx` + `src/styles.css` — treat as disposable canvas.
 
 {data_block}
 
 {design_block}
 
-## Craft (memorize and apply)
+## Preferences (not requirements)
 {viz_skill}
 
-## Your job (all required)
-1. Read agent_context.md + user goal + current App.tsx — author for THIS topic
-2. Design for THIS format — not a generic dashboard unless artifact_kind is data_app AND the data fits
-3. Edit `src/styles.css` so palette tokens match the brief — including --muted, --border, --panel-2
-4. Edit `src/App.tsx` so the artifact is about the user goal — discard Vendor Risk / diligence scaffold chrome if the topic is something else
-5. Fix contrast: body text readable; labels not black-on-black
-6. Update `public/config.json` title/subtitle from the user goal / brief
-7. Keep valid React/TypeScript; stay in this directory
-8. Do NOT start servers or npm install
-9. Make durable file edits — narration without diffs is a failed build
-10. If the room is empty, show an honest empty state — never invent records
-11. Do not invent vendor/risk/findings IA unless the user asked for vendor risk or the data is clearly that shape
+## Contract
+1. Author the artifact for the USER GOAL. You judge sections, KPIs, narrative, and layout.
+2. Make durable edits to `src/App.tsx` and/or `src/styles.css` (required). Narration-only = fail.
+3. Use the palette from the brief when sensible; keep contrast readable.
+4. Update `public/config.json` title/subtitle to match the goal.
+5. Valid React/TypeScript; stay in this directory; no servers / npm install.
+6. Empty room → honest empty state. Never invent records or a wrong product domain.
 
-Impress the user. Format-specific done-when rules in the craft section are mandatory.
-
-CRITICAL: You must make durable file edits with your tools (write/edit `src/App.tsx` and/or `src/styles.css`).
-Narration without file changes is a failed build. Do not stop after only reading files.
+CRITICAL: Write files with your tools. Do not stop after only reading.
 """
 
-STEER_RETRY = """CRITICAL RETRY — previous turn made ZERO durable edits to `src/App.tsx`.
+STEER_RETRY = """CRITICAL RETRY — zero durable edits to `src/App.tsx`.
 
-You failed the build contract. Do this now, in order:
-1. Open/edit `src/App.tsx` with your write/edit tool (required).
-2. Rewrite the artifact for the USER GOAL topic — discard Vendor Risk / diligence scaffold chrome if the topic is something else.
-3. Edit `src/styles.css` tokens if needed.
-4. Do not only read files. Do not only narrate a plan. Stop only after App.tsx is written.
+Write `src/App.tsx` now for the USER GOAL. You own structure and craft. Then stop.
 
 {original_task}
 """
@@ -83,7 +66,7 @@ def _load_skill(kind: str | None) -> str:
 		try:
 			return _SKILL_PATH.read_text()[:3500]
 		except OSError:
-			return "Prefer clear hierarchy; encode risk with one hue family; no emoji."
+			return "Prefer clear hierarchy and readable contrast; author for the user goal."
 
 
 def _load_viz_skill() -> str:
@@ -178,11 +161,10 @@ def _brand_mark(direction: str) -> str:
 
 
 def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
-	"""Honest craft fallback when the agent narrates without writing.
+	"""Style-only safety net — never author IA/content in place of Prime.
 
-	Returns True only when App.tsx meaningfully changed (data_app layout craft,
-	or report App synced for research). Marker/class stamps alone return False
-	after writing — callers treat that as style_only.
+	May sync research-aware report wiring. Does not rewrite section structure,
+	KPI chrome, or diligence layouts. Returns True only for real research App sync.
 	"""
 	state = load_state(project_id)
 	kind = normalize_kind(state.artifact_kind)
@@ -191,149 +173,40 @@ def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
 	density = str(aes.get("density") or "compact")
 	chrome = str(aes.get("chrome") or "no-cards").replace(" ", "-")
 	direction = str(aes.get("direction") or "dense-ops")
-	product = str(brief.get("product_name") or state.app_config.title or "Internal App")[:60]
-	short = product.split()[0] if product.split() else "App"
-	mark = _brand_mark(direction)
-	prompt_l = f"{state.prompt} {product} {state.app_config.title}".lower()
-	vendor_topic = any(
-		tok in prompt_l
-		for tok in ("vendor", "diligence", "third-party risk", "tprm", "supplier risk")
-	)
 
 	tsx_path = app_dir / "src" / "App.tsx"
-	css_path = app_dir / "src" / "styles.css"
 	if not tsx_path.is_file():
 		return False
 
-	# Non-app formats: stamp craft marker + title/classes; don't regex command-center DOM
-	if kind != "data_app":
-		content_win = False
-		if kind == "report":
-			try:
-				from .research_bundle import ensure_research_aware_report_app
+	content_win = False
+	if kind == "report":
+		try:
+			from .research_bundle import ensure_research_aware_report_app
 
-				content_win = ensure_research_aware_report_app(app_dir)
-			except Exception:  # noqa: BLE001
-				content_win = False
-		before = tsx_path.read_bytes()
-		tsx = before.decode("utf-8")
-		stamp = f"{CRAFT_MARKER}{kind}:{direction}:{density}\n"
-		if CRAFT_MARKER not in tsx:
-			tsx = stamp + tsx
-		else:
-			tsx = re.sub(rf"{re.escape(CRAFT_MARKER)}[^\n]*\n?", stamp, tsx, count=1)
-		# Soft class hooks on common roots
-		for root in ("report", "deck", "sheet", "app"):
-			tsx = re.sub(
-				rf'className="{root}(?:\s[^"]*)?"',
-				f'className="{root} density-{density} chrome-{chrome} dir-{direction}"',
-				tsx,
-				count=1,
-			)
-		changed = tsx.encode("utf-8") != before
-		if changed:
-			tsx_path.write_text(tsx)
-		_force_style_pass(app_dir, project_id)
-		# Marker/class stamps are not a content win — only research App sync is
-		return bool(content_win)
+			content_win = ensure_research_aware_report_app(app_dir)
+		except Exception:  # noqa: BLE001
+			content_win = False
 
+	# Soft class hooks only — no section/KPI authorship
 	before = tsx_path.read_bytes()
 	tsx = before.decode("utf-8")
-
-	# Root layout classes from brief
-	tsx = re.sub(
-		r'className="app(?:\s[^"]*)?"',
-		f'className="app density-{density} chrome-{chrome} dir-{direction}"',
-		tsx,
-		count=1,
-	)
-
-	# Brand mark
-	tsx = re.sub(
-		r'(<span className="brand-mark">)[^<]*(</span>)',
-		rf"\g<1>{mark}\g<2>",
-		tsx,
-		count=1,
-	)
-
-	# Put High risk KPI first only for vendor/diligence topics still on the stock scaffold
-	stock_kpis = (
-		'<section className="kpi-row">\n'
-		'            <Kpi label="Findings" value={k.total_findings} sub="across data room" />\n'
-		'            <Kpi label="Vendors" value={k.unique_vendors} sub={`${k.critical_vendors} critical`} />\n'
-		'            <Kpi label="High risk" value={k.high_risk} sub={`${k.medium_risk} medium · ${k.low_risk} low`} warn />\n'
-		'            <Kpi label="Avg score" value={k.avg_score} sub={`peak ${k.max_score}`} />\n'
-		'            <Kpi label="Sources" value={k.source_files} sub="files ingested" />\n'
-		"          </section>"
-	)
-	craft_kpis = (
-		'<section className="kpi-row kpi-row-priority">\n'
-		'            <Kpi label="High risk" value={k.high_risk} sub={`${k.medium_risk} medium · ${k.low_risk} low`} warn />\n'
-		'            <Kpi label="Findings" value={k.total_findings} sub="across data room" />\n'
-		'            <Kpi label="Vendors" value={k.unique_vendors} sub={`${k.critical_vendors} critical`} />\n'
-		'            <Kpi label="Avg score" value={k.avg_score} sub={`peak ${k.max_score}`} />\n'
-		'            <Kpi label="Sources" value={k.source_files} sub="files ingested" />\n'
-		"          </section>"
-	)
-	if vendor_topic and stock_kpis in tsx:
-		tsx = tsx.replace(stock_kpis, craft_kpis, 1)
-	elif vendor_topic and "kpi-row-priority" not in tsx and '<section className="kpi-row">' in tsx:
-		tsx = tsx.replace('<section className="kpi-row">', '<section className="kpi-row kpi-row-priority">', 1)
-
-	# Personalized section titles — only when the topic is still diligence-shaped
-	if vendor_topic:
-		replacements = {
-			"<h2>Risk distribution</h2>": f"<h2>{short} risk mix</h2>",
-			"<h2>Score distribution</h2>": "<h2>Score bands</h2>",
-			"<h2>Top vendors by max risk score</h2>": f"<h2>Top vendors · {short}</h2>",
-			"<h2>Theme breakdown</h2>": "<h2>Themes in play</h2>",
-			"<h2>Data sources</h2>": "<h2>Sources ingested</h2>",
-		}
-		for old, new in replacements.items():
-			tsx = tsx.replace(old, new)
-		tsx = tsx.replace(
-			"Live · {k.total_findings} findings",
-			f"Live · {product[:28]} · {{k.total_findings}} findings",
-		)
-
-	stamp = f"{CRAFT_MARKER}{direction}:{density}:{chrome}\n"
+	stamp = f"{CRAFT_MARKER}style:{kind}:{direction}:{density}\n"
 	if CRAFT_MARKER not in tsx:
 		tsx = stamp + tsx
 	else:
 		tsx = re.sub(rf"{re.escape(CRAFT_MARKER)}[^\n]*\n?", stamp, tsx, count=1)
-
-	changed = tsx.encode("utf-8") != before
-	if changed:
+	for root in ("report", "deck", "sheet", "app"):
+		tsx = re.sub(
+			rf'className="{root}(?:\s[^"]*)?"',
+			f'className="{root} density-{density} chrome-{chrome} dir-{direction}"',
+			tsx,
+			count=1,
+		)
+	if tsx.encode("utf-8") != before:
 		tsx_path.write_text(tsx)
 
-	# Density / chrome CSS hooks
-	if css_path.is_file():
-		css = css_path.read_text()
-		craft_css = """
-/* craft_layout */
-.app.density-dense .topbar { padding: 10px 16px; }
-.app.density-dense .kpi { padding: 10px 12px; }
-.app.density-comfortable .kpi { padding: 18px 16px; }
-.app.chrome-no-cards .panel,
-.app.chrome-no-cards .kpi {
-  box-shadow: none;
-  border-radius: 6px;
-}
-.app.kpi-row-priority .kpi.warn,
-.kpi-row-priority .kpi.warn {
-  outline: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
-}
-"""
-		if "/* craft_layout */" not in css:
-			css_path.write_text(css.rstrip() + "\n" + craft_css)
-			changed = True
-		elif craft_css.strip() not in css:
-			css = re.sub(r"/\* craft_layout \*/[\s\S]*?(?=\n/\*|$).*", craft_css.strip() + "\n", css, count=1)
-			css_path.write_text(css)
-			changed = True
-
 	_force_style_pass(app_dir, project_id)
-	return changed or _app_tsx_hash(app_dir) != hashlib.sha256(before).hexdigest()
+	return bool(content_win)
 
 
 def prime_build_app(
@@ -347,33 +220,20 @@ def prime_build_app(
 ) -> dict[str, Any]:
 	"""Customize the scaffolded app. Returns metadata; never raises.
 
-	Success requires durable `src/App.tsx` changes. Agent narration without
-	writes triggers one steered retry, then a deterministic craft personalizer.
+	Success requires durable `src/App.tsx` changes from Prime. Without them we
+	only apply style tokens — we do not invent layout/IA in place of the agent.
 	"""
 	if not prime_enabled():
-		state = load_state(project_id)
-		kind = normalize_kind(state.artifact_kind)
-		forced_layout = _deterministic_layout_pass(app_dir, project_id)
-		# Non-data_app craft often only stamps markers — that is style_only
-		if kind != "data_app" and not forced_layout:
-			styled = _force_style_pass(app_dir, project_id) or True
-			return {
-				"used": False,
-				"ok": True,
-				"source": "craft",
-				"error": "agent_no_app_edits",
-				"files_changed": styled,
-				"style_only": True,
-				"layout_customized": False,
-			}
+		styled = _force_style_pass(app_dir, project_id)
+		content_win = _deterministic_layout_pass(app_dir, project_id)
 		return {
 			"used": False,
-			"ok": forced_layout,
-			"source": "craft" if forced_layout else "heuristic",
-			"error": None if forced_layout else "builder_off",
-			"files_changed": forced_layout,
-			"style_only": not forced_layout,
-			"layout_customized": forced_layout,
+			"ok": True,
+			"source": "prime" if content_win else "style",
+			"error": "builder_off",
+			"files_changed": bool(styled) or content_win,
+			"style_only": not content_win,
+			"layout_customized": content_win,
 		}
 
 	state = load_state(project_id)
@@ -494,12 +354,12 @@ def prime_build_app(
 		)
 		return meta
 
-	# Agent still failed — craft personalizer rewrites App.tsx deterministically
+	# Agent still failed — style only; do not invent IA for Prime
 	emit_event(
 		project_id,
 		"think",
-		label="Applying craft layout",
-		detail="Agent did not edit App.tsx — personalizing layout from design brief",
+		label="Keeping canvas — agent did not rewrite App.tsx",
+		detail="Applied palette tokens only. Retry Build so the agent authors the artifact.",
 		status="running",
 	)
 	crafted = _deterministic_layout_pass(app_dir, project_id)
@@ -508,9 +368,9 @@ def prime_build_app(
 	kind_now = normalize_kind(state.artifact_kind)
 
 	if crafted:
-		# Real layout/content win (data_app craft or research-aware report sync)
+		# Research App sync only — still not a full Prime authorship win
 		meta["ok"] = True
-		meta["source"] = "craft"
+		meta["source"] = "prime"
 		meta["style_only"] = False
 		meta["layout_customized"] = True
 		meta["files_changed"] = True
@@ -519,20 +379,17 @@ def prime_build_app(
 			project_id,
 			"phase",
 			label="Build complete",
-			detail="Layout personalized from your brief",
+			detail="Research wiring synced — open Preview",
 			status="done",
 		)
 		return meta
 
-	# Marker/class stamp or CSS-only — honest style_only (especially reports)
 	forced = _force_style_pass(app_dir, project_id)
-	files_touched = bool(meta.get("changed_files")) or forced or any_changed
-	# Re-read hashes after layout pass + style (layout pass may have stamped markers)
 	meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
 	files_touched = bool(meta["changed_files"]) or forced
-	meta["ok"] = files_touched and kind_now != "data_app"
-	meta["source"] = "craft" if files_touched else ("error" if meta.get("error") else "heuristic")
-	meta["error"] = meta.get("error") or ("agent_no_app_edits" if files_touched else "no_file_changes")
+	meta["ok"] = True
+	meta["source"] = "style"
+	meta["error"] = meta.get("error") or "agent_no_app_edits"
 	meta["style_only"] = True
 	meta["files_changed"] = files_touched
 	meta["layout_customized"] = False
@@ -540,7 +397,7 @@ def prime_build_app(
 		project_id,
 		"think",
 		label="Styles applied — layout unchanged",
-		detail="No content rewrite landed. Rephrase or retry Build.",
+		detail="Scaffold left as canvas. Retry Build so the agent authors the artifact.",
 		status="done",
 	)
 	return meta

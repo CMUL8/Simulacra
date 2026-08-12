@@ -33,8 +33,8 @@ DEFAULT_BRIEF: dict[str, Any] = {
 	},
 	"information_architecture": {
 		"primary_view": "overview",
-		"must_have": ["KPI strip", "primary table", "clear hierarchy"],
-		"must_not": ["emoji", "purple glow", "generic Inter-on-white", "rounded pills"],
+		"must_have": [],
+		"must_not": ["emoji", "purple glow", "generic Inter-on-white"],
 	},
 	"copy_tone": "precise",
 	"references": [],
@@ -416,7 +416,6 @@ def update_project_brief(project_id: str, patch: dict[str, Any] | None = None):
 
 def brief_to_prime_block(brief: dict[str, Any], *, delta_note: str = "") -> str:
 	palette = resolve_palette(brief)
-	# Strip stock Vendor Risk identity from what we show the agent
 	safe = copy.deepcopy(brief)
 	if is_stock_vendor_name(str(safe.get("product_name") or "")):
 		safe["product_name"] = "Untitled"
@@ -424,38 +423,24 @@ def brief_to_prime_block(brief: dict[str, Any], *, delta_note: str = "") -> str:
 		"monitor vendor findings and risk scores",
 	}:
 		safe["one_liner"] = "Chat with the agent — Build when ready"
+	# Do not prescribe IA — Prime judges structure
 	ia = dict(safe.get("information_architecture") or {})
-	must = [m for m in (ia.get("must_have") or []) if "vendor" not in str(m).lower()]
-	if must:
-		ia["must_have"] = must
+	ia["must_have"] = []
 	safe["information_architecture"] = ia
 
 	aes = safe.get("aesthetic") or {}
 	lines = [
-		"## Design brief (aesthetics — follow palette/density; do NOT invent a different product topic)",
-		"Read `public/design_brief.json` if present. User prompt wins over any leftover demo copy in the scaffold.",
-		"```json",
-		json.dumps({**safe, "aesthetic": {**aes, "palette": palette}}, indent=2)[:3500],
-		"```",
-		"## Palette (use these exact hex values in CSS)",
+		"## Design brief (palette seed only — you author IA and layout)",
+		"User goal wins over any leftover scaffold copy. `must_have` is intentionally empty.",
+		"## Palette (use when sensible)",
 		json.dumps(palette, indent=2),
 	]
 	if delta_note:
 		lines.append(f"## Design delta\n{delta_note}")
 	lines.append(
-		"## Hard anti-patterns (instant fail)\n"
-		"- Keeping scaffold demo branding (Vendor Risk, diligence command center) when the user asked for something else\n"
-		"- Flooding one KPI card with accent fill while siblings stay dark\n"
-		"- Setting --panel and --panel-2 to the same color (bars disappear)\n"
-		"- Dark text on dark ground or light text on light ground\n"
-		"- Labels/numbers kissing panel edges — use ≥14px padding\n"
-		"- Pill spam, neon glow, emoji, Inter-on-white stock look\n"
-		"## Done when\n"
-		f"- CSS vars match palette incl. muted/border/panel-2 ({palette.get('accent')})\n"
-		f"- Density/chrome match ({aes.get('color_mode')}, {aes.get('density')}, chrome={aes.get('chrome')})\n"
-		f"- must_have present when relevant: {', '.join(ia.get('must_have') or []) or '(none prescribed)'}\n"
-		f"- must_not absent: {', '.join(ia.get('must_not') or [])}\n"
-		"- Artifact matches the USER GOAL topic — not the starter scaffold's domain\n"
-		"- TypeScript valid; stay inside app/"
+		"## Soft constraints\n"
+		f"- Color mode / density seed: {aes.get('color_mode')}, {aes.get('density')}, chrome={aes.get('chrome')}\n"
+		"- Avoid emoji, purple glow, illegible contrast\n"
+		"- You decide sections, KPIs, and narrative for the user goal"
 	)
 	return "\n".join(lines)

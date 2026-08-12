@@ -324,7 +324,7 @@ def profile_rows(rows: list[dict[str, Any]]) -> DataProfile:
 			nuance_notes=[
 				"Data room is empty or no extractable rows — scaffold will be hollow until sources are added.",
 			],
-			suggested_must_have=["Empty state", "Upload CTA copy"],
+			suggested_must_have=[],
 		)
 
 	cols = sorted({k for r in rows for k in r.keys()})
@@ -341,45 +341,34 @@ def profile_rows(rows: list[dict[str, Any]]) -> DataProfile:
 	diligence = "vendor" in cols_l and ("risk_score" in cols_l or "risk_level" in cols_l)
 
 	notes: list[str] = []
-	must = ["KPI strip", "primary table"] if diligence else ["clear hierarchy", "topic-led sections"]
+	must: list[str] = []
 	primary = "overview"
 
 	if diligence and high / max(len(rows), 1) >= 0.25:
-		notes.append(f"High-risk density is elevated ({high}/{len(rows)}) — lead with severity triage.")
-		must.insert(0, "High-risk triage")
-		primary = "findings"
-	# Only suggest a vendor leaderboard when the DATA is clearly diligence-shaped
+		notes.append(f"High-risk density is elevated ({high}/{len(rows)}).")
 	if diligence and len(vendors) >= 5:
-		notes.append(f"{len(vendors)} vendors — leaderboard/scorecard is useful.")
-		must.append("entity leaderboard")
+		notes.append(f"{len(vendors)} vendors in room.")
 	elif diligence and len(vendors) == 1:
-		notes.append(
-			f"Single vendor ({vendors[0]}) — deepen theme/evidence, de-emphasize multi-entity chrome."
-		)
-		must.append("theme breakdown")
+		notes.append(f"Single vendor ({vendors[0]}).")
 	elif not diligence:
-		notes.append(
-			"Schema is not vendor-risk shaped — author for the user task; do not invent diligence IA."
-		)
+		notes.append("Schema is not vendor-risk shaped — author for the user task.")
 	if regions:
-		notes.append(f"Region field populated ({len(regions)} values) — region filter/heatmap useful.")
-		must.append("region filter")
+		notes.append(f"Region field populated ({len(regions)} values).")
 	if owners:
-		notes.append(f"Owner field populated ({len(owners)} values) — ownership column matters.")
+		notes.append(f"Owner field populated ({len(owners)} values).")
 	if diligence and not scores:
-		notes.append("No numeric scores — avoid score histogram; emphasize counts and levels.")
+		notes.append("No numeric scores present.")
 	elif diligence and scores and max(scores) - min(scores) < 5:
-		notes.append("Scores are tightly clustered — histogram may look flat; prefer ranked lists.")
+		notes.append("Scores are tightly clustered.")
 	if len(rows) < 8:
-		notes.append("Small row set — prefer dense tables over sparse multi-panel dashboards.")
+		notes.append("Small row set.")
 	elif len(rows) > 200:
-		notes.append("Large row set — search + filters required; paginate the primary table.")
-		must.append("search and filters")
+		notes.append("Large row set.")
 
 	if len(sources) == 1:
-		notes.append(f"All rows from one source ({sources[0]}) — cite it in the header.")
+		notes.append(f"All rows from one source ({sources[0]}).")
 	elif len(sources) > 1:
-		must.append("source inventory")
+		notes.append(f"{len(sources)} source files.")
 
 	return DataProfile(
 		row_count=len(rows),
@@ -403,20 +392,16 @@ def profile_rows(rows: list[dict[str, Any]]) -> DataProfile:
 
 
 def apply_profile_to_brief(brief: dict[str, Any], profile: DataProfile) -> dict[str, Any]:
-	"""Merge data-driven IA hints into the design brief (non-destructive)."""
+	"""Attach data-room notes only — do not prescribe must_have IA for Prime."""
 	out = copy.deepcopy(brief)
 	ia = out.setdefault("information_architecture", {})
-	if profile.suggested_primary and not ia.get("primary_view"):
-		ia["primary_view"] = profile.suggested_primary
-	existing = list(ia.get("must_have") or [])
-	for item in profile.suggested_must_have:
-		if item not in existing:
-			existing.append(item)
-	ia["must_have"] = existing[:12]
+	# Keep must_have empty so format/profile heuristics don't override the agent
+	ia["must_have"] = []
 	notes = (out.get("user_notes") or "").strip()
-	data_note = "Data profile: " + "; ".join(profile.nuance_notes[:4])
-	if profile.nuance_notes and data_note not in notes:
-		out["user_notes"] = f"{notes}\n{data_note}".strip() if notes else data_note
+	if profile.nuance_notes:
+		data_note = "Data profile: " + "; ".join(profile.nuance_notes[:4])
+		if data_note not in notes:
+			out["user_notes"] = f"{notes}\n{data_note}".strip() if notes else data_note
 	return out
 
 
@@ -612,7 +597,7 @@ def sources_to_prime_block(profile: DataProfile, *, extract: ExtractReport | Non
 			lines.append(f"- error: {err}")
 	lines.append(
 		"Read `public/sources.json`, `public/data_profile.json`, and `public/agent_context.md` if present. "
-		"Prefer structure that matches the USER GOAL over the scaffold demo."
+		"You decide the artifact structure from the USER GOAL."
 	)
 	if profile.empty_room:
 		lines.append(

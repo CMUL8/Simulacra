@@ -1,4 +1,4 @@
-"""Builder craft fallback — App.tsx must change when agent writes nothing."""
+"""Builder style fallback — Prime owns App.tsx authorship."""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ def app_scaffold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, 
 	monkeypatch.setattr(paths_mod, "RUNS_DIR", runs)
 	monkeypatch.setattr(runs_mod, "RUNS_DIR", runs)
 	monkeypatch.delenv("SIMULACRA_USE_PRIME", raising=False)
+	monkeypatch.setattr("simulacra.demo.prime_builder.prime_enabled", lambda: False)
+	monkeypatch.setattr("simulacra.demo.prime_hook.prime_enabled", lambda: False)
 	monkeypatch.setattr(
 		"simulacra.demo.tenants.assert_under_project_quota",
 		lambda *_a, **_k: None,
@@ -55,25 +57,19 @@ def app_scaffold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, 
 	return state.id, app
 
 
-def test_deterministic_layout_changes_app_tsx(app_scaffold: tuple[str, Path]) -> None:
+def test_deterministic_layout_is_style_only(app_scaffold: tuple[str, Path]) -> None:
 	pid, app = app_scaffold
-	before = _app_tsx_hash(app)
-	assert _deterministic_layout_pass(app, pid)
-	after = _app_tsx_hash(app)
-	assert after != before
+	# Style stamps are allowed; inventing KPI IA is not a content win
+	assert _deterministic_layout_pass(app, pid) is False
 	tsx = (app / "src" / "App.tsx").read_text()
 	assert "simulacra_craft:" in tsx
-	assert "density-dense" in tsx
-	assert "chrome-no-cards" in tsx
-	assert "kpi-row-priority" in tsx
+	assert "kpi-row-priority" not in tsx
 
 
-def test_prime_build_app_offline_uses_craft(app_scaffold: tuple[str, Path]) -> None:
+def test_prime_build_app_offline_does_not_author_layout(app_scaffold: tuple[str, Path]) -> None:
 	pid, app = app_scaffold
-	before = _app_tsx_hash(app)
 	meta = prime_build_app(app, "Build vendor risk app", project_id=pid, row_count=10)
-	assert meta["layout_customized"] is True
-	assert meta["style_only"] is False
-	assert meta["source"] == "craft"
+	assert meta["layout_customized"] is False
+	assert meta["style_only"] is True
+	assert meta["source"] == "style"
 	assert meta["ok"] is True
-	assert _app_tsx_hash(app) != before
