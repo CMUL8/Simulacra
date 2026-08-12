@@ -564,7 +564,20 @@ export default function App({
     setError(null);
     setInput("");
     try {
-      const snap = await sendChat(snapshot.project.id, text, snapshot.project.active_chat_id);
+      let snap;
+      try {
+        snap = await sendChat(snapshot.project.id, text, snapshot.project.active_chat_id);
+      } catch (first) {
+        // Stale chat id on older projects — retry against the project's healed active chat
+        const msg = first instanceof Error ? first.message : String(first);
+        if (/unknown chat/i.test(msg) && snapshot.project.active_chat_id) {
+          const fresh = await getProject(snapshot.project.id);
+          setSnapshot(fresh);
+          snap = await sendChat(fresh.project.id, text, fresh.project.active_chat_id);
+        } else {
+          throw first;
+        }
+      }
       setSnapshot(snap);
       if (snap.job_id || snap.job?.status === "running" || snap.project.job?.status === "running") {
         setJobLive(true);

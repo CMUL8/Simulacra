@@ -135,11 +135,15 @@ def get_active_thread(state: ProjectState) -> ChatThread:
 
 
 def activate_chat(project_id: str, chat_id: str) -> ProjectState:
+	"""Switch active thread. Stale client chat ids heal to the active/first thread."""
 	state = load_state(project_id)
 	sync_chat_threads(state)
 	thread = next((t for t in state.chats if t.id == chat_id), None)
 	if thread is None:
-		raise ValueError(f"Unknown chat {chat_id}")
+		# Old clients / remigrated projects may still send a dead chat id.
+		thread = get_active_thread(state)
+		save_state(state)
+		return load_state(project_id)
 	# Persist current messages into previous active thread first
 	prev = next((t for t in state.chats if t.id == state.active_chat_id), None)
 	if prev and prev.id != thread.id:
