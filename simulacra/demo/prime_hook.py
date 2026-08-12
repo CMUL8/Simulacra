@@ -167,6 +167,8 @@ def _envelope_schema_block() -> str:
 		"Reply rules:\n"
 		"- Write for a product user, not a developer.\n"
 		"- Do NOT list filenames, paths, or markdown tables of files in reply.\n"
+		"- Do NOT use markdown tables (| pipes |) or ### headings — use short prose and bullet lists.\n"
+		"- Prefer section labels as a plain line like \"In the preview\" then bullets.\n"
 		"- Summarize what you learned in prose; Simulacra shows sources in the data room.\n"
 		"- Never invent vendor/risk UI sections unless the user asked for vendor risk.\n"
 	)

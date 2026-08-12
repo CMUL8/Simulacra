@@ -19,10 +19,21 @@ def test_strips_data_room_file_table() -> None:
 	)
 	out = sanitize_agent_reply(raw)
 	assert "01_timeline.json" not in out
+	assert "|" not in out
+	assert "###" not in out
 	assert "work/research" not in out.lower() or "data room" in out.lower()
 	assert "Leadership view" in out
 	assert "Vendor leaderboard" not in out
+	assert "In the preview" in out
 	assert "data room" in out.lower()
+
+
+def test_orphan_pipe_row_dropped_when_file() -> None:
+	out = sanitize_agent_reply(
+		"| 00_summary.md | Narrative overview covering origins |"
+	)
+	assert "|" not in out
+	assert ".md" not in out
 
 
 def test_softens_inline_filenames() -> None:

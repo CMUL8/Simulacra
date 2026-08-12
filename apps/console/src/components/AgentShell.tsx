@@ -95,58 +95,128 @@ function isShipMessage(m: ChatMessage): boolean {
   return m.source === "ship" || /^##\s*Shipped\b/i.test(m.content.trim());
 }
 
-/** Document-style markdown — paragraphs, headings, lists (no raw file tables). */
+/** Document-style markdown — no raw pipes or hash headings. */
 function MarkdownBody({ text }: { text: string }) {
   const cleaned = absolutizeShareUrls(text).replace(/\r\n/g, "\n").trim();
   const blocks = cleaned.split(/\n{2,}/);
   const nodes: ReactNode[] = [];
 
+  const parseCells = (line: string) =>
+    line
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((c) => c.trim().replace(/^`|`$/g, ""));
+
+  const humanFile = (raw: string) => {
+    const base = raw.split("/").pop() || raw;
+    const stem = base.replace(/\.[a-z0-9]+$/i, "").replace(/^\d+[_\-\s]*/, "").replace(/[_-]+/g, " ").trim();
+    return stem ? stem.charAt(0).toUpperCase() + stem.slice(1) : "Source";
+  };
+
   blocks.forEach((block, bi) => {
     const lines = block.split("\n").filter((l) => l.trim().length > 0);
     if (!lines.length) return;
 
-    // Collapse pipe tables (file manifests) into a soft note
+    // Any pipe block → cards or soft note (never show |)
+    const pipeLines = lines.filter((l) => l.includes("|") && /^\s*\|/.test(l));
     const looksLikeTable =
-      lines.length >= 2 &&
-      lines.every((l) => l.includes("|")) &&
-      lines.some((l) => /[-:]{2,}/.test(l) || /\.(json|md|csv)\b/i.test(l) || /\bfile\b/i.test(l));
+      pipeLines.length >= 1 &&
+      lines.every((l) => !l.trim() || l.includes("|") || /^[-:| ]+$/.test(l.trim()));
     if (looksLikeTable) {
+      const rows = pipeLines
+        .filter((l) => !/^[-:| ]+$/.test(l.replace(/\|/g, "").trim()))
+        .map(parseCells)
+        .filter((cells) => {
+          const j = cells.join(" ").toLowerCase();
+          return j !== "file contents" && cells[0]?.toLowerCase() !== "file";
+        });
+      const fileish = rows.filter((c) => /\.(json|md|csv|tsv|txt)\b/i.test(c[0] || "")).length;
+      if (!rows.length || fileish >= Math.max(1, Math.ceil(rows.length / 2))) {
+        nodes.push(
+          <p key={`tbl-${bi}`} className="md-soft">
+            Sources are in the data room.
+          </p>,
+        );
+        return;
+      }
       nodes.push(
-        <p key={`tbl-${bi}`} className="md-soft">
-          Sources are in the data room.
-        </p>,
+        <ul key={`cards-${bi}`} className="md-cards">
+          {rows.map((cells, ri) => {
+            const title = humanFile(cells[0] || "");
+            const body = cells.slice(1).filter(Boolean).join(" — ");
+            return (
+              <li key={ri} className="md-card">
+                <span className="md-card-title">{title}</span>
+                {body ? <span className="md-card-body">{body}</span> : null}
+              </li>
+            );
+          })}
+        </ul>,
       );
       return;
     }
 
     const isList = lines.every((l) => /^[-*]\s+/.test(l.trim()) || /^\d+\.\s+/.test(l.trim()));
-    if (isList && lines.some((l) => /^[-*]\s+/.test(l.trim()))) {
+    if (isList) {
       nodes.push(
         <ul key={`ul-${bi}`} className="md-ul">
           {lines.map((l, li) => (
-            <li key={li} dangerouslySetInnerHTML={{ __html: inlineFormat(l.replace(/^[-*]\s+/, "")) }} />
+            <li
+              key={li}
+              dangerouslySetInnerHTML={{
+                __html: inlineFormat(l.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "")),
+              }}
+            />
           ))}
         </ul>,
       );
       return;
     }
 
+    // Bare section title (from sanitizer) — single short line, no period
+    if (
+      lines.length === 1 &&
+      lines[0]!.length < 48 &&
+      !/[.!?]$/.test(lines[0]!) &&
+      !/^[-*]/.test(lines[0]!)
+    ) {
+      const label = lines[0]!.replace(/^#+\s*/, "");
+      nodes.push(
+        <p key={`sec-${bi}`} className="md-section">
+          {label}
+        </p>,
+      );
+      return;
+    }
+
     lines.forEach((line, li) => {
-      const t = line.trim();
+      let t = line.trim();
       if (!t) return;
-      if (t.startsWith("### ")) {
+      // Strip leftover markdown heading marks
+      const hm = t.match(/^#{1,3}\s+(.*)$/);
+      if (hm) {
         nodes.push(
-          <h4 key={`h3-${bi}-${li}`} className="md-h md-h3" dangerouslySetInnerHTML={{ __html: inlineFormat(t.slice(4)) }} />,
+          <p key={`h-${bi}-${li}`} className="md-section">
+            <span dangerouslySetInnerHTML={{ __html: inlineFormat(hm[1] || "") }} />
+          </p>,
         );
-      } else if (t.startsWith("## ")) {
+        return;
+      }
+      // Orphan pipe row
+      if (/^\|/.test(t) && t.includes("|")) {
+        const cells = parseCells(t);
+        if (/\.(json|md|csv)\b/i.test(cells[0] || "")) return;
         nodes.push(
-          <h3 key={`h-${bi}-${li}`} className="md-h" dangerouslySetInnerHTML={{ __html: inlineFormat(t.slice(3)) }} />,
+          <div key={`or-${bi}-${li}`} className="md-card">
+            <span className="md-card-title">{humanFile(cells[0] || "")}</span>
+            {cells[1] ? <span className="md-card-body">{cells.slice(1).join(" — ")}</span> : null}
+          </div>,
         );
-      } else if (t.startsWith("# ")) {
-        nodes.push(
-          <h2 key={`h-${bi}-${li}`} className="md-h md-h1" dangerouslySetInnerHTML={{ __html: inlineFormat(t.slice(2)) }} />,
-        );
-      } else if (t.startsWith("**") && t.endsWith("**") && t.indexOf("**", 2) === t.length - 2) {
+        return;
+      }
+      if (t.startsWith("**") && t.endsWith("**") && t.indexOf("**", 2) === t.length - 2) {
         nodes.push(
           <p key={`p-${bi}-${li}`} className="md-lead" dangerouslySetInnerHTML={{ __html: inlineFormat(t) }} />,
         );
