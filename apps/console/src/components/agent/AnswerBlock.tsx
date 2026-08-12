@@ -1,28 +1,17 @@
 /**
- * Streaming / final answer block — prose + optional follow-ups when idle.
+ * Streaming / final answer block — prose only.
  */
 import type { ReactNode } from "react";
 
 type Props = {
   children: ReactNode;
-  followUps?: string[];
-  onFollowUp?: (text: string) => void;
   streaming?: boolean;
 };
 
-export function AnswerBlock({ children, followUps = [], onFollowUp, streaming }: Props) {
+export function AnswerBlock({ children, streaming }: Props) {
   return (
     <div className={`bui-answer${streaming ? " streaming" : ""}`}>
       <div className="bui-answer-body">{children}</div>
-      {followUps.length > 0 && onFollowUp ? (
-        <div className="bui-followups" aria-label="Suggested next steps">
-          {followUps.map((f) => (
-            <button key={f} type="button" className="bui-followup" onClick={() => onFollowUp(f)}>
-              {f}
-            </button>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }

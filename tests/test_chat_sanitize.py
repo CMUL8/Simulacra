@@ -40,3 +40,18 @@ def test_softens_inline_filenames() -> None:
 	out = sanitize_agent_reply("See `03_ideology.json` for pillars.")
 	assert ".json" not in out
 	assert "ideology" in out.lower()
+
+
+def test_strips_code_filenames_from_change_summary() -> None:
+	raw = (
+		"**What changed**\n"
+		"- Title & config\n"
+		"- Layout / UI (`App.tsx`)\n"
+		"- Styles (`styles.css`)\n"
+	)
+	out = sanitize_agent_reply(raw)
+	assert "App.tsx" not in out
+	assert "styles.css" not in out
+	assert "Layout & structure" in out
+	assert "Title & framing" in out
+	assert "Visual styling" in out or "Styles" not in out or "(" not in out

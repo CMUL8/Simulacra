@@ -5,8 +5,15 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
-_FILE_EXT = r"(?:json|md|csv|tsv|txt|pdf|parquet|tsx?|jsx?|py)"
+_FILE_EXT = r"(?:json|md|csv|tsv|txt|pdf|parquet|tsx?|jsx?|css|py)"
 _FILE_TOKEN = re.compile(rf"`?[\w./\-]+\.{_FILE_EXT}`?", re.I)
+_CODE_FILE_PAREN = re.compile(
+	r"\s*\((?:`?(?:src/)?(?:App\.tsx|styles\.css|main\.tsx|index\.[jt]sx?)`?|`?[\w./\-]+\.(?:tsx?|jsx?|css|py)`?)\)",
+	re.I,
+)
+_CODE_FILE_BARE = re.compile(
+	r"(?i)\b(?:src/)?(?:App\.tsx|styles\.css|main\.tsx)\b",
+)
 _TABLE_ROW = re.compile(r"^\s*\|.+\|\s*$")
 _TABLE_SEP = re.compile(r"^\s*\|?\s*[-:| ]+\|?\s*$")
 _MANIFEST_HEAD = re.compile(
@@ -140,7 +147,15 @@ def sanitize_agent_reply(text: str) -> str:
 				out.append("")
 			i = j
 			continue
-		soft = _FILE_TOKEN.sub(lambda m: _human_file_label(m.group(0)), line)
+		# Drop code paths before softening data-room filenames
+		soft = _CODE_FILE_PAREN.sub("", line)
+		soft = _CODE_FILE_BARE.sub("", soft)
+		soft = re.sub(r"(?i)\blayout\s*/\s*ui\b", "Layout & structure", soft)
+		soft = re.sub(r"(?i)\btitle\s*&\s*config\b", "Title & framing", soft)
+		soft = re.sub(r"(?i)^(\s*[-*]\s*)styles\b.*$", r"\1Visual styling", soft)
+		soft = re.sub(r"(?i)^(\s*[-*]\s*)layout\s*&\s*structure\b.*$", r"\1Layout & structure", soft)
+		soft = _FILE_TOKEN.sub(lambda m: _human_file_label(m.group(0)), soft)
+		soft = re.sub(r"\s*\((?:App|Styles)\)\s*$", "", soft)
 		soft = _VENDOR_LEADERBOARD.sub("Leadership view", soft)
 		soft = re.sub(
 			r"(?i)\bacross\s+\d+\s+files?\s+in\s+`?work/research/?`?",

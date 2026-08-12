@@ -59,6 +59,22 @@ function absolutizeUrl(url: string): string {
   return url;
 }
 
+function scrubCodeFilenames(text: string): string {
+  return text
+    .replace(
+      /\s*\((?:`?(?:src\/)?(?:App\.tsx|styles\.css|main\.tsx)`?|`?[\w./-]+\.(?:tsx?|jsx?|css)`?)\)/gi,
+      "",
+    )
+    .replace(/\b(?:src\/)?(?:App\.tsx|styles\.css|main\.tsx)\b/gi, "")
+    .replace(/`[^`\n]*\.(?:tsx?|jsx?|css|py)`/gi, "")
+    .replace(/Layout\s*\/\s*UI/gi, "Layout & structure")
+    .replace(/Title\s*&\s*config/gi, "Title & framing")
+    .replace(/^(\s*[-*]\s*)Styles\b.*$/gim, "$1Visual styling")
+    .replace(/^(\s*[-*]\s*)Layout\s*&\s*structure\b.*$/gim, "$1Layout & structure")
+    .replace(/\s*\((?:App|Styles)\)\s*$/gm, "")
+    .replace(/[ \t]{2,}/g, " ");
+}
+
 function inlineFormat(text: string) {
   let html = escapeHtml(text);
   const codes: string[] = [];
@@ -109,7 +125,7 @@ function isShipMessage(m: ChatMessage): boolean {
 
 /** Document-style markdown — no raw pipes or hash headings. */
 function MarkdownBody({ text }: { text: string }) {
-  const cleaned = absolutizeShareUrls(text).replace(/\r\n/g, "\n").trim();
+  const cleaned = scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n")).trim();
   const blocks = cleaned.split(/\n{2,}/);
   const nodes: ReactNode[] = [];
 
@@ -445,22 +461,15 @@ function PlanSection({
 function MessageTurn({
   message,
   snapshot,
-  isLatestAssistant,
-  busy,
   onOpenPreview,
-  onFollowUp,
 }: {
   message: ChatMessage;
   snapshot: Snapshot;
   isLatestAssistant?: boolean;
   busy?: boolean;
   onOpenPreview: () => void;
-  onFollowUp?: (text: string) => void;
 }) {
   const kind = turnKind(message);
-  // Follow-ups only when idle — never under a live wait stage
-  const followUps =
-    kind === "assistant" && isLatestAssistant && onFollowUp && !busy ? followUpsFor(snapshot) : [];
 
   return (
     <article className={`cursor-turn cursor-turn-${kind}`} data-role={kind}>
@@ -469,7 +478,7 @@ function MessageTurn({
       ) : kind === "plan" ? (
         <Fragment>
           <div className="cursor-answer">
-            <AnswerBlock followUps={followUps} onFollowUp={onFollowUp}>
+            <AnswerBlock>
               <MarkdownBody text={message.content} />
             </AnswerBlock>
           </div>
@@ -483,26 +492,13 @@ function MessageTurn({
         </div>
       ) : (
         <div className="cursor-answer">
-          <AnswerBlock followUps={followUps} onFollowUp={onFollowUp}>
+          <AnswerBlock>
             <MarkdownBody text={message.content} />
           </AnswerBlock>
         </div>
       )}
     </article>
   );
-}
-
-function followUpsFor(snapshot: Snapshot): string[] {
-  const kind = snapshot.project.artifact_kind || "data_app";
-  const phase = snapshot.project.phase;
-  if (phase === "plan") {
-    return ["Tighten for execs", kind === "report" ? "Add a timeline" : "What to Build first", "Missing sources?"];
-  }
-  return [
-    "Denser layout",
-    "Stronger opening",
-    kind === "slides" ? "Punchier title" : "Clearer KPIs",
-  ];
 }
 
 export function AgentShell({
@@ -663,7 +659,6 @@ export function AgentShell({
                 busy={busy}
                 isLatestAssistant={i === lastAssistantIdx}
                 onOpenPreview={onOpenPreview}
-                onFollowUp={(text) => onInput(text)}
               />
             </Fragment>
           ))}

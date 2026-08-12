@@ -190,6 +190,10 @@ export function ThinkingTrail({
     ? formatThoughtElapsed(elapsedSec)
     : `Thought for ${formatThoughtElapsed(elapsedSec)}`;
 
+  // Tiny completed thoughts are just chrome — don't burn a thread row on them
+  const trivialDone = !live && elapsedSec < 2.5 && !open;
+  if (trivialDone) return null;
+
   return (
     <div className="bui-thinking" data-live={live ? "true" : "false"} data-open={open ? "true" : "false"}>
       <div className="bui-thinking-bar">
@@ -206,7 +210,7 @@ export function ThinkingTrail({
           )}
           <span className="bui-thinking-label">{summary}</span>
           {live && current ? <span className="bui-thinking-now">{current}</span> : null}
-          <ChevronDown size={14} className="bui-thinking-chevron" aria-hidden />
+          <ChevronDown size={12} className="bui-thinking-chevron" aria-hidden />
         </button>
         {live && onStop ? (
           <button type="button" className="bui-thinking-stop" onClick={onStop}>

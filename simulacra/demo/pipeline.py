@@ -65,21 +65,38 @@ def _change_summary_lines(
 	*,
 	layout: bool,
 ) -> list[str]:
-	"""Short bullets for chat — what the user asked + which files moved."""
+	"""Short bullets for chat — user ask + product surface, never code paths."""
 	lines: list[str] = []
 	note = (request or "").strip().replace("\n", " ")
 	if note:
 		lines.append(f"Request: {note[:160]}{'…' if len(note) > 160 else ''}")
 	labels = {
-		"src/App.tsx": "Layout / UI (`App.tsx`)",
-		"src/styles.css": "Styles (`styles.css`)",
-		"public/config.json": "Title & config",
+		"src/App.tsx": "Layout & structure",
+		"src/styles.css": "Visual styling",
+		"public/config.json": "Title & framing",
+		"public/data.json": "Data view",
+		"public/analytics.json": "Summary metrics",
+		"public/research.json": "Research content",
 	}
 	if changed_files:
+		seen: set[str] = set()
 		for rel in changed_files:
-			lines.append(labels.get(rel, rel))
+			label = labels.get(rel)
+			if not label:
+				# Never leak raw paths / filenames into chat
+				lower = rel.lower()
+				if lower.endswith((".tsx", ".ts", ".jsx", ".js", ".css")):
+					label = "Layout & structure" if "style" not in lower else "Visual styling"
+				elif lower.endswith((".json", ".md", ".csv")):
+					label = "Content update"
+				else:
+					continue
+			if label in seen:
+				continue
+			seen.add(label)
+			lines.append(label)
 	elif layout:
-		lines.append("Layout / UI updated")
+		lines.append("Layout & structure updated")
 	else:
 		lines.append("Preview refreshed")
 	return lines
