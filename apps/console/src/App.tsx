@@ -684,6 +684,7 @@ export default function App({
           focus="projects"
           collapsed={false}
           onNew={handleNew}
+          onHome={handleNew}
           onSelect={loadProject}
           onToggle={() => setSidebarOpen(false)}
         />

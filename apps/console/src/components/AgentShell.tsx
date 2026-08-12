@@ -5,8 +5,19 @@ import {
   PanelLeftClose,
   Square,
 } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useRef } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
+import { AnswerBlock, humanSourceLabel } from "./agent/AnswerBlock";
+import { ApprovalCard } from "./agent/ApprovalCard";
+import {
+  SelectionActions,
+  selectionPrompt,
+} from "./agent/SelectionActions";
+import {
+  ThinkingTrail,
+  tracesForWait,
+  type ThoughtSnapshot,
+} from "./agent/ThinkingTrail";
 import { PromptComposer } from "./PromptComposer";
 import { VersionsMenu } from "./VersionsMenu";
 import { WaitStage } from "./WaitStage";
@@ -434,13 +445,30 @@ function PlanSection({
 function MessageTurn({
   message,
   snapshot,
+  files,
+  isLatestAssistant,
   onOpenPreview,
+  onFollowUp,
 }: {
   message: ChatMessage;
   snapshot: Snapshot;
+  files: DataRoomFile[];
+  isLatestAssistant?: boolean;
   onOpenPreview: () => void;
+  onFollowUp?: (text: string) => void;
 }) {
   const kind = turnKind(message);
+  const sources =
+    kind === "assistant" && isLatestAssistant
+      ? files
+          .filter((f) => !/^(design_brief|plan_preview|kernel-state|agent_context|extract_report)\b/i.test(f.name))
+          .slice(0, 8)
+          .map((f) => ({ id: f.name, label: humanSourceLabel(f.name) }))
+      : [];
+  const followUps =
+    kind === "assistant" && isLatestAssistant && onFollowUp
+      ? followUpsFor(snapshot)
+      : [];
 
   return (
     <article className={`cursor-turn cursor-turn-${kind}`} data-role={kind}>
@@ -448,16 +476,45 @@ function MessageTurn({
         <div className="cursor-status-line">{message.content.replace(/\*\*/g, "")}</div>
       ) : kind === "plan" ? (
         <Fragment>
-          <MarkdownBody text={message.content} />
+          <div className="cursor-answer">
+            <AnswerBlock sources={sources} followUps={followUps} onFollowUp={onFollowUp}>
+              <MarkdownBody text={message.content} />
+            </AnswerBlock>
+          </div>
           <PlanSection snapshot={snapshot} onOpenPreview={onOpenPreview} compact />
         </Fragment>
       ) : isShipMessage(message) ? (
         <ShipReceipt text={message.content} onOpenPreview={onOpenPreview} />
+      ) : kind === "user" ? (
+        <div className="cursor-user-bubble">
+          <MarkdownBody text={message.content} />
+        </div>
       ) : (
-        <MarkdownBody text={message.content} />
+        <div className="cursor-answer">
+          <AnswerBlock sources={sources} followUps={followUps} onFollowUp={onFollowUp}>
+            <MarkdownBody text={message.content} />
+          </AnswerBlock>
+        </div>
       )}
     </article>
   );
+}
+
+function followUpsFor(snapshot: Snapshot): string[] {
+  const kind = snapshot.project.artifact_kind || "data_app";
+  const phase = snapshot.project.phase;
+  if (phase === "plan") {
+    return [
+      "Tighten the narrative for executives",
+      kind === "report" ? "Add a timeline section" : "Suggest what to Build first",
+      "What sources are still missing?",
+    ];
+  }
+  return [
+    "Make the preview denser",
+    "Improve the opening narrative",
+    kind === "slides" ? "Punch up the title slide" : "Add a clearer KPI strip",
+  ];
 }
 
 export function AgentShell({
@@ -482,6 +539,8 @@ export function AgentShell({
   onDismissError,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
+  const prevBusy = useRef(busy);
+  const [lastThought, setLastThought] = useState<ThoughtSnapshot | null>(null);
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
@@ -507,10 +566,36 @@ export function AgentShell({
   const visibleChat = project.chat.filter((m) => !isOrphanJobStatus(m));
   const showStandalonePlan =
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
+  const lastAssistantIdx = (() => {
+    for (let i = visibleChat.length - 1; i >= 0; i--) {
+      if (visibleChat[i] && turnKind(visibleChat[i]!) === "assistant") return i;
+    }
+    return -1;
+  })();
+  const chatWait =
+    jobKind === "agent_chat" || jobKind === "plan_ask" || (isPlan && waitingForOpen && !jobKind);
+
+  // Snapshot the thinking trail when a chat turn finishes (Cursor: collapse after answer).
+  useEffect(() => {
+    const wasBusy = prevBusy.current;
+    prevBusy.current = busy;
+    if (wasBusy && !busy && chatWait && waitStartedAt) {
+      setLastThought({
+        events: tracesForWait(traces, waitStartedAt),
+        startedAt: waitStartedAt,
+        endedAt: Date.now(),
+      });
+    }
+  }, [busy, chatWait, waitStartedAt, traces]);
+
+  // New user send clears prior collapsed trail once we're live again.
+  useEffect(() => {
+    if (busy && chatWait) setLastThought(null);
+  }, [busy, chatWait]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [visibleChat, traces, busy]);
+  }, [visibleChat, traces, busy, lastThought]);
 
   return (
     <div className="agent-shell">
@@ -573,7 +658,26 @@ export function AgentShell({
       <div className="agent-center">
         <div className="agent-thread cursor-thread">
           {visibleChat.map((m, i) => (
-            <MessageTurn key={i} message={m} snapshot={snapshot} onOpenPreview={onOpenPreview} />
+            <Fragment key={i}>
+              {i === lastAssistantIdx && lastThought && !busy && chatWait ? (
+                <div className="cursor-turn cursor-turn-thought">
+                  <ThinkingTrail
+                    events={lastThought.events}
+                    live={false}
+                    startedAt={lastThought.startedAt}
+                    endedAt={lastThought.endedAt}
+                  />
+                </div>
+              ) : null}
+              <MessageTurn
+                message={m}
+                snapshot={snapshot}
+                files={files}
+                isLatestAssistant={i === lastAssistantIdx}
+                onOpenPreview={onOpenPreview}
+                onFollowUp={(text) => onInput(text)}
+              />
+            </Fragment>
           ))}
 
           {showStandalonePlan && (
@@ -588,13 +692,16 @@ export function AgentShell({
                 variant="thread"
                 title={thinkingLabel.replace(/…$/, "")}
                 subtitle={
-                  jobKind === "agent_chat" || jobKind === "plan_ask" || (isPlan && waitingForOpen)
+                  chatWait
                     ? "Working on your message"
                     : jobKind === "iterate_run"
                       ? "Updating preview from your message"
                       : `Building your ${noun}`
                 }
                 jobKind={jobKind}
+                jobStatus={snapshot.job?.status || project.job?.status}
+                phase={project.phase}
+                fileCount={files.length}
                 traces={traces}
                 startedAt={waitStartedAt}
                 onStop={onCancel}
@@ -602,8 +709,33 @@ export function AgentShell({
             </div>
           ) : null}
 
+          {!busy && isPlan && agentWantsBuild && onApprove ? (
+            <div className="cursor-turn cursor-turn-approval">
+              <ApprovalCard
+                question={`Ready to build your ${noun}? I have enough to generate it — confirm to start, or keep shaping the brief.`}
+                options={[
+                  { id: "build", label: buildLabel, primary: true },
+                  { id: "refine", label: "Keep refining" },
+                ]}
+                busy={busy}
+                onChoose={(id) => {
+                  if (id === "build") onApprove();
+                  else onInput("Hold off on building — let's refine the plan first.");
+                }}
+                onDismiss={() => onInput("Hold off on building — let's refine the plan first.")}
+              />
+            </div>
+          ) : null}
+
           <div ref={endRef} />
         </div>
+
+        <SelectionActions
+          disabled={busy}
+          onAction={(action, text) => {
+            onInput(selectionPrompt(action, text));
+          }}
+        />
 
         <div className="agent-composer-wrap">
           <div className="composer-chrome" role="toolbar" aria-label="Project actions">
