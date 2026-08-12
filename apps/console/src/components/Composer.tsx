@@ -33,10 +33,17 @@ function formatTime(at?: string) {
 
 export function Composer({ messages, input, busy, disabled, onInput, onSend, onChip }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (busy) stickToBottom.current = true;
+  }, [busy]);
+
+  useEffect(() => {
+    if (!stickToBottom.current) return;
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, busy]);
 
   useEffect(() => {
@@ -55,7 +62,15 @@ export function Composer({ messages, input, busy, disabled, onInput, onSend, onC
 
   return (
     <div className="chat-panel">
-      <div className="thread">
+      <div
+        className="thread"
+        ref={threadRef}
+        onScroll={() => {
+          const el = threadRef.current;
+          if (!el) return;
+          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+        }}
+      >
         {messages.length === 0 && !busy && (
           <div className="thread-empty">
             <Sparkles size={20} className="thread-empty-icon" />

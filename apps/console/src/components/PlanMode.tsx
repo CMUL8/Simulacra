@@ -40,11 +40,17 @@ export function PlanMode({
   onDismissError,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
   const project = snapshot.project;
   const preview = project.plan_preview;
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (busy) stickToBottom.current = true;
+  }, [busy]);
+
+  useEffect(() => {
+    if (!stickToBottom.current) return;
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [project.chat, busy]);
 
   return (

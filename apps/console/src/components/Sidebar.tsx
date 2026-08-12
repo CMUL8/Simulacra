@@ -17,6 +17,7 @@ type Props = {
   projects: Project[];
   activeId: string | null;
   activeChatId?: string | null;
+  busyProjectIds?: Record<string, boolean>;
   files: DataRoomFile[];
   focus: "projects" | "files";
   collapsed: boolean;
@@ -72,6 +73,7 @@ export function Sidebar({
   projects,
   activeId,
   activeChatId,
+  busyProjectIds = {},
   files,
   collapsed,
   onNew,
@@ -137,13 +139,15 @@ export function Sidebar({
           {filteredProjects.map((p) => {
             const isActive = activeId === p.id;
             const chats = chatsFor(p);
+            const isBusy = Boolean(busyProjectIds[p.id]);
             return (
-              <li key={p.id} className={`project-group${isActive ? " on" : ""}`}>
+              <li key={p.id} className={`project-group${isActive ? " on" : ""}${isBusy ? " busy" : ""}`}>
                 <div className={`project-row${isActive ? " active" : ""}`}>
                   <button
                     type="button"
                     className="project-item"
                     onClick={() => onSelect(p.id)}
+                    title={isBusy ? "Working…" : undefined}
                   >
                     {isActive ? (
                       <FolderOpen size={14} className="project-folder" />
@@ -151,6 +155,7 @@ export function Sidebar({
                       <Folder size={14} className="project-folder" />
                     )}
                     <span className="project-title">{p.app_config?.title || "Untitled"}</span>
+                    {isBusy ? <span className="project-activity" aria-label="Working" /> : null}
                   </button>
                   {isActive && onNewChat ? (
                     <button
@@ -183,7 +188,11 @@ export function Sidebar({
                           >
                             <MessageSquare size={12} className="chat-icon" />
                             <span className="chat-title">{chatLabel(c, i)}</span>
-                            <span className="chat-age">{relativeWhen(c.updated_at)}</span>
+                            {isBusy && chatActive ? (
+                              <span className="chat-activity" aria-label="Working" />
+                            ) : (
+                              <span className="chat-age">{relativeWhen(c.updated_at)}</span>
+                            )}
                           </button>
                           {canDelete ? (
                             <button

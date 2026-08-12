@@ -529,6 +529,8 @@ export function AgentShell({
   onDismissError,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
   const prevBusy = useRef(busy);
   const [lastThought, setLastThought] = useState<ThoughtSnapshot | null>(null);
   const project = snapshot.project;
@@ -583,8 +585,22 @@ export function AgentShell({
     if (busy && chatWait) setLastThought(null);
   }, [busy, chatWait]);
 
+  // Stick to bottom only while the user is already following the latest messages.
+  // Scrolling up to read history must not yank them back down.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (busy) stickToBottom.current = true;
+  }, [busy]);
+
+  const onThreadScroll = () => {
+    const el = threadRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottom.current = dist < 96;
+  };
+
+  useEffect(() => {
+    if (!stickToBottom.current) return;
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [visibleChat, traces, busy, lastThought]);
 
   return (
@@ -646,7 +662,11 @@ export function AgentShell({
       )}
 
       <div className="agent-center">
-        <div className="agent-thread cursor-thread">
+        <div
+          className="agent-thread cursor-thread"
+          ref={threadRef}
+          onScroll={onThreadScroll}
+        >
           {visibleChat.map((m, i) => (
             <Fragment key={i}>
               {i === lastAssistantIdx && lastThought && !busy && chatWait ? (
