@@ -95,22 +95,37 @@ function isShipMessage(m: ChatMessage): boolean {
   return m.source === "ship" || /^##\s*Shipped\b/i.test(m.content.trim());
 }
 
-/** Document-style markdown — paragraphs, headings, lists (Cursor transcript feel). */
+/** Document-style markdown — paragraphs, headings, lists (no raw file tables). */
 function MarkdownBody({ text }: { text: string }) {
-  const blocks = absolutizeShareUrls(text).replace(/\r\n/g, "\n").trim().split(/\n{2,}/);
+  const cleaned = absolutizeShareUrls(text).replace(/\r\n/g, "\n").trim();
+  const blocks = cleaned.split(/\n{2,}/);
   const nodes: ReactNode[] = [];
 
   blocks.forEach((block, bi) => {
-    const lines = block.split("\n");
-    const isList = lines.every((l) => !l.trim() || /^[-*]\s+/.test(l.trim()) || /^\d+\.\s+/.test(l.trim()));
+    const lines = block.split("\n").filter((l) => l.trim().length > 0);
+    if (!lines.length) return;
+
+    // Collapse pipe tables (file manifests) into a soft note
+    const looksLikeTable =
+      lines.length >= 2 &&
+      lines.every((l) => l.includes("|")) &&
+      lines.some((l) => /[-:]{2,}/.test(l) || /\.(json|md|csv)\b/i.test(l) || /\bfile\b/i.test(l));
+    if (looksLikeTable) {
+      nodes.push(
+        <p key={`tbl-${bi}`} className="md-soft">
+          Sources are in the data room.
+        </p>,
+      );
+      return;
+    }
+
+    const isList = lines.every((l) => /^[-*]\s+/.test(l.trim()) || /^\d+\.\s+/.test(l.trim()));
     if (isList && lines.some((l) => /^[-*]\s+/.test(l.trim()))) {
       nodes.push(
         <ul key={`ul-${bi}`} className="md-ul">
-          {lines
-            .filter((l) => l.trim())
-            .map((l, li) => (
-              <li key={li} dangerouslySetInnerHTML={{ __html: inlineFormat(l.replace(/^[-*]\s+/, "")) }} />
-            ))}
+          {lines.map((l, li) => (
+            <li key={li} dangerouslySetInnerHTML={{ __html: inlineFormat(l.replace(/^[-*]\s+/, "")) }} />
+          ))}
         </ul>,
       );
       return;
@@ -119,7 +134,11 @@ function MarkdownBody({ text }: { text: string }) {
     lines.forEach((line, li) => {
       const t = line.trim();
       if (!t) return;
-      if (t.startsWith("## ")) {
+      if (t.startsWith("### ")) {
+        nodes.push(
+          <h4 key={`h3-${bi}-${li}`} className="md-h md-h3" dangerouslySetInnerHTML={{ __html: inlineFormat(t.slice(4)) }} />,
+        );
+      } else if (t.startsWith("## ")) {
         nodes.push(
           <h3 key={`h-${bi}-${li}`} className="md-h" dangerouslySetInnerHTML={{ __html: inlineFormat(t.slice(3)) }} />,
         );

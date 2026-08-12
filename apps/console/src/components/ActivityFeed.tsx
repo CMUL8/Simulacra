@@ -11,7 +11,7 @@ type Props = {
 type Line = { id: string; text: string; running: boolean; kind: "think" | "action" };
 
 const NOISE =
-  /^(session ready|turn finished|agent started|agent|working|using tool|tool|using|sandbox:.*)$/i;
+  /^(session ready|turn finished|agent started|agent|agent opening|agent replied|agent ready|research noted|quarantined|working|using tool|tool|using|sandbox:.*|ipython|notebook|python|repl|rlm)$/i;
 const THINKING = /^thinking(\.\.\.|…|\.)?$/i;
 /** Successful tool-end copy — start line already covered the action. */
 const END_SPAM =
@@ -19,6 +19,15 @@ const END_SPAM =
 
 function isThinkingLabel(label: string): boolean {
   return THINKING.test(label.trim());
+}
+
+function polishLabel(label: string): string {
+  const t = label.trim();
+  if (/^added to sources$/i.test(t)) return "Adding to data room";
+  if (/^agent opening$/i.test(t)) return "Reviewing your project";
+  if (/^scanning sources$/i.test(t)) return "Scanning sources";
+  if (/^ipython$/i.test(t)) return "Working through the data";
+  return t;
 }
 
 /** Cursor-like faint progress + action lines from SSE tool/think/phase events. */
@@ -54,7 +63,7 @@ export function ActivityFeed({ events, limit = 6, live = true }: Props) {
 
     for (const e of events) {
       if (e.type === "done" || e.type === "error" || e.type === "message") continue;
-      const label = (e.label || "").trim();
+      const label = polishLabel((e.label || "").trim());
       if (!label || NOISE.test(label) || label.toLowerCase().startsWith("sandbox:")) continue;
       if (END_SPAM.test(label) && e.status !== "running") continue;
 

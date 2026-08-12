@@ -163,7 +163,12 @@ def _envelope_schema_block() -> str:
 		"- build — you are ready for the user to hit Build (do not claim Built)\n"
 		"- iterate — edit the existing artifact (only if one already exists)\n"
 		"- research — you want to gather/web material (say what you would do; "
-		"do not invent finished research as fact)\n"
+		"do not invent finished research as fact)\n\n"
+		"Reply rules:\n"
+		"- Write for a product user, not a developer.\n"
+		"- Do NOT list filenames, paths, or markdown tables of files in reply.\n"
+		"- Summarize what you learned in prose; Simulacra shows sources in the data room.\n"
+		"- Never invent vendor/risk UI sections unless the user asked for vendor risk.\n"
 	)
 
 
@@ -217,7 +222,8 @@ def prime_chat_turn(
 
 	research_note = (
 		"When researching, write files under `work/research/` "
-		"(markdown/json/csv). Simulacra will promote them into the data room.\n"
+		"(markdown/json/csv). Simulacra promotes them into the data room automatically — "
+		"do not tell the user filenames or dump a file table in chat.\n"
 	)
 
 	mismatch = (state.prime or {}).get("topic_mismatch") or {}

@@ -168,7 +168,7 @@ def _agent_chat_turn(
 	if open_turn and any(m.role == "assistant" for m in state.chat):
 		return state
 
-	label = "Agent opening" if open_turn else "Agent"
+	label = "Reviewing your project" if open_turn else "Working on your message"
 	emit_event(
 		project_id,
 		"think",
@@ -248,6 +248,10 @@ def _agent_chat_turn(
 
 	request = turn.request if turn.meta.source == "prime" and turn.reply else "await_user"
 
+	from .chat_sanitize import sanitize_agent_reply
+
+	reply = sanitize_agent_reply(reply)
+
 	state.chat.append(ChatMessage(role="assistant", content=reply, source=source))
 	pending_topic = str(prime_meta.pop("_pending_topic_note", "") or "").strip()
 	if pending_topic:
@@ -268,22 +272,7 @@ def _agent_chat_turn(
 	write_brief(project_id, state.design_brief)
 	save_state(state)
 
-	emit_event(
-		project_id,
-		"think",
-		label="Agent replied",
-		detail=f"{source} · request={request}",
-		status="done",
-	)
-	emit_event(
-		project_id,
-		"done",
-		label="Agent ready",
-		detail=request,
-		status="done",
-	)
-
-	# Observe + intervene: work artifacts → data room
+	# Observe + intervene BEFORE done — sidebar refresh keys off the done event.
 	observe = promote_work_artifacts(
 		project_id,
 		before=before_work,
@@ -293,21 +282,24 @@ def _agent_chat_turn(
 	promoted = list(observe.get("promoted") or [])
 	quarantined = list(observe.get("quarantined") or [])
 	if promoted:
-		names = ", ".join(f"`{n}`" for n in promoted[:4])
-		more = f" (+{len(promoted) - 4} more)" if len(promoted) > 4 else ""
+		n = len(promoted)
 		emit_event(
 			project_id,
 			"phase",
-			label="Added to sources",
-			detail=", ".join(promoted[:6]),
+			label="Adding to data room",
+			detail=f"{n} source{'s' if n != 1 else ''}",
 			status="done",
-			meta={"promoted": promoted},
+			meta={"promoted": promoted, "count": n},
 		)
 		state = load_state(project_id)
 		state.chat.append(
 			ChatMessage(
 				role="assistant",
-				content=f"Added {names}{more} to your sources.",
+				content=(
+					f"Added {n} source{'s' if n != 1 else ''} to the data room."
+					if n
+					else "Sources updated in the data room."
+				),
 				source="system",
 			)
 		)
@@ -333,21 +325,28 @@ def _agent_chat_turn(
 		emit_event(
 			project_id,
 			"think",
-			label="Quarantined",
-			detail=", ".join(quarantined[:4]),
+			label="Kept private",
+			detail=f"{len(quarantined)} file(s) held back",
 			status="done",
 			meta={"quarantined": quarantined},
 		)
 		state = load_state(project_id)
-		qnames = ", ".join(f"`{n}`" for n in quarantined[:3])
 		state.chat.append(
 			ChatMessage(
 				role="assistant",
-				content=f"Kept {qnames} out of sources (secret or unsafe).",
+				content="Kept a few private files out of the data room.",
 				source="system",
 			)
 		)
 		save_state(state)
+
+	emit_event(
+		project_id,
+		"done",
+		label="Ready",
+		detail=str((load_state(project_id).prime or {}).get("request") or request),
+		status="done",
+	)
 
 	# request=build while still planning — cheap prewarm, never claim Built
 	state = load_state(project_id)
@@ -363,7 +362,7 @@ def _agent_chat_turn(
 
 		brief = (turn.brief or message or "").strip()
 		if brief:
-			emit_event(project_id, "phase", label="Agent requested iterate", detail=brief[:120], status="running")
+			emit_event(project_id, "phase", label="Refining the artifact", detail=brief[:120], status="running")
 			_iterate_ui(project_id, brief)
 			state = load_state(project_id)
 			state.prime = {**state.prime, "request": "await_user"}

@@ -33,7 +33,7 @@ def test_tool_start_uses_toolName_and_path(project_id: str) -> None:
 	}
 	out = ev.emit_prime_event(project_id, raw)
 	assert out is not None
-	assert out["label"] == "Reading notes.json"
+	assert out["label"] == "Reading notes"
 	assert "Using tool" not in out["label"]
 	assert out["label"].lower() != "tool"
 	assert out["meta"]["tool"] == "read"
@@ -116,6 +116,27 @@ def test_friendly_never_using_tool() -> None:
 	assert label == "Reading x.py"
 	assert "Using tool" not in label
 
+
+def test_ipython_never_leaks_raw_name() -> None:
+	label = ev._friendly_tool_start("ipython", {})
+	assert label
+	assert "ipython" not in label.lower()
+	research = ev._friendly_tool_start(
+		"ipython",
+		{"args": {"code": 'Path("work/research/01_timeline.json").write_text("{}")'}},
+	)
+	assert "Writing" in research
+	assert "Ipython" not in research
+
+
+def test_assistant_reasoning_not_in_feed(project_id: str) -> None:
+	assert (
+		ev.emit_prime_event(
+			project_id,
+			{"type": "assistant_message", "text": "Long enough reasoning dump for the feed"},
+		)
+		is None
+	)
 
 def test_last_event_helper(project_id: str) -> None:
 	ev.emit_event(project_id, "think", label="Thinking", status="running")

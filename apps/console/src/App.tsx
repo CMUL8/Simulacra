@@ -276,11 +276,13 @@ export default function App({
     listProjectFiles(id).then(setProjectFiles).catch(() => setProjectFiles(fixtureFiles));
   }, [snapshot?.project.id, fixtureFiles]);
 
-  // When SSE says done, refresh snapshot
+  // When SSE says done (or sources promoted), refresh snapshot + data room
   useEffect(() => {
     const last = traces[traces.length - 1];
     if (!last || !projectId) return;
-    if (last.type === "done" || (last.type === "error" && last.status === "fail")) {
+    const promoted =
+      last.type === "phase" && /data room|sources/i.test(last.label || "");
+    if (last.type === "done" || promoted || (last.type === "error" && last.status === "fail")) {
       getProject(projectId)
         .then((snap) => {
           setSnapshot(snap);
@@ -295,6 +297,9 @@ export default function App({
             stopPolling();
           }
         })
+        .catch(() => undefined);
+      listProjectFiles(projectId)
+        .then(setProjectFiles)
         .catch(() => undefined);
     }
   }, [traces, projectId, stopPolling]);

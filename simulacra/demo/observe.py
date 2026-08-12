@@ -235,7 +235,9 @@ def promote_work_artifacts(
 		name_hit = bool(_RESEARCH_NAME.search(path.name))
 		changed = resolved not in before or mtime > (before.get(resolved) or 0) + 0.01
 		in_work = rel.startswith("work/")
-		if force or name_hit or (in_work and changed):
+		in_research_dir = rel.startswith("work/research/")
+		# Everything under work/research/ always promotes (timeline.json etc. lack "research" in the name).
+		if force or name_hit or in_research_dir or (in_work and changed):
 			targets.append(path)
 
 	targets.sort(

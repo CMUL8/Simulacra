@@ -53,6 +53,19 @@ def test_promote_csv_from_work(project: str) -> None:
 	assert result["quarantined"] == []
 
 
+def test_promote_research_dir_without_research_in_name(project: str) -> None:
+	"""Files under work/research/ promote even if named timeline.json."""
+	pid = project
+	root = project_dir(pid)
+	research = root / "work" / "research"
+	research.mkdir(parents=True, exist_ok=True)
+	before = snapshot_work_mtimes(pid)
+	(research / "01_timeline.json").write_text('{"events":[]}\n', encoding="utf-8")
+	result = promote_work_artifacts(pid, before=before, force=False)
+	assert "01_timeline.json" in result["promoted"]
+	assert (data_room_dir(pid) / "01_timeline.json").is_file()
+
+
 def test_quarantine_env(project: str) -> None:
 	pid = project
 	work = project_dir(pid) / "work"

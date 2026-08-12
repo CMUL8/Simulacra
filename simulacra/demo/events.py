@@ -103,20 +103,9 @@ def emit_prime_event(project_id: str, raw: dict[str, Any]) -> dict[str, Any] | N
 		return None
 	if kind == "agent_end":
 		return None
-	if kind in ("assistant_message", "message"):
-		text = raw.get("text") or raw.get("content") or ""
-		if text and len(str(text)) > 20:
-			snippet = str(text).strip().replace("\n", " ")
-			if len(snippet) > 96:
-				snippet = snippet[:93] + "…"
-			return emit_event(
-				project_id,
-				"think",
-				label=snippet,
-				detail=str(text)[:800],
-				status="done",
-				meta={"action": "reason"},
-			)
+	# Never dump raw reasoning / assistant drafts into the faint activity trail.
+	if kind in ("assistant_message", "message", "message_update", "thinking", "reasoning"):
+		return None
 	return None
 
 
@@ -201,16 +190,65 @@ def _path_from_raw_string(inp: str) -> str:
 	return ""
 
 
+def _human_stem(path: str) -> str:
+	stem = Path(_basename(path)).stem
+	stem = re.sub(r"^\d+[_\-\s]*", "", stem)
+	stem = stem.replace("_", " ").replace("-", " ").strip()
+	return stem
+
+
+def _code_blob(args: dict[str, Any]) -> str:
+	for key in ("code", "source", "content", "command", "script", "input"):
+		v = args.get(key)
+		if isinstance(v, str) and v.strip():
+			return v.lower()
+	return ""
+
+
 def _friendly_tool_start(tool: str, raw: dict[str, Any]) -> str:
 	t = tool.lower().replace("-", "_")
 	args = _tool_args(raw)
 	path = _path_hint(args)
 	if not path:
 		path = _path_from_raw_string(_detail_from_args(args) if args else str(raw.get("input") or ""))
+	path_l = path.lower()
+	full_path = " ".join(
+		str(args.get(k) or "") for k in ("path", "file", "file_path", "filePath", "target")
+	).lower()
+	in_research = "research" in path_l or "work/research" in full_path or "/research/" in full_path
+	stem = _human_stem(path) if path else ""
+	data_like = path_l.endswith((".json", ".md", ".csv", ".tsv", ".txt"))
+
+	# Notebook / REPL — never surface "Ipython"
+	if any(x in t for x in ("ipython", "notebook", "jupyter")) or t in (
+		"run_cell",
+		"execute",
+		"python",
+		"repl",
+	):
+		code = _code_blob(args)
+		if in_research or "work/research" in code or "/research/" in code:
+			return f"Writing {stem}" if stem else "Writing research notes"
+		if any(x in code for x in ("requests.", "httpx", "urllib", "http://", "https://", "web_search")):
+			return "Gathering from the web"
+		if any(x in code for x in ("json.dump", "write_text", "to_csv")):
+			return f"Saving {stem}" if stem else "Saving notes"
+		if any(x in code for x in ("read_text", "json.load", "read_csv")):
+			return f"Reading {stem}" if stem else "Reading sources"
+		return "Working through the data"
+
+	if in_research and any(x in t for x in ("write", "edit", "str_replace", "apply_diff", "patch", "create_file")):
+		return f"Writing {stem}" if stem else "Writing research notes"
+	if in_research and ("read" in t or t in ("read", "read_file", "cat", "open")):
+		return f"Reading {stem}" if stem else "Reading research"
 
 	if t in ("read", "read_file", "cat", "open") or "read" in t:
+		if data_like and stem:
+			return f"Reading {stem}"
 		return f"Reading {path}" if path else "Reading files"
 	if any(x in t for x in ("write", "edit", "str_replace", "apply_diff", "patch", "create_file")):
+		if data_like and stem:
+			return f"Editing {stem}"
 		return f"Editing {path}" if path else "Editing files"
 	if "web" in t or t in ("web_search", "websearch", "search_web"):
 		return "Searching web"
@@ -220,10 +258,14 @@ def _friendly_tool_start(tool: str, raw: dict[str, Any]) -> str:
 		return "Searching codebase"
 	if any(x in t for x in ("bash", "shell", "terminal", "run_terminal", "exec")):
 		return "Running command"
-	# Real tool name only — never "Using tool".
+	if "rlm" in t or "daemon" in t:
+		return "Working on your message"
+	# Real tool name only — never "Using tool" / never raw IPython.
 	pretty = tool.replace("_", " ").strip()
 	if not pretty or pretty.lower() in _BAD_LABELS:
 		return ""
+	if pretty.lower() in ("ipython", "notebook", "python", "repl"):
+		return "Working through the data"
 	return pretty[0].upper() + pretty[1:] if pretty else ""
 
 
@@ -231,9 +273,11 @@ def _friendly_tool_done(tool: str, ok: bool) -> str:
 	t = (tool or "").lower().replace("-", "_")
 	if not ok:
 		pretty = tool.replace("_", " ").strip() if tool else "action"
-		if pretty.lower() in _BAD_LABELS:
-			pretty = "action"
+		if pretty.lower() in _BAD_LABELS or pretty.lower() in ("ipython", "notebook", "python"):
+			pretty = "step"
 		return f"Failed: {pretty}"
+	if any(x in t for x in ("ipython", "notebook", "jupyter", "python", "repl")):
+		return ""
 	if "read" in t:
 		return "Read files"
 	if any(x in t for x in ("write", "edit", "str_replace", "apply_diff", "patch")):
