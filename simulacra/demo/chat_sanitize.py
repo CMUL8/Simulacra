@@ -17,10 +17,13 @@ _CODE_FILE_BARE = re.compile(
 _TABLE_ROW = re.compile(r"^\s*\|.+\|\s*$")
 _TABLE_SEP = re.compile(r"^\s*\|?\s*[-:| ]+\|?\s*$")
 _MANIFEST_HEAD = re.compile(
-	r"(?i)^\s{0,3}#{1,3}\s*(what.?s in (the )?data room|data room|sources?|files?|inventory)\b"
+	r"(?i)^\s{0,3}#{0,3}\s*(what.?s in (the )?data room|data room|sources?|files?|inventory)\b"
 )
 _ADDED_SOURCES_LINE = re.compile(
 	r"(?i)^\s*added\b.+\bto (your |the )?(sources?|data room)\b\.?\s*$"
+)
+_SOURCES_IN_ROOM = re.compile(
+	r"(?i)^\s*sources are in the data room\.?\s*$"
 )
 _INTERNAL_SOURCE_NAMES = re.compile(
 	r"(?i)\b(design_brief|kernel-state|kernel_state|agent_context|plan_preview|"
@@ -34,7 +37,7 @@ _CHOICE_DUMP = re.compile(
 	r"styling layer.{0,40}landed fine)"
 )
 _APP_SHOW_HEAD = re.compile(
-	r"(?i)^\s{0,3}#{1,3}\s*what the (app|report|deck|artifact) can show\b"
+	r"(?i)^\s{0,3}#{0,3}\s*what the (app|report|deck|artifact) can show\b"
 )
 _WHAT_CHANGED_HEAD = re.compile(r"(?i)^\s{0,3}(\*{0,2}|#{1,3}\s*)what changed\b")
 _INVENTORY_BULLET = re.compile(
@@ -110,19 +113,17 @@ def sanitize_agent_reply(text: str) -> str:
 	lines = text.replace("\r\n", "\n").split("\n")
 	out: list[str] = []
 	i = 0
-	dropped_manifest = False
 	while i < len(lines):
 		line = lines[i]
 		if _MANIFEST_HEAD.match(line):
-			dropped_manifest = True
 			i += 1
 			while i < len(lines) and not lines[i].strip():
 				i += 1
 			while i < len(lines) and (_TABLE_ROW.match(lines[i]) or _TABLE_SEP.match(lines[i])):
 				i += 1
 			continue
-		if _ADDED_SOURCES_LINE.match(line):
-			# Quiet inventory — never echo filename dumps into chat
+		if _ADDED_SOURCES_LINE.match(line) or _SOURCES_IN_ROOM.match(line):
+			# Quiet inventory — never echo filename dumps / filler into chat
 			i += 1
 			continue
 		if _INTERNAL_SOURCE_NAMES.search(line) and re.search(
@@ -131,8 +132,7 @@ def sanitize_agent_reply(text: str) -> str:
 			i += 1
 			continue
 		if _APP_SHOW_HEAD.match(line):
-			out.append("")
-			out.append("In the preview")
+			# Drop meta "what the app can show" chrome — keep following bullets
 			i += 1
 			continue
 		if _WHAT_CHANGED_HEAD.match(line):
@@ -165,9 +165,7 @@ def sanitize_agent_reply(text: str) -> str:
 					block.append(lines[j])
 				j += 1
 			bullets = _table_to_bullets(block)
-			if not bullets:
-				dropped_manifest = True
-			else:
+			if bullets:
 				out.append("")
 				out.extend(bullets)
 				out.append("")
@@ -193,7 +191,6 @@ def sanitize_agent_reply(text: str) -> str:
 			cells = _cells(soft)
 			if cells:
 				if _FILE_TOKEN.search(cells[0]) or re.search(rf"\.{_FILE_EXT}$", cells[0], re.I):
-					dropped_manifest = True
 					i += 1
 					continue
 				left = _human_file_label(cells[0]) if cells[0] else ""
@@ -204,8 +201,4 @@ def sanitize_agent_reply(text: str) -> str:
 
 	text_out = "\n".join(out)
 	text_out = re.sub(r"\n{3,}", "\n\n", text_out).strip()
-	if dropped_manifest and "data room" not in text_out.lower():
-		text_out = (
-			f"{text_out}\n\nSources are in the data room." if text_out else "Sources are in the data room."
-		)
 	return text_out

@@ -168,11 +168,7 @@ function MarkdownBody({ text }: { text: string }) {
         });
       const fileish = rows.filter((c) => /\.(json|md|csv|tsv|txt)\b/i.test(c[0] || "")).length;
       if (!rows.length || fileish >= Math.max(1, Math.ceil(rows.length / 2))) {
-        nodes.push(
-          <p key={`tbl-${bi}`} className="md-soft">
-            Sources are in the data room.
-          </p>,
-        );
+        // File inventory belongs in the data room — don't dump filler into chat
         return;
       }
       nodes.push(
@@ -209,14 +205,21 @@ function MarkdownBody({ text }: { text: string }) {
       return;
     }
 
-    // Bare section title (from sanitizer) — single short line, no period
+    // Bare section title — sentence case label, never forced ALL CAPS via CSS
     if (
       lines.length === 1 &&
       lines[0]!.length < 48 &&
       !/[.!?]$/.test(lines[0]!) &&
       !/^[-*]/.test(lines[0]!)
     ) {
-      const label = lines[0]!.replace(/^#+\s*/, "");
+      const label = lines[0]!.replace(/^#+\s*/, "").trim();
+      // Drop inventory chrome headings
+      if (
+        /^(what.?s in (the )?data room|in the preview|sources?|files?|inventory)\b/i.test(label) ||
+        /^sources are in the data room\.?$/i.test(label)
+      ) {
+        return;
+      }
       nodes.push(
         <p key={`sec-${bi}`} className="md-section">
           {label}
@@ -231,13 +234,23 @@ function MarkdownBody({ text }: { text: string }) {
       // Strip leftover markdown heading marks
       const hm = t.match(/^#{1,3}\s+(.*)$/);
       if (hm) {
+        const title = (hm[1] || "").trim();
+        if (
+          /^(what.?s in (the )?data room|in the preview|sources?|files?|inventory|what the (app|report) can show)\b/i.test(
+            title,
+          )
+        ) {
+          return;
+        }
         nodes.push(
           <p key={`h-${bi}-${li}`} className="md-section">
-            <span dangerouslySetInnerHTML={{ __html: inlineFormat(hm[1] || "") }} />
+            <span dangerouslySetInnerHTML={{ __html: inlineFormat(title) }} />
           </p>,
         );
         return;
       }
+      if (/^sources are in the data room\.?$/i.test(t)) return;
+      if (/^added\b.+\bto (your |the )?(sources|data room)\b/i.test(t)) return;
       // Orphan pipe row
       if (/^\|/.test(t) && t.includes("|")) {
         const cells = parseCells(t);
@@ -307,6 +320,7 @@ function isOrphanJobStatus(m: ChatMessage): boolean {
   if (m.source === "system" && /^Building your\b/i.test(text)) return true;
   // Inventory spam — filenames / "Added … to your sources"
   if (/^Added\b.+\bto (your |the )?(sources|data room)\b/i.test(text)) return true;
+  if (/^Sources are in the data room\.?$/i.test(text)) return true;
   if (/\b(design_brief|kernel-state|kernel_state|agent_context)\.(json|md)\b/i.test(text)) return true;
   // Legacy rollback jargon — hide; restores use plain copy
   if (/^Rolled back to checkpoint/i.test(text)) return true;

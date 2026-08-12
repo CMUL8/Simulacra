@@ -21,11 +21,21 @@ def test_strips_data_room_file_table() -> None:
 	assert "01_timeline.json" not in out
 	assert "|" not in out
 	assert "###" not in out
-	assert "work/research" not in out.lower() or "data room" in out.lower()
+	assert "work/research" not in out.lower()
 	assert "Leadership view" in out
 	assert "Vendor leaderboard" not in out
-	assert "In the preview" in out
-	assert "data room" in out.lower()
+	assert "In the preview" not in out
+	assert "What's in the data room" not in out
+	assert "Sources are in the data room" not in out
+	assert "KPI strip" in out
+
+
+def test_no_filler_sources_line() -> None:
+	out = sanitize_agent_reply(
+		"Research done.\n\nSources are in the data room.\n\nHit Build when ready."
+	)
+	assert "Sources are in the data room" not in out
+	assert "Hit Build" in out
 
 
 def test_orphan_pipe_row_dropped_when_file() -> None:

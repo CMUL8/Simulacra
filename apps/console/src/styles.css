@@ -2126,13 +2126,13 @@ body {
   letter-spacing: -0.01em;
 }
 .cursor-prose .md-section {
-  margin: 1.35em 0 0.55em;
+  margin: 1.15em 0 0.4em;
   font-family: var(--font-ui);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
 }
 .cursor-prose .md-section:first-child {
   margin-top: 0.25em;
