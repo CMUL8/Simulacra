@@ -361,7 +361,9 @@ def profile_rows(rows: list[dict[str, Any]]) -> DataProfile:
 	med = sum(1 for r in rows if str(r.get("risk_level")) == "medium")
 	low = sum(1 for r in rows if str(r.get("risk_level")) == "low")
 	scores = [float(r["risk_score"]) for r in rows if isinstance(r.get("risk_score"), (int, float))]
-	diligence = "vendor" in cols_l and ("risk_score" in cols_l or "risk_level" in cols_l)
+	from .extract import is_diligence_rows
+
+	diligence = is_diligence_rows(rows)
 
 	notes: list[str] = []
 	must: list[str] = []
@@ -485,11 +487,17 @@ def write_agent_context(
 	profile_json.write_text(json.dumps(profile.to_dict(), indent=2))
 
 	cols_l = {c.lower() for c in profile.columns}
-	diligence = (
-		"vendor" in cols_l
-		and ("risk_score" in cols_l or "risk_level" in cols_l)
-		and len(profile.vendors) >= 1
-	)
+	from .extract import is_diligence_rows
+
+	probe: list[dict[str, Any]] = []
+	for v in (profile.vendors or [])[:20]:
+		row: dict[str, Any] = {"vendor": v}
+		if "risk_score" in cols_l:
+			row["risk_score"] = 1
+		if "risk_level" in cols_l:
+			row["risk_level"] = "medium"
+		probe.append(row)
+	diligence = is_diligence_rows(probe)
 	lines = [
 		"# Agent context — data room",
 		"",
@@ -567,11 +575,18 @@ def write_agent_context(
 
 def sources_to_prime_block(profile: DataProfile, *, extract: ExtractReport | None = None) -> str:
 	"""Compact inventory for agent prompts — topic-neutral unless data is clearly diligence."""
+	from .extract import _PLACEHOLDER_VENDORS
+
 	cols = {c.lower() for c in profile.columns}
+	named_vendors = [
+		str(v).strip()
+		for v in (profile.vendors or [])
+		if str(v).strip() and str(v).strip().lower() not in _PLACEHOLDER_VENDORS
+	]
 	diligence = (
 		"vendor" in cols
 		and ("risk_score" in cols or "risk_level" in cols)
-		and len(profile.vendors) >= 1
+		and bool(named_vendors)
 	)
 	lines = [
 		"## Data room (facts only — design for the USER'S topic, not this schema's demos)",

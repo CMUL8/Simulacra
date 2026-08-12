@@ -15,13 +15,105 @@ from .sources import (
 
 
 def is_diligence_rows(rows: list[dict[str, Any]]) -> bool:
-	"""True only when rows already carry a real vendor+risk schema (never invent it)."""
+	"""True only for a real vendor-risk pack — not pseudo rows with placeholder vendors."""
 	if not rows:
 		return False
 	cols: set[str] = set()
 	for r in rows[:80]:
 		cols.update(str(k).lower() for k in r.keys())
-	return "vendor" in cols and ("risk_score" in cols or "risk_level" in cols)
+	if "vendor" not in cols or ("risk_score" not in cols and "risk_level" not in cols):
+		return False
+	# Placeholder / forged diligence wrappers (Congress findings poisoned as vendor risk)
+	vendors = {
+		str(r.get("vendor") or "").strip().lower()
+		for r in rows[:80]
+		if str(r.get("vendor") or "").strip()
+	}
+	if not vendors:
+		return False
+	if vendors <= _PLACEHOLDER_VENDORS:
+		return False
+	# Real packs have at least one named vendor that isn't a placeholder
+	real = {v for v in vendors if v not in _PLACEHOLDER_VENDORS}
+	return bool(real)
+
+
+_PLACEHOLDER_VENDORS = frozenset(
+	{
+		"unknown",
+		"n/a",
+		"na",
+		"none",
+		"null",
+		"sources needed",
+		"source needed",
+		"tbd",
+		"todo",
+		"—",
+		"-",
+	}
+)
+
+
+def _unwrap_evidence_blob(raw: Any) -> dict[str, Any] | None:
+	"""If evidence is a JSON object (finding/year/…), return it as a row fragment."""
+	if isinstance(raw, dict):
+		return dict(raw)
+	if not isinstance(raw, str):
+		return None
+	text = raw.strip()
+	if not text.startswith("{"):
+		return None
+	try:
+		payload = json.loads(text)
+	except json.JSONDecodeError:
+		return None
+	return payload if isinstance(payload, dict) else None
+
+
+def normalize_extracted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	"""Drop forged vendor/risk wrappers; prefer native finding fields from evidence JSON."""
+	if not rows:
+		return rows
+	# Only rewrite when the room looks like placeholder diligence
+	cols = {str(k).lower() for r in rows[:40] for k in r.keys()}
+	if "vendor" not in cols or ("risk_score" not in cols and "risk_level" not in cols):
+		return rows
+	vendors = {
+		str(r.get("vendor") or "").strip().lower()
+		for r in rows
+		if str(r.get("vendor") or "").strip()
+	}
+	if vendors and not (vendors <= _PLACEHOLDER_VENDORS):
+		return rows  # real diligence pack — keep
+
+	out: list[dict[str, Any]] = []
+	for r in rows:
+		ev = _unwrap_evidence_blob(r.get("evidence"))
+		if ev:
+			row = {k: v for k, v in ev.items() if v not in ("", None)}
+			# Keep human theme/finding text if evidence lacked it
+			if not row.get("finding") and r.get("theme"):
+				row["finding"] = r.get("theme")
+			if r.get("source_file"):
+				row["source_file"] = r.get("source_file")
+			# Never re-inject forged diligence keys
+			for bad in ("vendor", "risk_level", "risk_score", "owner", "region"):
+				row.pop(bad, None)
+			out.append(row)
+			continue
+		# Plain row — strip forged diligence keys, keep substance
+		row = {
+			k: v
+			for k, v in r.items()
+			if k not in ("vendor", "risk_level", "risk_score", "owner", "region")
+			and v not in ("", None)
+		}
+		if "theme" in row and "finding" not in row:
+			row["finding"] = row.pop("theme")
+		if row:
+			out.append(row)
+	return out or rows
 
 
 def _attach_source(row: dict[str, Any], source: str) -> dict[str, Any]:
@@ -194,7 +286,7 @@ def extract_data_room_report(
 		report.files.append(ExtractFileReport(name=rel, status="skipped", detail=detail))
 		report.skipped.append(rel)
 
-	report.rows = _dedupe(all_rows)
+	report.rows = normalize_extracted_rows(_dedupe(all_rows))
 	return report
 
 

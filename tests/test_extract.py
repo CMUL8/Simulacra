@@ -42,3 +42,23 @@ def test_csv_passthrough_preserves_columns(tmp_path: Path) -> None:
 	assert rows[0]["party"] == "INC"
 	assert "vendor" not in rows[0]
 	assert not is_diligence_rows(rows)
+
+
+def test_pseudo_diligence_unwrapped() -> None:
+	from simulacra.demo.extract import normalize_extracted_rows
+
+	poison = [
+		{
+			"vendor": "unknown",
+			"theme": "Congress won only 44 seats",
+			"risk_level": "medium",
+			"risk_score": 50,
+			"evidence": '{"finding":"Congress won only 44 seats","year":"2014","category":"Lok Sabha","metric":"seats_won","value":"44","comparison":"vs 206","severity":"high"}',
+			"source_file": "findings.csv",
+		}
+	]
+	assert not is_diligence_rows(poison)
+	clean = normalize_extracted_rows(poison)
+	assert clean[0]["finding"].startswith("Congress")
+	assert "risk_score" not in clean[0]
+	assert "vendor" not in clean[0]
