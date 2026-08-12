@@ -12,6 +12,9 @@ _TABLE_SEP = re.compile(r"^\s*\|?\s*[-:| ]+\|?\s*$")
 _MANIFEST_HEAD = re.compile(
 	r"(?i)^\s{0,3}#{1,3}\s*(what.?s in (the )?data room|data room|sources?|files?|inventory)\b"
 )
+_ADDED_SOURCES_LINE = re.compile(
+	r"(?i)^\s*added\b.+\bto (your |the )?sources?\b\.?\s*$"
+)
 _APP_SHOW_HEAD = re.compile(
 	r"(?i)^\s{0,3}#{1,3}\s*what the (app|report|deck|artifact) can show\b"
 )
@@ -91,6 +94,10 @@ def sanitize_agent_reply(text: str) -> str:
 				i += 1
 			while i < len(lines) and (_TABLE_ROW.match(lines[i]) or _TABLE_SEP.match(lines[i])):
 				i += 1
+			continue
+		if _ADDED_SOURCES_LINE.match(line):
+			# Quiet inventory — never echo filename dumps into chat
+			i += 1
 			continue
 		if _APP_SHOW_HEAD.match(line):
 			out.append("")

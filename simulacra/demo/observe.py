@@ -18,6 +18,7 @@ from .sources import (
 	SourceError,
 	content_fingerprint,
 	data_room_dir,
+	is_internal_source_name,
 	list_source_files,
 	safe_source_name,
 	source_room_brief,
@@ -74,15 +75,7 @@ def _work_candidates(root: Path) -> list[Path]:
 		if rel.startswith("work/quarantine/"):
 			return
 		# Runtime / agent internals — never promote into the user data room
-		base = path.name.lower()
-		if base in {
-			"design_brief.json",
-			"plan_preview.json",
-			"kernel-state.json",
-			"kernel_state.json",
-			"agent_context.json",
-			"extract_report.json",
-		}:
+		if is_internal_source_name(path.name):
 			return
 		try:
 			resolved = path.resolve()
@@ -260,6 +253,8 @@ def promote_work_artifacts(
 
 	seen_names: set[str] = set()
 	for path in targets:
+		if is_internal_source_name(path.name):
+			continue
 		reason = _reject_reason(path)
 		if reason:
 			qname = _quarantine_copy(project_id, path, reason)
@@ -271,6 +266,8 @@ def promote_work_artifacts(
 		except SourceError:
 			qname = _quarantine_copy(project_id, path, "Unsafe file name")
 			quarantined.append(qname)
+			continue
+		if is_internal_source_name(dest_name):
 			continue
 		if dest_name in seen_names:
 			continue
@@ -291,8 +288,13 @@ def promote_work_artifacts(
 		except OSError:
 			continue
 
+	# Scrub runtime files that already leaked into the data room
+	_scrub_internal_sources(room)
+
 	bundle = None
 	kind = normalize_kind(artifact_kind) if artifact_kind else "data_app"
+	# Only treat real user-facing promotes as inventory changes
+	promoted = [p for p in promoted if not is_internal_source_name(p)]
 	if promoted or force or research_hit or any(_RESEARCH_NAME.search(p.name) for p in candidates):
 		try:
 			bundle = write_research_bundle(project_id, force=True, message="research")
@@ -319,6 +321,18 @@ def promote_work_artifacts(
 		"bundle": bundle,
 		"section_count": len((bundle or {}).get("sections") or []) if isinstance(bundle, dict) else 0,
 	}
+
+
+def _scrub_internal_sources(room: Path) -> None:
+	"""Remove leaked agent/runtime files from the user-visible data room."""
+	if not room.is_dir():
+		return
+	for path in list(room.rglob("*")):
+		if path.is_file() and is_internal_source_name(path.name):
+			try:
+				path.unlink()
+			except OSError:
+				pass
 
 
 def _refresh_plan_inventory(project_id: str) -> bool:

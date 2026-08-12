@@ -292,18 +292,9 @@ def _agent_chat_turn(
 			status="done",
 			meta={"promoted": promoted, "count": n},
 		)
+		# Quiet inventory update only — never dump filenames into chat
+		# (design_brief / kernel-state are not user sources).
 		state = load_state(project_id)
-		state.chat.append(
-			ChatMessage(
-				role="assistant",
-				content=(
-					f"Added {n} source{'s' if n != 1 else ''}."
-					if n
-					else "Sources updated in the data room."
-				),
-				source="system",
-			)
-		)
 		state.prime = {
 			**state.prime,
 			"request": "await_user" if request == "research" else state.prime.get("request"),

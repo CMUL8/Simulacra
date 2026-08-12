@@ -56,6 +56,7 @@ from simulacra.demo.runs import (
 	chat_summaries,
 	create_chat,
 	create_project,
+	delete_chat,
 	list_projects,
 	load_state,
 	project_dir,
@@ -918,14 +919,16 @@ def delete_project_chat(
 	chat_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 ) -> dict:
-	from .runs import delete_chat
-
 	try:
 		delete_chat(project_id, chat_id)
 		return project_snapshot(project_id)
 	except ValueError as exc:
 		raise HTTPException(400, str(exc)) from exc
-
+	except FileNotFoundError as exc:
+		raise HTTPException(404, str(exc)) from exc
+	except Exception as exc:  # noqa: BLE001
+		log.exception("delete chat failed project=%s chat=%s", project_id, chat_id)
+		raise HTTPException(500, "Could not delete chat") from exc
 
 @app.post("/projects/{project_id}/rollback")
 def post_rollback(

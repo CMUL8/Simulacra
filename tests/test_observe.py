@@ -53,6 +53,22 @@ def test_promote_csv_from_work(project: str) -> None:
 	assert result["quarantined"] == []
 
 
+def test_internal_runtime_files_never_promoted(project: str) -> None:
+	pid = project
+	work = project_dir(pid) / "work"
+	work.mkdir(parents=True, exist_ok=True)
+	room = data_room_dir(pid)
+	room.mkdir(parents=True, exist_ok=True)
+	(work / "design_brief.json").write_text('{"a":1}\n', encoding="utf-8")
+	(work / "kernel-state.json").write_text('{"b":2}\n', encoding="utf-8")
+	(room / "design_brief.json").write_text('{"leaked":true}\n', encoding="utf-8")
+	before = snapshot_work_mtimes(pid)
+	result = promote_work_artifacts(pid, before=before, force=True)
+	assert "design_brief.json" not in result["promoted"]
+	assert "kernel-state.json" not in result["promoted"]
+	assert not (room / "design_brief.json").exists()
+
+
 def test_promote_research_dir_without_research_in_name(project: str) -> None:
 	"""Files under work/research/ promote even if named timeline.json."""
 	pid = project

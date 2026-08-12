@@ -46,8 +46,31 @@ _INTERNAL_ROOM_NAMES = {
 	"kernel-state.json",
 	"kernel_state.json",
 	"agent_context.json",
+	"agent_context.md",
 	"extract_report.json",
+	"gates_report.json",
+	"gate_report.json",
+	"run_manifest.json",
+	"sources.json",
+	"data_profile.json",
 }
+
+_INTERNAL_ROOM_RE = re.compile(
+	r"^(design_brief|plan_preview|kernel[-_]state|agent_context|extract_report|"
+	r"gates?_report|run_manifest|session)(\.|$)",
+	re.I,
+)
+
+
+def is_internal_source_name(name: str) -> bool:
+	"""True for runtime/agent files that must not appear as user sources."""
+	base = Path(name).name.strip().lower()
+	if not base:
+		return False
+	if base in _INTERNAL_ROOM_NAMES:
+		return True
+	return bool(_INTERNAL_ROOM_RE.match(base))
+
 
 
 class SourceError(ValueError):
@@ -188,7 +211,7 @@ def list_source_files(project_id: str) -> list[SourceFile]:
 	for path in sorted(root.rglob("*")):
 		if not path.is_file():
 			continue
-		if path.name.lower() in _INTERNAL_ROOM_NAMES:
+		if path.name.lower() in _INTERNAL_ROOM_NAMES or is_internal_source_name(path.name):
 			continue
 		rel = str(path.relative_to(root))
 		size = path.stat().st_size

@@ -204,21 +204,36 @@ def create_chat(
 def delete_chat(project_id: str, chat_id: str) -> ProjectState:
 	"""Remove a chat thread. Keeps at least one chat under the project."""
 	state = load_state(project_id)
-	sync_chat_threads(state)
+	if not state.chats:
+		state.chats, state.active_chat_id, state.chat = _migrate_chats(
+			chat=list(state.chat),
+			chats_raw=None,
+			active_chat_id=None,
+			prompt=state.prompt,
+		)
+	# Flush active messages into their thread without touching others
+	active = next((t for t in state.chats if t.id == state.active_chat_id), None)
+	if active is None and state.chats:
+		active = state.chats[0]
+		state.active_chat_id = active.id
+	if active:
+		active.messages = list(state.chat)
+		active.updated_at = datetime.now(UTC).isoformat()
+
 	if len(state.chats) <= 1:
 		raise ValueError("Cannot delete the only chat in this project")
 	if not any(t.id == chat_id for t in state.chats):
-		# Already gone — heal and return
 		save_state(state)
 		return load_state(project_id)
+
+	was_active = state.active_chat_id == chat_id
 	state.chats = [t for t in state.chats if t.id != chat_id]
-	if state.active_chat_id == chat_id:
+	if was_active:
 		nxt = state.chats[0]
 		state.active_chat_id = nxt.id
 		state.chat = list(nxt.messages)
 	save_state(state)
 	return load_state(project_id)
-
 
 def chat_summaries(state: ProjectState) -> list[dict[str, Any]]:
 	sync_chat_threads(state)
