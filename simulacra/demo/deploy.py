@@ -159,7 +159,7 @@ def _mirror_public_json_to_dist(app_dir: Path) -> None:
 
 
 def _heal_unsafe_json_fetches(app_dir: Path) -> bool:
-	"""Rewrite fragile `r.json()` boots so HTML/404 never crashes the preview."""
+	"""Rewrite fragile `r.json()` boots and absolute-root asset URLs."""
 	tsx = app_dir / "src" / "App.tsx"
 	if not tsx.is_file():
 		return False
@@ -177,12 +177,17 @@ def _heal_unsafe_json_fetches(app_dir: Path) -> bool:
 		".then((r) => (r.ok ? r.json() : null))",
 		'.then(async (r) => { if (!r.ok) return null; const t = await r.text(); const s = t.trim(); if (!s || s.startsWith("<")) return null; try { return JSON.parse(s); } catch { return null; } })',
 	)
-	# Bare r.json() after ok check — soften via text parse
+	# Absolute `/config.json` helpers break under /projects/<id>/preview/
 	import re
 
 	text = re.sub(
-		r"if\s*\(\s*!r\.ok\s*\)\s*throw new Error\([^)]*\);\s*return r\.json\(\);",
-		'if (!r.ok) return null; const __t = await r.text(); const __s = __t.trim(); if (!__s || __s.startsWith("<")) return null; try { return JSON.parse(__s); } catch { return null; }',
+		r"=>\s*`/\$\{(\w+)\.replace\(\(/\^\\\//,\s*[\"'][\"']\)\)\}`",
+		r"=> \1.replace(/^\//, \"\")",
+		text,
+	)
+	text = re.sub(
+		r"(const\s+\w+\s*=\s*\(?\s*\w+\s*\)?\s*=>\s*)`/\$\{([^}]+)\}`",
+		r'\1`${(import.meta.env.BASE_URL || "").replace(/\/?$/, "/")}\2`',
 		text,
 	)
 	if text == original:

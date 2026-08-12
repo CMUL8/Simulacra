@@ -41,6 +41,7 @@ Starter scaffold: `src/App.tsx` + `src/styles.css` — treat as disposable canva
 1. Author the artifact for the USER GOAL. You judge sections, KPIs, narrative, and layout.
 2. Make durable edits to `src/App.tsx` and/or `src/styles.css` (required). Narration-only = fail.
 3. When fetching public JSON, parse safely: if the body is empty/HTML, fall back to []/null — never crash the preview with Unexpected token '<'.
+   Asset URLs must use `import.meta.env.BASE_URL` (or relative paths). Never fetch `/config.json` from the site root.
 4. Use the palette from the brief when sensible; keep contrast readable.
 5. Update `public/config.json` title/subtitle to match the goal.
 6. Valid React/TypeScript; stay in this directory; no servers / npm install.
