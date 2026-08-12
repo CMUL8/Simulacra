@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .chat import infer_app_config
@@ -357,12 +358,26 @@ def _agent_chat_turn(
 
 	# Observe: iterate while artifact exists — run inside this job (one builder).
 	request = str((state.prime or {}).get("request") or request)
-	if request == "iterate" and state.phase == "ready":
-		from .pipeline import _iterate_ui
+	# "continue" / "retry" after a partial update should keep working — not stall on chat waffle.
+	from .pipeline import resolve_iterate_brief
 
-		brief = (turn.brief or message or "").strip()
+	if state.phase == "ready":
+		msg = (message or "").strip()
+		if msg and re.match(
+			r"^\s*(continue|retry|again|same|keep going|try again|go ahead)\b",
+			msg,
+			re.I,
+		):
+			request = "iterate"
+			if not (turn.brief or "").strip():
+				turn.brief = resolve_iterate_brief(state, None, message)
+
+	if request == "iterate" and state.phase == "ready":
+		brief = resolve_iterate_brief(state, turn.brief, message)
 		if brief:
 			emit_event(project_id, "phase", label="Refining the artifact", detail=brief[:120], status="running")
+			from .pipeline import _iterate_ui
+
 			_iterate_ui(project_id, brief)
 			state = load_state(project_id)
 			state.prime = {**state.prime, "request": "await_user"}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,30 @@ def _change_summary_lines(
 	else:
 		lines.append("Preview refreshed")
 	return lines
+
+
+_CONTINUE_RE = re.compile(
+	r"^\s*(continue|retry|again|same|keep going|try again|go ahead)\b",
+	re.I,
+)
+
+
+def resolve_iterate_brief(state: ProjectState, turn_brief: str | None, message: str | None) -> str:
+	"""Prefer an explicit brief; on 'continue' recover the last real user ask."""
+	brief = (turn_brief or "").strip()
+	msg = (message or "").strip()
+	if brief and not _CONTINUE_RE.match(brief):
+		return brief
+	if msg and not _CONTINUE_RE.match(msg):
+		return msg
+	# Walk recent user messages for a non-continue ask (visual/layout rewrites)
+	for m in reversed(state.chat or []):
+		if (m.role or "") != "user":
+			continue
+		content = (m.content or "").strip()
+		if content and not _CONTINUE_RE.match(content):
+			return content
+	return brief or msg
 
 
 def _write_policy_snapshot(project_id: str) -> None:
@@ -604,7 +629,11 @@ def _iterate_merge_app_config(state: ProjectState, message: str) -> None:
 
 
 def _iterate_ui(project_id: str, message: str) -> None:
+	from .jobs import extend_job_budget
 	from .observe import ensure_fresh_extract
+
+	# Chat often burns budget before chaining here — give the builder a full slice.
+	extend_job_budget(project_id, extra_secs=420.0, extra_steps=50)
 
 	ensure_fresh_extract(project_id)
 	state = load_state(project_id)
@@ -712,10 +741,11 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	):
 		honesty = (
 			"## Partial update\n\n"
-			"Some styles landed, but the content rewrite did **not** finish.\n\n"
+			"Styles landed, but the layout rewrite did not finish in time.\n\n"
 			"**What changed**\n"
 			+ "\n".join(f"- {line}" for line in change_lines)
-			+ "\n\nRephrase the change and send again — Preview may still show the prior layout."
+			+ "\n\nSay **continue** (or send the same ask again) — I'll keep going on the layout. "
+			"You do not need to rephrase or split the request."
 		)
 		source = "craft" if meta.get("source") == "craft" else "heuristic"
 	elif not meta.get("used"):
@@ -723,7 +753,8 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		source = "error"
 	else:
 		honesty = (
-			"Builder did not finish this change. Last good preview kept — try a clearer instruction."
+			"Builder did not finish this change. Last good preview kept — "
+			"say **continue** and I'll retry the same request."
 		)
 		source = meta.get("source") or "error"
 

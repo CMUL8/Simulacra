@@ -173,6 +173,11 @@ def _envelope_schema_block() -> str:
 		"- Never invent vendor/risk UI sections unless the user asked for vendor risk.\n"
 		"- Never brand the product as 'Vendor Risk Command Center' unless the user typed that name.\n"
 		"- Title and copy must come from the user's topic — not from the scaffold demo.\n"
+		"- Never ask the user to rephrase, split the request, or choose between "
+		"'targeted iterates' vs 'rebuild from scratch'. If they want a visual/layout change "
+		"and an artifact exists, set request=iterate with a clear brief and do the work.\n"
+		"- If the previous turn was a partial update, and the user says continue/retry/same ask, "
+		"set request=iterate with the prior visual brief — do not lecture about scope.\n"
 	)
 
 

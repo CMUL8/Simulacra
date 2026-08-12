@@ -55,6 +55,16 @@ Write `src/App.tsx` now for the USER GOAL. You own structure and craft. Then sto
 {original_task}
 """
 
+CONTENT_FOCUS = """CRITICAL — styles may already be updated. Do NOT spend time on CSS.
+
+Rewrite `src/App.tsx` now for this follow-up. Prefer charts, large stats, timelines,
+and comparison panels over long text cards. Durable App.tsx edits are required.
+Then stop.
+
+Follow-up:
+{delta}
+"""
+
 CRAFT_MARKER = "// simulacra_craft:"
 
 
@@ -276,7 +286,7 @@ def prime_build_app(
 		artifact_kind=spec.kind,
 		format_hint=spec.aesthetic_hint,
 	)
-	timeout = 300.0 if kind == "build_run" else 200.0
+	timeout = 420.0 if kind == "build_run" else 360.0
 
 	emit_event(
 		project_id,
@@ -307,22 +317,27 @@ def prime_build_app(
 	meta["write_tools"] = int(meta.get("write_tools") or 0)
 	events_total = int(meta.get("events") or 0)
 
-	# Steered retry when agent finishes without touching App.tsx
-	if not app_changed and not meta.get("error"):
+	# Steered retry when App.tsx still untouched — including after timeout/error,
+	# otherwise CSS-only lands and chat dumps "rephrase" on the user.
+	if not app_changed:
 		emit_event(
 			project_id,
 			"think",
 			label="No layout edits — retrying",
-			detail="Agent finished without changing App.tsx; steering to write tools",
+			detail="Steering builder to rewrite App.tsx (content, not just styles)",
 			status="running",
 		)
-		retry_prompt = STEER_RETRY.format(original_task=task)
+		retry_prompt = (
+			CONTENT_FOCUS.format(delta=delta_note or prompt[:500])
+			if delta_note or kind == "iterate_run"
+			else STEER_RETRY.format(original_task=task)
+		)
 		retry_meta = prime_run(
 			project_id,
 			cwd=app_dir,
 			prompt=retry_prompt,
 			name="simulacra-builder",
-			timeout=min(timeout, 180.0),
+			timeout=min(timeout, 300.0),
 		)
 		meta["events"] = events_total + int(retry_meta.get("events") or 0)
 		meta["write_tools"] = int(meta.get("write_tools") or 0) + int(retry_meta.get("write_tools") or 0)
@@ -331,13 +346,16 @@ def prime_build_app(
 			meta["session_id"] = retry_meta.get("session_id")
 		if retry_meta.get("model"):
 			meta["model"] = retry_meta.get("model")
-		if retry_meta.get("error") and not meta.get("error"):
-			meta["error"] = retry_meta.get("error")
+		# Prefer fresh error only if retry also failed without touching App.tsx
 		app_changed = _app_tsx_hash(app_dir) != before_app
 		any_changed = _src_fingerprint(app_dir) != before_fp
 		meta["files_changed"] = any_changed
 		meta["layout_customized"] = app_changed
 		meta["changed_files"] = _changed_src_files(app_dir, before_hashes)
+		if app_changed:
+			meta["error"] = None
+		elif retry_meta.get("error"):
+			meta["error"] = retry_meta.get("error")
 
 	if app_changed:
 		meta["ok"] = True

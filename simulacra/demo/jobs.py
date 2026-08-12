@@ -24,10 +24,11 @@ MAX_RUNNING_JOBS = int(os.environ.get("SIMULACRA_MAX_RUNNING_JOBS", "48"))
 BOUNDS: dict[str, dict[str, float | int]] = {
 	"bootstrap": {"timeout": 480, "max_steps": 50, "stall": 120},
 	# Chat may chain into iterate; long LLM waits without tools are normal.
-	"agent_chat": {"timeout": 600, "max_steps": 80, "stall": 300},
-	"plan_ask": {"timeout": 600, "max_steps": 80, "stall": 300},  # alias bounds
-	"build_run": {"timeout": 300, "max_steps": 40, "stall": 45},
-	"iterate_run": {"timeout": 180, "max_steps": 25, "stall": 45},
+	"agent_chat": {"timeout": 900, "max_steps": 120, "stall": 300},
+	"plan_ask": {"timeout": 900, "max_steps": 120, "stall": 300},  # alias bounds
+	"build_run": {"timeout": 420, "max_steps": 50, "stall": 90},
+	# Heavy visual rewrites (charts/timeline/comparisons) need room past CSS.
+	"iterate_run": {"timeout": 420, "max_steps": 50, "stall": 90},
 	"iterate_ask": {"timeout": 90, "max_steps": 6, "stall": 45},
 	"reingest": {"timeout": 180, "max_steps": 20, "stall": 60},
 }
@@ -173,8 +174,11 @@ def check_bounds(project_id: str) -> None:
 	# Build/iterate still use stall so runaway tool loops die.
 	if job.kind not in ("agent_chat", "plan_ask") and now - job.last_event_at > job.stall_secs:
 		raise JobCancelled("stall")
+	# Writes to the same path are normal (App.tsx often takes many passes).
+	# Only trip on identical non-write spam (e.g. stuck read/search loops).
 	for sig, count in job.tool_signatures.items():
-		if count >= 3:
+		limit = 12 if sig.lower().startswith(("write:", "edit:", "apply_patch:", "str_replace:")) else 5
+		if count >= limit:
 			raise JobCancelled(f"repeated_tool:{sig}")
 
 
@@ -217,6 +221,23 @@ def register_abort(project_id: str, hook: Callable[[], None]) -> None:
 
 def clear_abort(project_id: str) -> None:
 	_abort_hooks.pop(project_id, None)
+
+
+def extend_job_budget(
+	project_id: str,
+	*,
+	extra_secs: float = 420.0,
+	extra_steps: int = 50,
+) -> bool:
+	"""Give a nested iterate/build more wall-clock and step room inside chat."""
+	job = get_job(project_id)
+	if not job or job.status != "running":
+		return False
+	job.deadline = max(job.deadline, time.monotonic() + float(extra_secs))
+	job.max_steps = max(job.max_steps, job.steps + int(extra_steps))
+	job.last_event_at = time.monotonic()
+	_persist(job)
+	return True
 
 
 def start_job(
