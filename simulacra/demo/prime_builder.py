@@ -19,21 +19,21 @@ _SKILL_PATH = Path(__file__).resolve().parent / "skills" / "data_viz.md"
 
 BUILD_TASK = """You are building a {format_label} ({artifact_kind}). Taste and craft are the product.
 
-## User goal
+## User goal (this is the product — obey this over any scaffold demo copy)
 {prompt}
 
 ## Format
 {format_hint}
 
 ## Data already prepared
-- `public/data.json` — extracted findings ({row_count} rows)
-- `public/analytics.json` — KPIs / charts
+- `public/data.json` — extracted rows ({row_count})
+- `public/analytics.json` — derived stats (may be empty / irrelevant — do not force a dashboard)
 - `public/config.json` — title/subtitle + artifactKind
-- `public/design_brief.json` — aesthetics (OBEY)
+- `public/design_brief.json` — aesthetics (palette/density)
 - `public/sources.json` — source inventory + extract report
-- `public/data_profile.json` — schema stats + design nuances
+- `public/data_profile.json` — schema stats
 - `public/agent_context.md` — excerpts + inventory (READ THIS)
-- `src/App.tsx` + `src/styles.css` — current artifact (edit these)
+- `src/App.tsx` + `src/styles.css` — starter scaffold (REWRITE for the user goal)
 
 {data_block}
 
@@ -43,16 +43,17 @@ BUILD_TASK = """You are building a {format_label} ({artifact_kind}). Taste and c
 {viz_skill}
 
 ## Your job (all required)
-1. Read data_profile.json + agent_context.md + analytics.json + design brief + current App.tsx
-2. Design for THIS format — not a generic dashboard unless artifact_kind is data_app
+1. Read agent_context.md + user goal + current App.tsx — author for THIS topic
+2. Design for THIS format — not a generic dashboard unless artifact_kind is data_app AND the data fits
 3. Edit `src/styles.css` so palette tokens match the brief — including --muted, --border, --panel-2
-4. Edit `src/App.tsx` so layout + hierarchy feel bespoke for THIS data and format
+4. Edit `src/App.tsx` so the artifact is about the user goal — discard Vendor Risk / diligence scaffold chrome if the topic is something else
 5. Fix contrast: body text readable; labels not black-on-black
-6. Update `public/config.json` title/subtitle from the brief if needed
+6. Update `public/config.json` title/subtitle from the user goal / brief
 7. Keep valid React/TypeScript; stay in this directory
 8. Do NOT start servers or npm install
 9. Make durable file edits — narration without diffs is a failed build
-10. If the room is empty, show an honest empty state — never invent vendors/findings
+10. If the room is empty, show an honest empty state — never invent records
+11. Do not invent vendor/risk/findings IA unless the user asked for vendor risk or the data is clearly that shape
 
 Impress the user. Format-specific done-when rules in the craft section are mandatory.
 
@@ -191,8 +192,13 @@ def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
 	chrome = str(aes.get("chrome") or "no-cards").replace(" ", "-")
 	direction = str(aes.get("direction") or "dense-ops")
 	product = str(brief.get("product_name") or state.app_config.title or "Internal App")[:60]
-	short = product.split()[0] if product.split() else "Risk"
+	short = product.split()[0] if product.split() else "App"
 	mark = _brand_mark(direction)
+	prompt_l = f"{state.prompt} {product} {state.app_config.title}".lower()
+	vendor_topic = any(
+		tok in prompt_l
+		for tok in ("vendor", "diligence", "third-party risk", "tprm", "supplier risk")
+	)
 
 	tsx_path = app_dir / "src" / "App.tsx"
 	css_path = app_dir / "src" / "styles.css"
@@ -250,7 +256,7 @@ def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
 		count=1,
 	)
 
-	# Put High risk KPI first (risk-first IA for this product)
+	# Put High risk KPI first only for vendor/diligence topics still on the stock scaffold
 	stock_kpis = (
 		'<section className="kpi-row">\n'
 		'            <Kpi label="Findings" value={k.total_findings} sub="across data room" />\n'
@@ -269,27 +275,26 @@ def _deterministic_layout_pass(app_dir: Path, project_id: str) -> bool:
 		'            <Kpi label="Sources" value={k.source_files} sub="files ingested" />\n'
 		"          </section>"
 	)
-	if stock_kpis in tsx:
+	if vendor_topic and stock_kpis in tsx:
 		tsx = tsx.replace(stock_kpis, craft_kpis, 1)
-	elif "kpi-row-priority" not in tsx and '<section className="kpi-row">' in tsx:
+	elif vendor_topic and "kpi-row-priority" not in tsx and '<section className="kpi-row">' in tsx:
 		tsx = tsx.replace('<section className="kpi-row">', '<section className="kpi-row kpi-row-priority">', 1)
 
-	# Personalized section titles
-	replacements = {
-		"<h2>Risk distribution</h2>": f"<h2>{short} risk mix</h2>",
-		"<h2>Score distribution</h2>": "<h2>Score bands</h2>",
-		"<h2>Top vendors by max risk score</h2>": f"<h2>Top vendors · {short}</h2>",
-		"<h2>Theme breakdown</h2>": "<h2>Themes in play</h2>",
-		"<h2>Data sources</h2>": "<h2>Sources ingested</h2>",
-	}
-	for old, new in replacements.items():
-		tsx = tsx.replace(old, new)
-
-	# Live meta copy
-	tsx = tsx.replace(
-		"Live · {k.total_findings} findings",
-		f"Live · {product[:28]} · {{k.total_findings}} findings",
-	)
+	# Personalized section titles — only when the topic is still diligence-shaped
+	if vendor_topic:
+		replacements = {
+			"<h2>Risk distribution</h2>": f"<h2>{short} risk mix</h2>",
+			"<h2>Score distribution</h2>": "<h2>Score bands</h2>",
+			"<h2>Top vendors by max risk score</h2>": f"<h2>Top vendors · {short}</h2>",
+			"<h2>Theme breakdown</h2>": "<h2>Themes in play</h2>",
+			"<h2>Data sources</h2>": "<h2>Sources ingested</h2>",
+		}
+		for old, new in replacements.items():
+			tsx = tsx.replace(old, new)
+		tsx = tsx.replace(
+			"Live · {k.total_findings} findings",
+			f"Live · {product[:28]} · {{k.total_findings}} findings",
+		)
 
 	stamp = f"{CRAFT_MARKER}{direction}:{density}:{chrome}\n"
 	if CRAFT_MARKER not in tsx:

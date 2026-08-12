@@ -416,35 +416,46 @@ def update_project_brief(project_id: str, patch: dict[str, Any] | None = None):
 
 def brief_to_prime_block(brief: dict[str, Any], *, delta_note: str = "") -> str:
 	palette = resolve_palette(brief)
+	# Strip stock Vendor Risk identity from what we show the agent
+	safe = copy.deepcopy(brief)
+	if is_stock_vendor_name(str(safe.get("product_name") or "")):
+		safe["product_name"] = "Untitled"
+	if is_stock_vendor_name(str(safe.get("one_liner") or "")) or str(safe.get("one_liner") or "").lower() in {
+		"monitor vendor findings and risk scores",
+	}:
+		safe["one_liner"] = "Chat with the agent — Build when ready"
+	ia = dict(safe.get("information_architecture") or {})
+	must = [m for m in (ia.get("must_have") or []) if "vendor" not in str(m).lower()]
+	if must:
+		ia["must_have"] = must
+	safe["information_architecture"] = ia
+
+	aes = safe.get("aesthetic") or {}
 	lines = [
-		"## Design brief (OBEY — this is the product differentiator)",
-		"Aesthetics and taste matter more than stock layout. Impress the user.",
-		"Read `public/design_brief.json` if present.",
+		"## Design brief (aesthetics — follow palette/density; do NOT invent a different product topic)",
+		"Read `public/design_brief.json` if present. User prompt wins over any leftover demo copy in the scaffold.",
 		"```json",
-		json.dumps({**brief, "aesthetic": {**(brief.get("aesthetic") or {}), "palette": palette}}, indent=2)[:3500],
+		json.dumps({**safe, "aesthetic": {**aes, "palette": palette}}, indent=2)[:3500],
 		"```",
 		"## Palette (use these exact hex values in CSS)",
 		json.dumps(palette, indent=2),
 	]
 	if delta_note:
 		lines.append(f"## Design delta\n{delta_note}")
-	aes = brief.get("aesthetic") or {}
-	ia = brief.get("information_architecture") or {}
 	lines.append(
 		"## Hard anti-patterns (instant fail)\n"
+		"- Keeping scaffold demo branding (Vendor Risk, diligence command center) when the user asked for something else\n"
 		"- Flooding one KPI card with accent fill while siblings stay dark\n"
 		"- Setting --panel and --panel-2 to the same color (bars disappear)\n"
 		"- Dark text on dark ground or light text on light ground\n"
 		"- Labels/numbers kissing panel edges — use ≥14px padding\n"
-		"- Empty middle in risk rows (pills left, numbers right, no visible track)\n"
 		"- Pill spam, neon glow, emoji, Inter-on-white stock look\n"
 		"## Done when\n"
 		f"- CSS vars match palette incl. muted/border/panel-2 ({palette.get('accent')})\n"
 		f"- Density/chrome match ({aes.get('color_mode')}, {aes.get('density')}, chrome={aes.get('chrome')})\n"
-		f"- must_have present: {', '.join(ia.get('must_have') or [])}\n"
+		f"- must_have present when relevant: {', '.join(ia.get('must_have') or []) or '(none prescribed)'}\n"
 		f"- must_not absent: {', '.join(ia.get('must_not') or [])}\n"
-		"- KPI strip even; hero viz readable; bar tracks contrast with panel\n"
-		"- Would a risk lead screenshot this for a weekly review? If no, keep editing.\n"
-		"- App stays interactive (filters/tabs/detail), TypeScript valid, stay inside app/"
+		"- Artifact matches the USER GOAL topic — not the starter scaffold's domain\n"
+		"- TypeScript valid; stay inside app/"
 	)
 	return "\n".join(lines)

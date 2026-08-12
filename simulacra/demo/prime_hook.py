@@ -99,7 +99,7 @@ def prime_infer_app_config(
 		return None, PrimeBuildMeta(used=False, source="heuristic")
 
 	prime_prompt = (
-		"You are configuring an internal data dashboard for enterprise users.\n\n"
+		"You are configuring an internal product for enterprise users.\n\n"
 		f"User prompt:\n{prompt}\n\n"
 		f"Data summary:\n{summary[:1800]}\n\n"
 		"Reply with ONLY valid JSON, no markdown:\n"
@@ -256,12 +256,12 @@ def prime_chat_turn(
 			"Use your persistent session/RLM memory — later turns will resume this conversation.\n"
 		)
 		user_bit = f"User request:\n{state.prompt}\n\nGoal (if any):\n{state.goal or '(none)'}\n"
+		# Inventory only — do not dump high-risk/vendor KPIs unless the room is diligence-shaped.
+		# Design brief is aesthetics; user prompt is the product topic.
 		context_bit = (
 			f"Data room inventory:\n{room_lines}\n\n"
 			f"Source summary:\n{summary[:1800]}\n\n"
 			f"Stats: {preview.get('row_count', 0)} rows, "
-			f"{preview.get('high_risk', 0)} high-risk, "
-			f"{len(preview.get('vendors') or [])} vendors, "
 			f"{len(preview.get('files') or [])} files.\n\n"
 			f"{data_block}\n\n"
 			f"{design}\n"
@@ -284,8 +284,7 @@ def prime_chat_turn(
 		)
 		context_bit = (
 			f"Data room inventory (current):\n{room_lines}\n\n"
-			f"Rows={preview.get('row_count', 0)} high={preview.get('high_risk', 0)} "
-			f"vendors={len(preview.get('vendors') or [])} files={len(preview.get('files') or [])}\n"
+			f"Rows={preview.get('row_count', 0)} files={len(preview.get('files') or [])}\n"
 		)
 		ask_timeout = 240.0
 

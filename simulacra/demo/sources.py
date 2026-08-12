@@ -322,12 +322,13 @@ def profile_rows(rows: list[dict[str, Any]]) -> DataProfile:
 		return DataProfile(
 			empty_room=True,
 			nuance_notes=[
-				"Data room is empty or no extractable findings — scaffold will be hollow until sources are added.",
+				"Data room is empty or no extractable rows — scaffold will be hollow until sources are added.",
 			],
 			suggested_must_have=["Empty state", "Upload CTA copy"],
 		)
 
 	cols = sorted({k for r in rows for k in r.keys()})
+	cols_l = {c.lower() for c in cols}
 	vendors = sorted({str(r.get("vendor") or "") for r in rows if r.get("vendor")})
 	themes = sorted({str(r.get("theme") or "") for r in rows if r.get("theme")})
 	regions = sorted({str(r.get("region") or "") for r in rows if r.get("region")})
@@ -337,42 +338,46 @@ def profile_rows(rows: list[dict[str, Any]]) -> DataProfile:
 	med = sum(1 for r in rows if str(r.get("risk_level")) == "medium")
 	low = sum(1 for r in rows if str(r.get("risk_level")) == "low")
 	scores = [float(r["risk_score"]) for r in rows if isinstance(r.get("risk_score"), (int, float))]
+	diligence = "vendor" in cols_l and ("risk_score" in cols_l or "risk_level" in cols_l)
 
 	notes: list[str] = []
-	must = ["KPI strip", "primary table"]
+	must = ["KPI strip", "primary table"] if diligence else ["clear hierarchy", "topic-led sections"]
 	primary = "overview"
 
-	if high / max(len(rows), 1) >= 0.25:
+	if diligence and high / max(len(rows), 1) >= 0.25:
 		notes.append(f"High-risk density is elevated ({high}/{len(rows)}) — lead with severity triage.")
 		must.insert(0, "High-risk triage")
 		primary = "findings"
-	# Only suggest a vendor leaderboard when the DATA actually has multiple vendors —
-	# never because the product default is "Vendor Risk".
-	if len(vendors) >= 5:
-		notes.append(f"{len(vendors)} entities in vendor field — leaderboard/scorecard is useful.")
+	# Only suggest a vendor leaderboard when the DATA is clearly diligence-shaped
+	if diligence and len(vendors) >= 5:
+		notes.append(f"{len(vendors)} vendors — leaderboard/scorecard is useful.")
 		must.append("entity leaderboard")
-	elif len(vendors) == 1:
+	elif diligence and len(vendors) == 1:
 		notes.append(
-			f"Single entity ({vendors[0]}) — deepen theme/evidence, de-emphasize multi-entity chrome."
+			f"Single vendor ({vendors[0]}) — deepen theme/evidence, de-emphasize multi-entity chrome."
 		)
 		must.append("theme breakdown")
+	elif not diligence:
+		notes.append(
+			"Schema is not vendor-risk shaped — author for the user task; do not invent diligence IA."
+		)
 	if regions:
 		notes.append(f"Region field populated ({len(regions)} values) — region filter/heatmap useful.")
 		must.append("region filter")
 	if owners:
 		notes.append(f"Owner field populated ({len(owners)} values) — ownership column matters.")
-	if not scores:
+	if diligence and not scores:
 		notes.append("No numeric scores — avoid score histogram; emphasize counts and levels.")
-	elif max(scores) - min(scores) < 5:
+	elif diligence and scores and max(scores) - min(scores) < 5:
 		notes.append("Scores are tightly clustered — histogram may look flat; prefer ranked lists.")
 	if len(rows) < 8:
 		notes.append("Small row set — prefer dense tables over sparse multi-panel dashboards.")
 	elif len(rows) > 200:
-		notes.append("Large row set — search + filters required; paginate findings.")
+		notes.append("Large row set — search + filters required; paginate the primary table.")
 		must.append("search and filters")
 
 	if len(sources) == 1:
-		notes.append(f"All findings from one source ({sources[0]}) — cite it in the header.")
+		notes.append(f"All rows from one source ({sources[0]}) — cite it in the header.")
 	elif len(sources) > 1:
 		must.append("source inventory")
 
@@ -471,18 +476,35 @@ def write_agent_context(
 	sources_json.write_text(json.dumps(inventory, indent=2, default=str))
 	profile_json.write_text(json.dumps(profile.to_dict(), indent=2))
 
+	cols_l = {c.lower() for c in profile.columns}
+	diligence = (
+		"vendor" in cols_l
+		and ("risk_score" in cols_l or "risk_level" in cols_l)
+		and len(profile.vendors) >= 1
+	)
 	lines = [
 		"# Agent context — data room",
 		"",
 		f"**Task:** {prompt[:300] or '(none)'}",
-		f"**Findings:** {profile.row_count} · high={profile.high_risk} med={profile.medium_risk} low={profile.low_risk}",
-		f"**Vendors:** {', '.join(profile.vendors[:12]) or 'none'}",
+		f"**Rows:** {profile.row_count}",
 		f"**Columns:** {', '.join(profile.columns) or 'none'}",
 		f"**Fingerprint:** `{inventory['fingerprint'][:16]}…`",
-		"",
-		"## Design around this data",
 	]
+	if diligence:
+		lines.extend(
+			[
+				f"**Risk mix:** high={profile.high_risk} med={profile.medium_risk} low={profile.low_risk}",
+				f"**Vendors:** {', '.join(profile.vendors[:12]) or 'none'}",
+			]
+		)
+	else:
+		lines.append(
+			"**Note:** Room is not a vendor-risk pack. Do not invent Vendor / diligence UI unless the task asks for it."
+		)
+	lines.extend(["", "## Notes from the room"])
 	for note in profile.nuance_notes:
+		if not diligence and "leaderboard" in note.lower():
+			continue
 		lines.append(f"- {note}")
 	if not profile.nuance_notes:
 		lines.append("- (no special nuances)")
@@ -536,28 +558,51 @@ def write_agent_context(
 
 
 def sources_to_prime_block(profile: DataProfile, *, extract: ExtractReport | None = None) -> str:
-	"""Compact block injected into plan/builder agent prompts."""
+	"""Compact inventory for agent prompts — topic-neutral unless data is clearly diligence."""
+	cols = {c.lower() for c in profile.columns}
+	diligence = (
+		"vendor" in cols
+		and ("risk_score" in cols or "risk_level" in cols)
+		and len(profile.vendors) >= 1
+	)
 	lines = [
-		"## Data room (design the app around THIS)",
-		f"- Rows: {profile.row_count} (high={profile.high_risk}, medium={profile.medium_risk}, low={profile.low_risk})",
-		f"- Vendors ({len(profile.vendors)}): {', '.join(profile.vendors[:15]) or 'none'}",
-		f"- Themes ({len(profile.themes)}): {', '.join(profile.themes[:12]) or 'none'}",
+		"## Data room (facts only — design for the USER'S topic, not this schema's demos)",
+		f"- Rows: {profile.row_count}",
 		f"- Columns: {', '.join(profile.columns) or 'none'}",
 		f"- Source files: {', '.join(profile.source_files[:10]) or 'none'}",
 	]
-	if profile.score_avg is not None:
+	if diligence:
+		lines.extend(
+			[
+				f"- Risk levels: high={profile.high_risk}, medium={profile.medium_risk}, low={profile.low_risk}",
+				f"- Vendor field values ({len(profile.vendors)}): {', '.join(profile.vendors[:15]) or 'none'}",
+			]
+		)
+		if profile.themes:
+			lines.append(f"- Themes ({len(profile.themes)}): {', '.join(profile.themes[:12])}")
+		if profile.score_avg is not None:
+			lines.append(
+				f"- Scores: min={profile.score_min} avg={profile.score_avg} max={profile.score_max}"
+			)
+	else:
+		# Non-diligence rooms: do NOT frame as vendors/findings
+		if profile.themes:
+			lines.append(f"- Notable field values: {', '.join(profile.themes[:12])}")
 		lines.append(
-			f"- Scores: min={profile.score_min} avg={profile.score_avg} max={profile.score_max}"
+			"- Schema is not a vendor-risk pack. Do not invent Vendor / diligence / risk-score UI "
+			"unless the user asked for that."
 		)
 	if profile.regions:
 		lines.append(f"- Regions: {', '.join(profile.regions[:10])}")
 	if profile.owners:
 		lines.append(f"- Owners: {', '.join(profile.owners[:10])}")
-	lines.append(f"- Suggested primary view: {profile.suggested_primary}")
-	lines.append(f"- Suggested must_have: {', '.join(profile.suggested_must_have)}")
-	lines.append("### Nuances")
-	for note in profile.nuance_notes[:8]:
-		lines.append(f"- {note}")
+	if profile.nuance_notes:
+		lines.append("### Notes from the room")
+		for note in profile.nuance_notes[:8]:
+			# Soften vendor-leaderboard suggestions when not diligence
+			if not diligence and "leaderboard" in note.lower():
+				continue
+			lines.append(f"- {note}")
 	if extract:
 		lines.append(
 			f"### Extract: {extract.ok_count} ok files, "
@@ -566,12 +611,12 @@ def sources_to_prime_block(profile: DataProfile, *, extract: ExtractReport | Non
 		for err in extract.errors[:5]:
 			lines.append(f"- error: {err}")
 	lines.append(
-		"Read `public/sources.json`, `public/data_profile.json`, and `public/agent_context.md` "
-		"before editing layout. Prefer viz that match the nuances above."
+		"Read `public/sources.json`, `public/data_profile.json`, and `public/agent_context.md` if present. "
+		"Prefer structure that matches the USER GOAL over the scaffold demo."
 	)
 	if profile.empty_room:
 		lines.append(
-			"CRITICAL: empty room — do not invent vendors/findings; show an honest empty state."
+			"CRITICAL: empty room — do not invent records; show an honest empty state."
 		)
 	return "\n".join(lines)
 
