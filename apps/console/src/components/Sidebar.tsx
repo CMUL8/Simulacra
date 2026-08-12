@@ -33,11 +33,6 @@ type Props = {
   onHome?: () => void;
 };
 
-function fmtSize(n: number) {
-  if (n < 1024) return `${n} B`;
-  return `${(n / 1024).toFixed(1)} KB`;
-}
-
 function relativeWhen(iso?: string): string {
   if (!iso) return "";
   const t = Date.parse(iso);
@@ -58,7 +53,7 @@ function StatusIcon({ status, gates }: { status: string; gates: string }) {
   return <Clock size={12} className="status-icon pending" />;
 }
 
-function projectStatusLabel(p: Project): string {
+function statusTitle(p: Project): string {
   if (p.deployed || p.status === "deployed") return "Shipped";
   if (p.phase === "ready" || p.status === "ready") return "Built";
   if (p.phase === "plan" || p.status === "planning" || p.status === "draft") return "Draft";
@@ -66,14 +61,12 @@ function projectStatusLabel(p: Project): string {
   if (["building_app", "publishing_preview", "approved"].includes(status)) return "Building";
   if (["extracting", "gating"].includes(status)) return "Scanning";
   if (status === "failed") return "Failed";
-  if (status.includes("_")) return p.phase === "build" ? "Building" : "Draft";
   return p.phase === "build" ? "Building" : "Draft";
 }
 
 function chatsFor(p: Project): ChatThreadSummary[] {
   const idx = p.chat_index || p.chats;
   if (idx && idx.length) return idx;
-  // Legacy single-thread projects
   const title = (p.chat?.[0]?.content || p.prompt || "Main chat").split("\n")[0]!.slice(0, 56);
   return [
     {
@@ -87,7 +80,13 @@ function chatsFor(p: Project): ChatThreadSummary[] {
   ];
 }
 
-/** Sidebar nav with workspace quick search (Beautiful UI 14) + nested chats. */
+function shortFileLabel(name: string): string {
+  const label = humanSourceLabel(name);
+  const first = label.split(/\s+/)[0] || label;
+  return first.length > 14 ? `${first.slice(0, 13)}…` : first;
+}
+
+/** Cursor-like sidebar: section actions, lean rows, icon-first data room. */
 export function Sidebar({
   projects,
   activeId,
@@ -147,16 +146,30 @@ export function Sidebar({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Quick search…"
+            placeholder="Search…"
             aria-label="Search projects and sources"
           />
         </div>
       </div>
 
       <div className="sidebar-section grow projects-section">
-        <div className="sidebar-head title-case">
+        <div className="sidebar-head title-case with-actions">
           <span>Projects</span>
-          <span className="badge">{filteredProjects.length}</span>
+          <div className="sidebar-head-actions">
+            <span className="badge quiet">{filteredProjects.length}</span>
+            {onNewChat && activeId ? (
+              <Tooltip label="New chat">
+                <button
+                  type="button"
+                  className="sidebar-head-btn"
+                  onClick={() => onNewChat(activeId)}
+                  aria-label="New chat in active project"
+                >
+                  <Plus size={14} />
+                </button>
+              </Tooltip>
+            ) : null}
+          </div>
         </div>
         <ul className="project-list nested">
           {filteredProjects.length === 0 && <li className="empty">No projects yet</li>}
@@ -164,6 +177,7 @@ export function Sidebar({
             const open = Boolean(expanded[p.id]) || p.id === activeId;
             const chats = chatsFor(p);
             const isActiveProject = activeId === p.id;
+            const st = statusTitle(p);
             return (
               <li key={p.id} className={`project-group${isActiveProject ? " on" : ""}`}>
                 <div className="project-row">
@@ -182,29 +196,18 @@ export function Sidebar({
                       setExpanded((prev) => ({ ...prev, [p.id]: true }));
                       onSelect(p.id);
                     }}
+                    title={`${p.app_config?.title || "Untitled"} · ${st}`}
                   >
-                    {open ? <FolderOpen size={14} className="project-folder" /> : <Folder size={14} className="project-folder" />}
-                    <div className="project-text">
-                      <span className="project-title">{p.app_config?.title || "Untitled"}</span>
-                      <span className="project-meta">
-                        <StatusIcon status={p.status} gates={p.gates_status} />
-                        {projectStatusLabel(p)}
-                        {chats.length > 1 ? ` · ${chats.length} chats` : ""}
-                      </span>
-                    </div>
+                    {open ? (
+                      <FolderOpen size={14} className="project-folder" />
+                    ) : (
+                      <Folder size={14} className="project-folder" />
+                    )}
+                    <span className="project-title">{p.app_config?.title || "Untitled"}</span>
+                    <span className="project-status" title={st} aria-label={st}>
+                      <StatusIcon status={p.status} gates={p.gates_status} />
+                    </span>
                   </button>
-                  {onNewChat && isActiveProject ? (
-                    <Tooltip label="New chat in this project">
-                      <button
-                        type="button"
-                        className="project-new-chat"
-                        onClick={() => onNewChat(p.id)}
-                        aria-label="New chat"
-                      >
-                        <Plus size={13} />
-                      </button>
-                    </Tooltip>
-                  ) : null}
                 </div>
                 {open ? (
                   <ul className="chat-list">
@@ -239,44 +242,44 @@ export function Sidebar({
       <div className={`sidebar-section data-room-section${dataRoomOpen ? "" : " collapsed"}`}>
         <button
           type="button"
-          className="sidebar-head title-case collapsible"
+          className="sidebar-head title-case collapsible with-actions"
           onClick={() => setDataRoomOpen((v) => !v)}
           aria-expanded={dataRoomOpen}
         >
           <span>
             {dataRoomOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            <FolderOpen size={12} style={{ marginRight: 6, opacity: 0.7 }} />
             Data Room
           </span>
-          <span className="badge">{filteredFiles.length}</span>
+          <span className="badge quiet">{filteredFiles.length}</span>
         </button>
         {dataRoomOpen ? (
-          <ul className="file-list">
+          <ul className="file-list compact-icons" aria-label="Data room files">
             {filteredFiles.map((f) => (
-              <li key={f.name} className="file-item">
-                <FileTypeIcon ext={f.type} />
-                <span className="file-name" title={f.name}>
-                  {humanSourceLabel(f.name)}
-                </span>
-                <span className="file-size">{fmtSize(f.size)}</span>
+              <li key={f.name}>
+                <Tooltip label={`${humanSourceLabel(f.name)} · ${(f.size / 1024).toFixed(1)} KB`}>
+                  <button type="button" className="file-chip" title={f.name}>
+                    <FileTypeIcon ext={f.type} />
+                    <span>{shortFileLabel(f.name)}</span>
+                  </button>
+                </Tooltip>
               </li>
             ))}
-            {filteredFiles.length === 0 && <li className="empty">{q ? "No matches" : "No files yet"}</li>}
+            {filteredFiles.length === 0 && <li className="empty">{q ? "No matches" : "Empty"}</li>}
           </ul>
         ) : null}
       </div>
 
       <div className="bui-sidebar-foot">
         {onHome ? (
-          <button type="button" className="bui-sidebar-link" onClick={onHome}>
-            <Home size={14} />
-            Home
-          </button>
+          <Tooltip label="Home">
+            <button type="button" className="bui-sidebar-link icon-only" onClick={onHome} aria-label="Home">
+              <Home size={15} />
+            </button>
+          </Tooltip>
         ) : null}
         <Tooltip label="New project">
-          <button type="button" className="bui-sidebar-new" onClick={onNew}>
-            <Plus size={14} strokeWidth={2} />
-            New
+          <button type="button" className="bui-sidebar-new icon-only" onClick={onNew} aria-label="New project">
+            <Plus size={16} strokeWidth={2} />
           </button>
         </Tooltip>
       </div>

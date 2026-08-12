@@ -519,7 +519,7 @@ def build_project(state: ProjectState, *, run_prime: bool = True) -> ProjectStat
 	state.chat.append(
 		ChatMessage(
 			role="assistant",
-			content=f"Built **{state.app_config.title}** with {len(rows)} rows. {honesty}",
+			content=f"Built **{state.app_config.title}**. {honesty}",
 			source=str(source),
 		)
 	)

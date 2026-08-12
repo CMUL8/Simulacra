@@ -503,16 +503,12 @@ function followUpsFor(snapshot: Snapshot): string[] {
   const kind = snapshot.project.artifact_kind || "data_app";
   const phase = snapshot.project.phase;
   if (phase === "plan") {
-    return [
-      "Tighten the narrative for executives",
-      kind === "report" ? "Add a timeline section" : "Suggest what to Build first",
-      "What sources are still missing?",
-    ];
+    return ["Tighten for execs", kind === "report" ? "Add a timeline" : "What to Build first", "Missing sources?"];
   }
   return [
-    "Make the preview denser",
-    "Improve the opening narrative",
-    kind === "slides" ? "Punch up the title slide" : "Add a clearer KPI strip",
+    "Denser layout",
+    "Stronger opening",
+    kind === "slides" ? "Punchier title" : "Clearer KPIs",
   ];
 }
 

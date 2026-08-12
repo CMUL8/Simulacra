@@ -296,7 +296,7 @@ def _agent_chat_turn(
 			ChatMessage(
 				role="assistant",
 				content=(
-					f"Added {n} source{'s' if n != 1 else ''} to the data room."
+					f"Added {n} source{'s' if n != 1 else ''}."
 					if n
 					else "Sources updated in the data room."
 				),

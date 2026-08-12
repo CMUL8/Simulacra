@@ -1,7 +1,8 @@
 /**
- * Streaming / final answer block (Beautiful UI 03):
- * prose + inline source chips + follow-up actions.
+ * Streaming / final answer block:
+ * prose + compact source cites + short follow-ups (Perplexity / Cursor density).
  */
+import { FileText } from "lucide-react";
 import type { ReactNode } from "react";
 
 export type AnswerSource = { id: string; label: string };
@@ -14,27 +15,35 @@ type Props = {
   streaming?: boolean;
 };
 
+function citeLabel(label: string, index: number): string {
+  const word = (label.split(/\s+/)[0] || label).trim();
+  if (!word || word.length > 12) return String(index + 1);
+  return word;
+}
+
 export function AnswerBlock({ children, sources = [], followUps = [], onFollowUp, streaming }: Props) {
   return (
     <div className={`bui-answer${streaming ? " streaming" : ""}`}>
       <div className="bui-answer-body">{children}</div>
       {sources.length > 0 ? (
-        <div className="bui-answer-sources" aria-label="Sources">
-          <span className="bui-answer-sources-count">
-            {sources.length} source{sources.length === 1 ? "" : "s"}
-          </span>
+        <div className="bui-answer-sources" aria-label={`${sources.length} sources`}>
           <div className="bui-answer-source-row">
-            {sources.slice(0, 8).map((s) => (
-              <span key={s.id} className="bui-source-chip" title={s.label}>
-                {s.label}
+            {sources.slice(0, 6).map((s, i) => (
+              <span key={s.id} className="bui-source-cite" title={s.label}>
+                <FileText size={11} aria-hidden />
+                <em>{citeLabel(s.label, i)}</em>
               </span>
             ))}
+            {sources.length > 6 ? (
+              <span className="bui-source-cite more" title={`${sources.length - 6} more`}>
+                +{sources.length - 6}
+              </span>
+            ) : null}
           </div>
         </div>
       ) : null}
       {followUps.length > 0 && onFollowUp ? (
-        <div className="bui-followups" aria-label="Follow-ups">
-          <span className="bui-followups-label">Follow-ups</span>
+        <div className="bui-followups" aria-label="Suggested next steps">
           <div className="bui-followups-row">
             {followUps.map((f) => (
               <button key={f} type="button" className="bui-followup" onClick={() => onFollowUp(f)}>
