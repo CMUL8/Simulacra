@@ -4872,14 +4872,19 @@ a.md-link:hover {
 .bui-source-cite {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  background: transparent;
   color: var(--text-dim);
   max-width: 7.5rem;
+  opacity: 0.75;
+}
+.bui-source-cite:hover {
+  opacity: 1;
+  color: var(--text);
 }
 .bui-source-cite em {
   font-style: normal;
@@ -4891,32 +4896,50 @@ a.md-link:hover {
   opacity: 0.7;
   max-width: none;
 }
+/* Cursor-style suggestions: plain text, no pill / no box-in-box */
 .bui-followups {
-  display: grid;
-  gap: 6px;
-  padding-top: 2px;
-}
-.bui-followups-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: none;
 }
 .bui-followup {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  appearance: none;
+  border: none;
   background: transparent;
   color: var(--text-dim);
   font-family: var(--font-ui);
-  font-size: 12px;
-  padding: 5px 10px;
-  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  padding: 4px 0;
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   max-width: 100%;
 }
+.bui-followup::before {
+  content: "→ ";
+  opacity: 0.45;
+}
 .bui-followup:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.2);
   color: var(--text-bright);
+  background: transparent;
+}
+.bui-followup:hover::before {
+  opacity: 0.85;
+}
+.bui-followup:focus-visible {
+  outline: none;
+  color: var(--text-bright);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .bui-sel-actions {

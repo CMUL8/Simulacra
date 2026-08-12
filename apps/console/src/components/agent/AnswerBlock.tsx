@@ -44,13 +44,11 @@ export function AnswerBlock({ children, sources = [], followUps = [], onFollowUp
       ) : null}
       {followUps.length > 0 && onFollowUp ? (
         <div className="bui-followups" aria-label="Suggested next steps">
-          <div className="bui-followups-row">
-            {followUps.map((f) => (
-              <button key={f} type="button" className="bui-followup" onClick={() => onFollowUp(f)}>
-                {f}
-              </button>
-            ))}
-          </div>
+          {followUps.map((f) => (
+            <button key={f} type="button" className="bui-followup" onClick={() => onFollowUp(f)}>
+              {f}
+            </button>
+          ))}
         </div>
       ) : null}
     </div>
