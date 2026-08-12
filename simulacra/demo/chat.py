@@ -52,7 +52,6 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 	if "sort" in lower and "desc" in lower:
 		cfg.sort_direction = "desc"
 	if "alphabet" in lower:
-		cfg.sort_column = "vendor"
 		cfg.sort_direction = "asc"
 	if "disable search" in lower or "no search" in lower:
 		cfg.search_enabled = False
@@ -60,8 +59,10 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 		cfg.search_enabled = True
 	if "group by vendor" in lower:
 		cfg.group_by = "vendor"
-	if "group by theme" in lower or "group by region" in lower:
+	if "group by theme" in lower:
 		cfg.group_by = "theme"
+	if "group by region" in lower:
+		cfg.group_by = "region"
 
 	# title override: "call it X" / "rename to X"
 	m = re.search(r"(?:call it|rename to|title)\s+[\"']?([^\"'\n]+)[\"']?", prompt, re.I)

@@ -7,26 +7,22 @@ import { SourcesPanel } from "./SourcesPanel";
 
 /** Prompt chips — three shown; set rotates each UTC day. */
 const IDEA_BANK = [
-  "A findings table ranked by severity",
   "An analytics app my team can explore",
   "A shareable research report my partners can open",
-  "A theme breakdown of issues across the data room",
   "A board deck from our latest research pack",
   "A one-page briefing for tomorrow's review",
-  "A triage queue ordered by severity and score",
   "An internal briefing app for the weekly review",
   "A source inventory of what we ingested and why",
-  "A heatmap of risk by region and owner",
-  "A compliance findings browser for the audit pack",
-  "A diligence room explorer with search and filters",
-  "A portfolio risk strip with drill-down to evidence",
-  "A comparison view ranked by max risk score",
-  "A compact command center for follow-ups",
-  "A findings explorer my analysts can query in chat",
+  "A comparison view ranked by the key metric",
+  "A compact explorer with search and filters",
+  "A narrative report on the topic in the data room",
+  "A slide deck that tells the story in six slides",
+  "A one-pager with the headline numbers only",
+  "A data table my analysts can query in chat",
 ];
 
 const FORMAT_OPTIONS: { kind: ArtifactKind; label: string; hint: string }[] = [
-  { kind: "data_app", label: "App", hint: "Interactive command center" },
+  { kind: "data_app", label: "App", hint: "Interactive explorer" },
   { kind: "report", label: "Report", hint: "Long-form HTML document" },
   { kind: "slides", label: "Slides", hint: "Multi-page deck" },
   { kind: "one_pager", label: "One-pager", hint: "Single printable sheet" },

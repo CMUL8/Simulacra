@@ -13,57 +13,69 @@ from .sources import (
 	KNOWN_UNSUPPORTED,
 )
 
-RISK_WORDS = {
-	"high": ("critical", "severe", "breach", "sanction", "fraud", "high risk"),
-	"medium": ("delay", "concern", "review", "medium", "watch"),
-	"low": ("stable", "low risk", "minor", "acceptable"),
-}
+
+def is_diligence_rows(rows: list[dict[str, Any]]) -> bool:
+	"""True only when rows already carry a real vendor+risk schema (never invent it)."""
+	if not rows:
+		return False
+	cols: set[str] = set()
+	for r in rows[:80]:
+		cols.update(str(k).lower() for k in r.keys())
+	return "vendor" in cols and ("risk_score" in cols or "risk_level" in cols)
 
 
-def _risk_level(text: str) -> tuple[str, int]:
-	lower = text.lower()
-	score = 50
-	level = "medium"
-	for lvl, words in RISK_WORDS.items():
-		for w in words:
-			if w in lower:
-				if lvl == "high":
-					score = max(score, 85)
-					level = "high"
-				elif lvl == "medium" and level != "high":
-					score = max(score, 55)
-					level = "medium"
-				elif lvl == "low" and level == "medium":
-					score = min(score, 35)
-					level = "low"
-	return level, score
+def _attach_source(row: dict[str, Any], source: str) -> dict[str, Any]:
+	out = dict(row)
+	if "source_file" not in out or not out.get("source_file"):
+		out["source_file"] = source
+	return out
 
 
 def _parse_markdown_block(text: str, source: str) -> list[dict[str, Any]]:
+	"""Topic-neutral markdown extract: headings + bullets/paragraphs. No forged risk schema."""
 	rows: list[dict[str, Any]] = []
-	vendor = None
+	heading = ""
 	for line in text.splitlines():
-		line = line.strip()
+		raw = line.rstrip()
+		line = raw.strip()
+		if not line:
+			continue
 		if re.match(r"^#+\s+", line):
-			vendor = re.sub(r"^#+\s+", "", line).strip()
+			heading = re.sub(r"^#+\s+", "", line).strip()
 			continue
-		if not vendor or not line or line.startswith("#"):
-			continue
-		if line.startswith("- "):
+		if line.startswith(("- ", "* ")):
 			body = line[2:].strip()
-			level, score = _risk_level(body)
 			rows.append(
-				{
-					"vendor": vendor,
-					"theme": body.split(":")[0] if ":" in body else "finding",
-					"risk_level": level,
-					"risk_score": score,
-					"evidence": body,
-					"source_file": source,
-					"region": "",
-					"owner": "",
-				}
+				_attach_source(
+					{
+						"heading": heading or Path(source).stem.replace("_", " "),
+						"text": body,
+					},
+					source,
+				)
 			)
+			continue
+		# Keep short prose paragraphs under the current heading
+		if heading and not line.startswith("#"):
+			rows.append(
+				_attach_source(
+					{
+						"heading": heading,
+						"text": line,
+					},
+					source,
+				)
+			)
+	if not rows and text.strip():
+		rows.append(
+			_attach_source(
+				{
+					"heading": Path(source).stem.replace("_", " ")[:80] or "document",
+					"text": text.strip()[:4000],
+				},
+				source,
+			)
+		)
 	return rows
 
 
@@ -71,7 +83,7 @@ def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 	seen: set[str] = set()
 	unique: list[dict[str, Any]] = []
 	for row in rows:
-		key = f"{row.get('vendor')}|{row.get('evidence')}"
+		key = json.dumps(row, sort_keys=True, default=str)[:500]
 		if key in seen:
 			continue
 		seen.add(key)
@@ -79,13 +91,26 @@ def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 	return unique
 
 
+def _json_items(payload: Any) -> list[Any]:
+	if isinstance(payload, list):
+		return payload
+	if not isinstance(payload, dict):
+		return []
+	for key in ("rows", "data", "records", "items", "findings", "results"):
+		val = payload.get(key)
+		if isinstance(val, list):
+			return val
+	# Single object document
+	return [payload]
+
+
 def extract_data_room_report(
 	data_room: Path, *, project_id: str | None = None
 ) -> ExtractReport:
 	"""Extract with per-file status — one bad file does not kill the room.
 
-	Native: .md/.txt/.csv/.json
-	Optional Firecrawl (FIRECRAWL_API_KEY): .pdf/.docx/.xlsx/… → markdown → findings
+	Native: .md/.txt/.csv/.json — preserve native columns; never invent vendor/risk.
+	Optional Firecrawl (FIRECRAWL_API_KEY): .pdf/.docx/.xlsx/… → markdown → neutral rows
 	"""
 	from .firecrawl import can_firecrawl_parse, firecrawl_enabled, parse_and_cache, parse_document_to_markdown
 
@@ -111,7 +136,7 @@ def extract_data_room_report(
 				continue
 			if not file_rows:
 				report.files.append(
-					ExtractFileReport(name=rel, status="empty", detail="No findings parsed")
+					ExtractFileReport(name=rel, status="empty", detail="No rows parsed")
 				)
 			else:
 				report.files.append(
@@ -134,16 +159,13 @@ def extract_data_room_report(
 				file_rows = _parse_markdown_block(md_text, rel)
 				if not file_rows:
 					file_rows = [
-						{
-							"vendor": Path(rel).stem.replace("_", " ")[:60] or "document",
-							"theme": "document",
-							"risk_level": "medium",
-							"risk_score": 50,
-							"evidence": md_text[:2000],
-							"source_file": rel,
-							"region": "",
-							"owner": "",
-						}
+						_attach_source(
+							{
+								"heading": Path(rel).stem.replace("_", " ")[:60] or "document",
+								"text": md_text[:4000],
+							},
+							rel,
+						)
 					]
 				report.files.append(
 					ExtractFileReport(
@@ -187,57 +209,28 @@ def _extract_one(path: Path, rel: str) -> list[dict[str, Any]]:
 			if not reader.fieldnames:
 				return []
 			for row in reader:
-				vendor = row.get("vendor") or row.get("Vendor") or "unknown"
-				theme = row.get("theme") or row.get("Theme") or row.get("finding") or "finding"
-				evidence = row.get("evidence") or row.get("Evidence") or json.dumps(row)
-				level, score = _risk_level(evidence)
-				try:
-					risk_score = int(row.get("risk_score") or score)
-				except (TypeError, ValueError):
-					risk_score = score
-				rows.append(
-					{
-						"vendor": vendor,
-						"theme": theme,
-						"risk_level": row.get("risk_level") or level,
-						"risk_score": risk_score,
-						"evidence": evidence,
-						"source_file": rel,
-						"region": row.get("region") or row.get("Region") or "",
-						"owner": row.get("owner") or row.get("Owner") or "",
-					}
-				)
+				clean = {k: (v if v is not None else "") for k, v in row.items() if k}
+				# Coerce obvious numeric fields when present (keep as string otherwise)
+				for key in ("risk_score", "score", "seats", "year", "count", "value"):
+					if key in clean and str(clean[key]).strip() != "":
+						try:
+							clean[key] = int(float(str(clean[key])))
+						except (TypeError, ValueError):
+							pass
+				rows.append(_attach_source(clean, rel))
 		return rows
 	if name.endswith(".json"):
 		try:
 			payload = json.loads(path.read_text(encoding="utf-8"))
 		except json.JSONDecodeError as exc:
 			raise ValueError(f"Invalid JSON: {exc}") from exc
-		items = payload if isinstance(payload, list) else (payload.get("findings") or [])
-		if not isinstance(items, list):
-			raise ValueError("JSON must be a list or {findings: [...]}")
+		items = _json_items(payload)
 		rows = []
 		for item in items:
 			if not isinstance(item, dict):
+				rows.append(_attach_source({"text": str(item)}, rel))
 				continue
-			evidence = item.get("evidence") or item.get("summary") or str(item)
-			level, score = _risk_level(str(evidence))
-			try:
-				risk_score = int(item.get("risk_score") or score)
-			except (TypeError, ValueError):
-				risk_score = score
-			rows.append(
-				{
-					"vendor": item.get("vendor", "unknown"),
-					"theme": item.get("theme", "finding"),
-					"risk_level": item.get("risk_level") or level,
-					"risk_score": risk_score,
-					"evidence": evidence,
-					"source_file": rel,
-					"region": item.get("region", ""),
-					"owner": item.get("owner", ""),
-				}
-			)
+			rows.append(_attach_source(item, rel))
 		return rows
 	return []
 
@@ -248,11 +241,24 @@ def extract_data_room(data_room: Path, *, project_id: str | None = None) -> list
 
 
 def write_summary(rows: list[dict[str, Any]], prompt: str) -> str:
-	vendors = sorted({r["vendor"] for r in rows})
-	high = sum(1 for r in rows if r["risk_level"] == "high")
-	return (
-		f"# Research summary\n\n"
-		f"**Task:** {prompt}\n\n"
-		f"**Vendors:** {', '.join(vendors) or 'none'}\n\n"
-		f"**Findings:** {len(rows)} ({high} high risk)\n"
-	)
+	cols = sorted({k for r in rows for k in r.keys()})
+	sources = sorted({str(r.get("source_file") or "") for r in rows if r.get("source_file")})
+	lines = [
+		"# Research summary",
+		"",
+		f"**Task:** {prompt}",
+		"",
+		f"**Rows:** {len(rows)}",
+		f"**Fields:** {', '.join(cols[:24]) or 'none'}",
+		f"**Sources:** {', '.join(sources[:12]) or 'none'}",
+	]
+	if is_diligence_rows(rows):
+		vendors = sorted({str(r.get("vendor") or "") for r in rows if r.get("vendor")})
+		high = sum(1 for r in rows if str(r.get("risk_level")) == "high")
+		lines.extend(
+			[
+				"",
+				f"**Note:** Room includes vendor/risk columns ({len(vendors)} vendors, {high} high).",
+			]
+		)
+	return "\n".join(lines) + "\n"

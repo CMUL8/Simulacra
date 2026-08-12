@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 const STEPS = [
   "Reading data room",
-  "Extracting structured findings",
+  "Extracting structured rows",
   "Running eval gates",
   "Generating React app",
   "Starting preview",

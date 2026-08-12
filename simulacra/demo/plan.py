@@ -458,10 +458,18 @@ def _heuristic_chat_reply(state: ProjectState, message: str) -> str:
 		)
 
 	if any(w in lower for w in ("how many", "count", "rows", "findings")) and rows:
-		return f"The sources contain **{rows}** extracted rows ({preview.get('high_risk', 0)} high risk)."
+		high = int(preview.get("high_risk") or 0)
+		extra = f" ({high} high)" if high else ""
+		return f"The sources contain **{rows}** extracted rows{extra}."
 
 	if lower.startswith(("what vendors", "which vendors", "list vendors", "who are the vendors")) and vendors:
 		return f"Vendors in scope: **{', '.join(vendors[:8])}**."
+
+	if lower.startswith(("what columns", "which fields", "what fields", "schema")):
+		cols = preview.get("columns") or (preview.get("profile") or {}).get("columns") or []
+		if cols:
+			return f"Fields in the room: **{', '.join(list(cols)[:16])}**."
+		return "No schema yet — attach sources first."
 
 	if any(w in lower for w in ("file", "source", "data room", "upload")):
 		files = preview.get("files", [])

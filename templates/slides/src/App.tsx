@@ -2,16 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 
 type Config = { title: string; subtitle: string; layout?: string };
 type Row = Record<string, string | number>;
+type FieldBreakdown = {
+  field: string;
+  values: { label: string; count: number; pct: number }[];
+};
 type Analytics = {
+  shape?: string;
   kpis: Record<string, number>;
-  risk_distribution: { level: string; count: number; pct: number }[];
-  vendor_scores: {
+  columns?: string[];
+  field_breakdowns?: FieldBreakdown[];
+  risk_distribution?: { level: string; count: number; pct: number }[];
+  vendor_scores?: {
     vendor: string;
     findings: number;
     max_score: number;
     risk_level: string;
   }[];
-  theme_breakdown: { theme: string; count: number; pct: number }[];
+  theme_breakdown?: { theme: string; count: number; pct: number }[];
 };
 
 export default function App() {
@@ -40,19 +47,27 @@ export default function App() {
     ])
       .then(([cfg, data, stats]) => {
         setConfig(cfg);
-        setRows(data);
+        setRows(Array.isArray(data) ? data : []);
         setAnalytics(stats);
       })
       .catch((err) => setBootError(String(err?.message || err)));
   }, []);
 
   const k = analytics?.kpis || {};
+  const diligence = analytics?.shape === "diligence";
+  const breakdown = (analytics?.field_breakdowns || [])[0];
   const topVendors = useMemo(
     () => [...(analytics?.vendor_scores || [])].sort((a, b) => b.max_score - a.max_score).slice(0, 5),
     [analytics],
   );
   const themes = (analytics?.theme_breakdown || []).slice(0, 5);
   const risks = analytics?.risk_distribution || [];
+  const sampleCols = useMemo(() => {
+    if (analytics?.columns?.length) return analytics.columns.slice(0, 4);
+    const keys = new Set<string>();
+    for (const row of rows.slice(0, 20)) Object.keys(row).forEach((c) => keys.add(c));
+    return [...keys].slice(0, 4);
+  }, [analytics, rows]);
 
   const slides = useMemo(() => {
     if (!config) return [];
@@ -65,13 +80,14 @@ export default function App() {
               <p className="eyebrow">Deck</p>
               <h1>{config.title}</h1>
               <p className="sub">{config.subtitle}</p>
-              <p className="note">No findings yet — re-ingest sources to populate this deck.</p>
+              <p className="note">No rows yet — attach sources or research, then rebuild.</p>
             </>
           ),
         },
       ];
     }
-    return [
+
+    const base = [
       {
         id: "title",
         node: (
@@ -79,7 +95,9 @@ export default function App() {
             <p className="eyebrow">Slide deck</p>
             <h1>{config.title}</h1>
             <p className="sub">{config.subtitle}</p>
-            <p className="note">{rows.length} findings in scope</p>
+            <p className="note">
+              {rows.length} rows · {k.field_count ?? sampleCols.length} fields
+            </p>
           </>
         ),
       },
@@ -88,29 +106,39 @@ export default function App() {
         node: (
           <>
             <p className="eyebrow">Situation</p>
-            <h2>Risk at a glance</h2>
+            <h2>At a glance</h2>
             <div className="kpi-grid">
-              <div className="kpi warn">
-                <span>High risk</span>
-                <strong>{k.high_risk ?? 0}</strong>
+              <div className="kpi">
+                <span>Rows</span>
+                <strong>{k.row_count ?? rows.length}</strong>
               </div>
               <div className="kpi">
-                <span>Findings</span>
-                <strong>{k.total_findings ?? rows.length}</strong>
+                <span>Fields</span>
+                <strong>{k.field_count ?? sampleCols.length}</strong>
               </div>
               <div className="kpi">
-                <span>Vendors</span>
-                <strong>{k.vendors ?? topVendors.length}</strong>
+                <span>Sources</span>
+                <strong>{k.source_files ?? 0}</strong>
               </div>
-              <div className="kpi">
-                <span>Max score</span>
-                <strong>{k.max_score ?? "—"}</strong>
-              </div>
+              {diligence ? (
+                <div className="kpi warn">
+                  <span>High risk</span>
+                  <strong>{k.high_risk ?? 0}</strong>
+                </div>
+              ) : (
+                <div className="kpi">
+                  <span>Sample cols</span>
+                  <strong>{sampleCols.length}</strong>
+                </div>
+              )}
             </div>
           </>
         ),
       },
-      {
+    ];
+
+    if (diligence && risks.length) {
+      base.push({
         id: "mix",
         node: (
           <>
@@ -127,8 +155,8 @@ export default function App() {
             </ul>
           </>
         ),
-      },
-      {
+      });
+      base.push({
         id: "vendors",
         node: (
           <>
@@ -144,38 +172,60 @@ export default function App() {
             </ol>
           </>
         ),
-      },
-      {
-        id: "themes",
+      });
+      if (themes.length) {
+        base.push({
+          id: "themes",
+          node: (
+            <>
+              <p className="eyebrow">Patterns</p>
+              <h2>Themes</h2>
+              <ul className="themes">
+                {themes.map((t) => (
+                  <li key={t.theme}>
+                    <span>{t.theme}</span>
+                    <strong>{t.count}</strong>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ),
+        });
+      }
+    } else if (breakdown) {
+      base.push({
+        id: "mix",
         node: (
           <>
-            <p className="eyebrow">Patterns</p>
-            <h2>Themes</h2>
+            <p className="eyebrow">Distribution</p>
+            <h2>{breakdown.field}</h2>
             <ul className="themes">
-              {themes.map((t) => (
-                <li key={t.theme}>
-                  <span>{t.theme}</span>
-                  <strong>{t.count}</strong>
+              {breakdown.values.slice(0, 6).map((v) => (
+                <li key={v.label}>
+                  <span>{v.label}</span>
+                  <strong>{v.count}</strong>
                 </li>
               ))}
             </ul>
           </>
         ),
-      },
-      {
-        id: "close",
-        node: (
-          <>
-            <p className="eyebrow">Ask</p>
-            <h2>Next</h2>
-            <p className="sub">
-              Clear high-risk vendors first, then refresh this deck when new diligence lands.
-            </p>
-          </>
-        ),
-      },
-    ];
-  }, [config, rows, k, topVendors, themes, risks]);
+      });
+    }
+
+    base.push({
+      id: "close",
+      node: (
+        <>
+          <p className="eyebrow">Ask</p>
+          <h2>Next</h2>
+          <p className="sub">
+            Rebuild with the agent so this deck matches the topic — this scaffold is only a starter.
+          </p>
+        </>
+      ),
+    });
+    return base;
+  }, [config, rows, k, diligence, risks, topVendors, themes, breakdown, sampleCols]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

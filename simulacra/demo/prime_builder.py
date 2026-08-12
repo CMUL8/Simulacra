@@ -65,7 +65,7 @@ STEER_RETRY = """CRITICAL RETRY — previous turn made ZERO durable edits to `sr
 
 You failed the build contract. Do this now, in order:
 1. Open/edit `src/App.tsx` with your write/edit tool (required).
-2. Personalize for the chosen format and product name.
+2. Rewrite the artifact for the USER GOAL topic — discard Vendor Risk / diligence scaffold chrome if the topic is something else.
 3. Edit `src/styles.css` tokens if needed.
 4. Do not only read files. Do not only narrate a plan. Stop only after App.tsx is written.
 

@@ -221,19 +221,11 @@ class AppConfig:
 	title: str = "Untitled"
 	subtitle: str = "Chat with the agent — Build when ready"
 	search_enabled: bool = True
-	sort_column: str = "risk_score"
+	sort_column: str = ""
 	sort_direction: str = "desc"
 	group_by: str | None = None
-	highlight_column: str = "risk_level"
-	columns: list[str] = field(
-		default_factory=lambda: [
-			"theme",
-			"risk_level",
-			"risk_score",
-			"evidence",
-			"source_file",
-		]
-	)
+	highlight_column: str = ""
+	columns: list[str] = field(default_factory=list)
 
 
 def _empty_prime() -> dict[str, Any]:

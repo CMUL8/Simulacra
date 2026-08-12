@@ -172,10 +172,10 @@ def _file_status(name: str, size: int) -> tuple[str, str]:
 	if size > MAX_FILE_BYTES:
 		return "error", f"Exceeds {MAX_FILE_BYTES // (1024 * 1024)} MiB limit"
 	if ext in EXTRACTABLE_EXT:
-		return "extractable", "Will be extracted into findings"
+		return "extractable", "Will be extracted into rows"
 	if ext in FIRECRAWL_EXT:
 		if firecrawl_enabled():
-			return "extractable", "Will be parsed via Firecrawl → findings"
+			return "extractable", "Will be parsed via Firecrawl → rows"
 		return "skipped", f"{ext} needs FIRECRAWL_API_KEY"
 	if ext in KNOWN_UNSUPPORTED:
 		return "skipped", f"{ext} not extractable yet — kept for inventory"

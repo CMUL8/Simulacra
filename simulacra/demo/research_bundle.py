@@ -208,8 +208,8 @@ def parse_research_payload(raw: Any, *, fallback_title: str = "Research brief") 
 		if overview:
 			sections.append(_section("Overview", overview))
 		for key, label in (
-			("findings", "Findings"),
-			("key_findings", "Key findings"),
+			("findings", "Overview"),
+			("key_findings", "Key points"),
 			("themes", "Themes"),
 			("analysis", "Analysis"),
 			("background", "Background"),

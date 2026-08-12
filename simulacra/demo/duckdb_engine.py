@@ -11,17 +11,12 @@ from .runs import project_dir
 
 
 def rows_to_parquet(rows: list[dict[str, Any]], path: Path) -> None:
+	path.parent.mkdir(parents=True, exist_ok=True)
 	if not rows:
-		rows = [
-			{
-				"vendor": "none",
-				"theme": "empty",
-				"risk_level": "low",
-				"risk_score": 0,
-				"evidence": "No extractable findings in data room",
-				"source_file": "",
-			}
-		]
+		# Truly empty — no forged vendor/risk sentinel row
+		table = pa.table({"_empty": pa.array([], type=pa.string())})
+		pq.write_table(table, path)
+		return
 	table = pa.Table.from_pylist(rows)
 	pq.write_table(table, path)
 
@@ -46,4 +41,5 @@ def query(project_id: str, sql: str) -> dict[str, Any]:
 
 
 def default_preview_query(project_id: str) -> dict[str, Any]:
-	return query(project_id, "SELECT * FROM findings ORDER BY risk_score DESC LIMIT 100")
+	# No assumed risk_score column — generic preview
+	return query(project_id, "SELECT * FROM findings LIMIT 100")

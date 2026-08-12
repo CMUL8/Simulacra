@@ -130,7 +130,7 @@ def _prepare_data_and_gates(state: ProjectState) -> tuple[ProjectState, list[dic
 	write_agent_context(
 		pid, rows=rows, profile=profile, extract=report, prompt=state.prompt
 	)
-	detail = f"{len(rows)} findings"
+	detail = f"{len(rows)} rows"
 	if report.errors:
 		detail += f" · {len(report.errors)} file errors"
 	emit_event(pid, "phase", label="Reading data room", detail=detail, status="done")
@@ -325,7 +325,7 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	file_names = ", ".join(f["name"] for f in files[:5]) if files else "your data room"
 	facts = f"{len(rows)} rows"
 	if high:
-		facts += f" · {high} high risk"
+		facts += f" · {high} high"
 	if vendors:
 		facts += f" · {len(vendors)} vendors"
 
@@ -519,7 +519,7 @@ def build_project(state: ProjectState, *, run_prime: bool = True) -> ProjectStat
 	state.chat.append(
 		ChatMessage(
 			role="assistant",
-			content=f"Built **{state.app_config.title}** with {len(rows)} findings. {honesty}",
+			content=f"Built **{state.app_config.title}** with {len(rows)} rows. {honesty}",
 			source=str(source),
 		)
 	)
@@ -845,7 +845,7 @@ def reingest_sources(project_id: str, *, refresh_preview: bool = True) -> Projec
 	changed = prev_fp and prev_fp != fp
 	n_files = len(preview.get("files") or [])
 	msg = (
-		f"**Sources updated.** {len(rows)} findings from {n_files} file(s)."
+		f"**Sources updated.** {len(rows)} rows from {n_files} file(s)."
 		+ (" Content changed — preview data refreshed." if changed else "")
 	)
 	if report.errors:

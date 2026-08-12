@@ -4,17 +4,24 @@ type Config = {
   title: string;
   subtitle: string;
   layout?: string;
-  searchEnabled: boolean;
-  sortColumn: string;
-  sortDirection: "asc" | "desc";
-  highlightColumn: string;
+  searchEnabled?: boolean;
+  sortColumn?: string;
+  sortDirection?: "asc" | "desc";
+  columns?: string[];
 };
 
 type Row = Record<string, string | number>;
+type FieldBreakdown = {
+  field: string;
+  values: { label: string; count: number; pct: number }[];
+};
 type Analytics = {
+  shape?: string;
   kpis: Record<string, number>;
-  risk_distribution: { level: string; count: number; pct: number }[];
-  vendor_scores: {
+  columns?: string[];
+  field_breakdowns?: FieldBreakdown[];
+  risk_distribution?: { level: string; count: number; pct: number }[];
+  vendor_scores?: {
     vendor: string;
     findings: number;
     max_score: number;
@@ -22,19 +29,12 @@ type Analytics = {
     risk_level: string;
     themes: string[];
   }[];
-  theme_breakdown: { theme: string; count: number; pct: number }[];
-  sources: { file: string; count: number }[];
-  score_histogram: { range: string; count: number }[];
-  generated_at?: string;
+  theme_breakdown?: { theme: string; count: number; pct: number }[];
+  sources?: { file: string; count: number }[];
+  score_histogram?: { range: string; count: number }[];
 };
 
-type Tab = "overview" | "findings" | "vendors";
-
-const RISK_COLOR: Record<string, string> = {
-  high: "var(--risk-high)",
-  medium: "var(--risk-med)",
-  low: "var(--risk-low)",
-};
+type Tab = "overview" | "data";
 
 export default function App() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -42,7 +42,6 @@ export default function App() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [q, setQ] = useState("");
-  const [riskFilter, setRiskFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Row | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
 
@@ -65,40 +64,48 @@ export default function App() {
     ])
       .then(([cfg, data, stats]) => {
         setConfig(cfg);
-        setRows(data);
+        setRows(Array.isArray(data) ? data : []);
         setAnalytics(stats);
       })
       .catch((err) => setBootError(String(err?.message || err)));
   }, []);
 
+  const columns = useMemo(() => {
+    if (config?.columns?.length) return config.columns;
+    if (analytics?.columns?.length) return analytics.columns;
+    const keys = new Set<string>();
+    for (const row of rows.slice(0, 40)) Object.keys(row).forEach((k) => keys.add(k));
+    return [...keys].slice(0, 8);
+  }, [config, analytics, rows]);
+
   const filtered = useMemo(() => {
     let out = [...rows];
-    if (riskFilter !== "all") out = out.filter((r) => r.risk_level === riskFilter);
     if (q.trim()) {
       const needle = q.toLowerCase();
       out = out.filter((r) => JSON.stringify(r).toLowerCase().includes(needle));
     }
-    const col = config?.sortColumn || "risk_score";
+    const col = config?.sortColumn || columns[0] || "";
+    if (!col) return out;
     const dir = config?.sortDirection === "asc" ? 1 : -1;
     out.sort((a, b) => {
       const av = a[col];
       const bv = b[col];
       if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-      return String(av).localeCompare(String(bv)) * dir;
+      return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
     });
     return out;
-  }, [rows, q, riskFilter, config]);
+  }, [rows, q, config, columns]);
 
   if (bootError) {
     return <div className="boot">Could not load app data ({bootError}).</div>;
   }
-
   if (!config || !analytics) {
     return <div className="boot">Loading…</div>;
   }
 
-  const k = analytics.kpis;
-  const maxHist = Math.max(...analytics.score_histogram.map((h) => h.count), 1);
+  const k = analytics.kpis || {};
+  const diligence = analytics.shape === "diligence";
+  const breakdowns = analytics.field_breakdowns || [];
 
   return (
     <div className="app">
@@ -111,224 +118,158 @@ export default function App() {
           </div>
         </div>
         <nav className="tabs">
-          {(["overview", "findings", "vendors"] as Tab[]).map((t) => (
+          {(["overview", "data"] as Tab[]).map((t) => (
             <button key={t} type="button" className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
         </nav>
         <div className="topbar-meta">
-          <span className="live-dot" />
-          Live · {k.total_findings} findings
+          Live · {k.row_count ?? rows.length} rows
         </div>
       </header>
 
       {tab === "overview" && (
-        <main className="grid-overview">
+        <main className="overview">
           <section className="kpi-row">
-            <Kpi label="Findings" value={k.total_findings} sub="across data room" />
-            <Kpi label="Vendors" value={k.unique_vendors} sub={`${k.critical_vendors} critical`} />
-            <Kpi label="High risk" value={k.high_risk} sub={`${k.medium_risk} medium · ${k.low_risk} low`} warn />
-            <Kpi label="Avg score" value={k.avg_score} sub={`peak ${k.max_score}`} />
-            <Kpi label="Sources" value={k.source_files} sub="files ingested" />
+            <Kpi label="Rows" value={k.row_count ?? rows.length} sub="in data room" />
+            <Kpi label="Fields" value={k.field_count ?? columns.length} sub="columns" />
+            <Kpi label="Sources" value={k.source_files ?? 0} sub="files ingested" />
+            {diligence ? (
+              <Kpi
+                label="High risk"
+                value={k.high_risk ?? 0}
+                sub={`${k.medium_risk ?? 0} medium · ${k.low_risk ?? 0} low`}
+                warn
+              />
+            ) : null}
           </section>
 
-          <section className="panel span-2">
-            <h2>Risk distribution</h2>
-            <div className="risk-bars">
-              {analytics.risk_distribution.map((r) => (
-                <div key={r.level} className="risk-bar-row">
-                  <span className={`pill ${r.level}`}>{r.level}</span>
-                  <div className="bar-track">
-                    <div
-                      className={`bar-fill ${r.level}`}
-                      style={{ width: `${Math.max(r.pct, 4)}%` }}
-                    />
-                  </div>
-                  <span className="bar-val">{r.count} <em>({r.pct}%)</em></span>
-                </div>
-              ))}
+          {!rows.length ? (
+            <section className="panel">
+              <h2>Empty room</h2>
+              <p>Attach sources or research, then rebuild. This scaffold stays topic-neutral until you do.</p>
+            </section>
+          ) : (
+            <div className="grid-2">
+              <section className="panel">
+                <h2>Field mix</h2>
+                {breakdowns.length === 0 ? (
+                  <p className="muted">No categorical breakdowns yet — open Data for the inventory table.</p>
+                ) : (
+                  breakdowns.slice(0, 2).map((fb) => (
+                    <div key={fb.field} className="breakdown">
+                      <h3>{fb.field}</h3>
+                      <ul className="bars">
+                        {fb.values.slice(0, 6).map((v) => (
+                          <li key={v.label}>
+                            <span>{v.label}</span>
+                            <div className="bar-track">
+                              <div className="bar-fill" style={{ width: `${Math.max(v.pct, 2)}%` }} />
+                            </div>
+                            <em>
+                              {v.count} · {v.pct}%
+                            </em>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))
+                )}
+              </section>
+              <section className="panel">
+                <h2>Sources</h2>
+                <ul className="theme-list">
+                  {(analytics.sources || []).slice(0, 8).map((s) => (
+                    <li key={s.file}>
+                      <strong>{s.file}</strong>
+                      <span>{s.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             </div>
-          </section>
-
-          <section className="panel">
-            <h2>Score distribution</h2>
-            <div className="histogram">
-              {analytics.score_histogram.map((h) => (
-                <div key={h.range} className="hist-col">
-                  <div
-                    className="hist-bar"
-                    style={{ height: `${(h.count / maxHist) * 100}%` }}
-                    title={`${h.count} findings`}
-                  />
-                  <span>{h.range}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel span-2">
-            <h2>Top vendors by max risk score</h2>
-            <div className="vendor-leaderboard">
-              {analytics.vendor_scores.slice(0, 8).map((v, i) => (
-                <div key={v.vendor} className="vendor-row">
-                  <span className="rank">{i + 1}</span>
-                  <div className="vendor-info">
-                    <strong>{v.vendor}</strong>
-                    <span>{v.findings} findings · avg {v.avg_score}</span>
-                  </div>
-                  <div className="score-meter">
-                    <div
-                      className={`score-fill ${v.risk_level}`}
-                      style={{ width: `${v.max_score}%` }}
-                    />
-                  </div>
-                  <span className={`score-num ${v.risk_level}`}>{v.max_score}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>Theme breakdown</h2>
-            <ul className="theme-list">
-              {analytics.theme_breakdown.slice(0, 8).map((t) => (
-                <li key={t.theme}>
-                  <span>{t.theme}</span>
-                  <span className="theme-bar-wrap">
-                    <span className="theme-bar" style={{ width: `${t.pct}%` }} />
-                  </span>
-                  <span className="theme-count">{t.count}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="panel span-3">
-            <h2>Data sources</h2>
-            <div className="source-chips">
-              {analytics.sources.map((s) => (
-                <div key={s.file} className="source-chip">
-                  <code>{s.file}</code>
-                  <span>{s.count} rows</span>
-                </div>
-              ))}
-            </div>
-          </section>
+          )}
         </main>
       )}
 
-      {tab === "findings" && (
+      {tab === "data" && (
         <main className="findings-layout">
           <div className="findings-toolbar">
-            {config.searchEnabled && (
+            {config.searchEnabled !== false ? (
               <input
-                className="search"
-                placeholder="Search vendors, themes, evidence, region…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
+                placeholder="Search rows…"
               />
-            )}
-            <div className="filters">
-              {["all", "high", "medium", "low"].map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  className={`filter ${riskFilter === f ? "on" : ""} ${f !== "all" ? f : ""}`}
-                  onClick={() => setRiskFilter(f)}
-                >
-                  {f === "all" ? "All" : f}
-                </button>
-              ))}
-            </div>
-            <span className="result-count">{filtered.length} results</span>
+            ) : null}
+            <span className="muted">{filtered.length} shown</span>
           </div>
           <div className="findings-split">
-            <div className="table-panel">
+            <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Vendor</th>
-                    <th>Theme</th>
-                    <th>Risk</th>
-                    <th>Score</th>
-                    <th>Region</th>
-                    <th>Owner</th>
+                    {columns.map((col) => (
+                      <th key={col}>{col}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((row, i) => (
+                  {filtered.slice(0, 200).map((row, idx) => (
                     <tr
-                      key={i}
-                      className={selected === row ? "selected" : ""}
+                      key={idx}
+                      className={selected === row ? "on" : ""}
                       onClick={() => setSelected(row)}
                     >
-                      <td className="vendor-cell">{String(row.vendor)}</td>
-                      <td>{String(row.theme)}</td>
-                      <td><span className={`badge ${row.risk_level}`}>{String(row.risk_level)}</span></td>
-                      <td className="mono">{String(row.risk_score)}</td>
-                      <td>{String(row.region || "—")}</td>
-                      <td>{String(row.owner || "—")}</td>
+                      {columns.map((col) => (
+                        <td key={col}>{String(row[col] ?? "")}</td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {selected && (
-              <aside className="detail-panel">
-                <h3>{String(selected.vendor)}</h3>
-                <dl>
-                  <dt>Theme</dt><dd>{String(selected.theme)}</dd>
-                  <dt>Risk</dt><dd><span className={`badge ${selected.risk_level}`}>{String(selected.risk_level)}</span></dd>
-                  <dt>Score</dt><dd className="mono">{String(selected.risk_score)}</dd>
-                  <dt>Region</dt><dd>{String(selected.region || "—")}</dd>
-                  <dt>Owner</dt><dd>{String(selected.owner || "—")}</dd>
-                  <dt>Source</dt><dd><code>{String(selected.source_file)}</code></dd>
-                  <dt>Evidence</dt><dd className="evidence">{String(selected.evidence)}</dd>
-                </dl>
-                <button type="button" className="close-detail" onClick={() => setSelected(null)}>Close</button>
-              </aside>
-            )}
+            <aside className="detail">
+              {selected ? (
+                <>
+                  <h3>Row detail</h3>
+                  <dl>
+                    {Object.entries(selected).map(([key, val]) => (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd>{String(val)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </>
+              ) : (
+                <p className="muted">Select a row</p>
+              )}
+            </aside>
           </div>
         </main>
       )}
-
-      {tab === "vendors" && (
-        <main className="vendors-grid">
-          {analytics.vendor_scores.map((v) => (
-            <article key={v.vendor} className={`vendor-card ${v.risk_level}`}>
-              <header>
-                <h3>{v.vendor}</h3>
-                <span className={`badge ${v.risk_level}`}>{v.risk_level}</span>
-              </header>
-              <div className="vendor-stats">
-                <div><span>{v.max_score}</span>max score</div>
-                <div><span>{v.avg_score}</span>avg</div>
-                <div><span>{v.findings}</span>findings</div>
-              </div>
-              <div className="vendor-themes">
-                {v.themes.map((t) => (
-                  <span key={t} className="theme-tag">{t}</span>
-                ))}
-              </div>
-            </article>
-          ))}
-        </main>
-      )}
-
-      <footer className="footer">
-        Simulacra · integration control layer · generated {analytics.generated_at?.slice(0, 10) ?? "today"}
-      </footer>
     </div>
   );
 }
 
-function Kpi({ label, value, sub, warn }: { label: string; value: number; sub: string; warn?: boolean }) {
+function Kpi({
+  label,
+  value,
+  sub,
+  warn,
+}: {
+  label: string;
+  value: number | string;
+  sub?: string;
+  warn?: boolean;
+}) {
   return (
-    <div className={`kpi ${warn ? "warn" : ""}`}>
-      <span className="kpi-label">{label}</span>
-      <span className="kpi-value">{value}</span>
-      <span className="kpi-sub">{sub}</span>
+    <div className={`kpi${warn ? " warn" : ""}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {sub ? <em>{sub}</em> : null}
     </div>
   );
 }

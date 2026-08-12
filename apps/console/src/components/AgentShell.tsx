@@ -423,8 +423,7 @@ function PlanSection({
       <div className="plan-section-meta">
         <span>
           {rows} rows
-          {high ? ` · ${high} high risk` : ""}
-          {vendors ? ` · ${vendors} vendors` : ""}
+          {high && vendors ? ` · ${high} high · ${vendors} vendors` : ""}
         </span>
         {files.length > 0 && <span className="plan-section-files">{files.map((f) => f.name).join(" · ")}</span>}
       </div>

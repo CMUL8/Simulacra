@@ -73,6 +73,20 @@ def refresh_app_data(
 			kind = "data_app"
 	spec = get_format(kind)
 
+	# Derive neutral column/sort defaults from actual rows — never assume risk_score
+	columns = list(config.columns or [])
+	if not columns and data_rows:
+		keys: list[str] = []
+		seen: set[str] = set()
+		for row in data_rows[:40]:
+			for k in row.keys():
+				if k not in seen:
+					seen.add(k)
+					keys.append(k)
+		columns = keys[:12]
+	sort_column = config.sort_column or (columns[0] if columns else "")
+	highlight_column = config.highlight_column or ""
+
 	(app_dir / "public" / "data.json").parent.mkdir(parents=True, exist_ok=True)
 	(app_dir / "public" / "data.json").write_text(json.dumps(data_rows, indent=2))
 	(app_dir / "public" / "analytics.json").write_text(
@@ -86,11 +100,11 @@ def refresh_app_data(
 				"layout": spec.layout,
 				"artifactKind": spec.kind,
 				"searchEnabled": config.search_enabled,
-				"sortColumn": config.sort_column,
+				"sortColumn": sort_column,
 				"sortDirection": config.sort_direction,
 				"groupBy": config.group_by,
-				"highlightColumn": config.highlight_column,
-				"columns": config.columns,
+				"highlightColumn": highlight_column,
+				"columns": columns,
 			},
 			indent=2,
 		)

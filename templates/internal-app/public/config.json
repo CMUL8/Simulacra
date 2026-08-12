@@ -1,10 +1,11 @@
 {
-  "title": "Data App",
-  "subtitle": "Built with Simulacra",
+  "title": "Untitled",
+  "subtitle": "Chat with the agent — Build when ready",
+  "layout": "explorer",
   "searchEnabled": true,
-  "sortColumn": "risk_score",
+  "sortColumn": "",
   "sortDirection": "desc",
   "groupBy": null,
-  "highlightColumn": "risk_level",
-  "columns": ["vendor", "theme", "risk_level", "risk_score", "evidence"]
+  "highlightColumn": "",
+  "columns": []
 }

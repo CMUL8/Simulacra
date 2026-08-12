@@ -6,10 +6,10 @@ import { Tooltip } from "./ui/Tooltip";
 
 const CHIPS = [
   { label: "Add search", prompt: "Add search to the table" },
-  { label: "Group by vendor", prompt: "Group by vendor" },
-  { label: "Sort by risk", prompt: "Sort by risk score descending" },
-  { label: "Rename app", prompt: "Rename the app to Vendor Command Center" },
-  { label: "High-risk only", prompt: "Highlight high-risk rows" },
+  { label: "Tighten hierarchy", prompt: "Tighten the visual hierarchy and spacing" },
+  { label: "Stronger title", prompt: "Make the title and subtitle clearer for this topic" },
+  { label: "Empty state", prompt: "Improve the empty state copy" },
+  { label: "Print polish", prompt: "Make this more print-friendly" },
 ];
 
 type Props = {

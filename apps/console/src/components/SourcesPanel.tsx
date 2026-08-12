@@ -191,9 +191,10 @@ export function SourcesPanel({
             <section className="sources-profile">
               <h3>Data profile</h3>
               <p>
-                {profile.row_count ?? 0} findings
-                {profile.high_risk != null ? ` · ${profile.high_risk} high` : ""}
-                {profile.vendors?.length ? ` · ${profile.vendors.length} vendors` : ""}
+                {profile.row_count ?? 0} rows
+                {profile.vendors?.length && profile.high_risk != null
+                  ? ` · ${profile.high_risk} high · ${profile.vendors.length} vendors`
+                  : ""}
               </p>
               {nuances.length > 0 && (
                 <ul>

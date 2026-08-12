@@ -86,8 +86,8 @@ def _parse_config_json(text: str | None) -> AppConfig | None:
 	if subtitle := data.get("subtitle"):
 		cfg.subtitle = str(subtitle)[:120]
 	group = data.get("group_by")
-	if group in ("vendor", "theme", "risk_level"):
-		cfg.group_by = group
+	if group and isinstance(group, str) and 0 < len(group) < 64:
+		cfg.group_by = group.strip()
 	return cfg
 
 

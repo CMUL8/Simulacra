@@ -120,7 +120,7 @@ export function PlanMode({
 
         <aside className="plan-explorer">
           <h3>Data room</h3>
-          <p className="explorer-note">Read-only · {preview?.row_count ?? 0} findings extracted</p>
+          <p className="explorer-note">Read-only · {preview?.row_count ?? 0} rows extracted</p>
           <ul className="explorer-files">
             {files.map((f) => (
               <li key={f.name}>
@@ -132,7 +132,7 @@ export function PlanMode({
 
           {preview && preview.vendors?.length > 0 && (
             <>
-              <h4>Vendors</h4>
+              <h4>Entities</h4>
               <div className="vendor-chips">
                 {preview.vendors.map((v) => (
                   <span key={v} className="vendor-chip">{v}</span>
@@ -143,22 +143,26 @@ export function PlanMode({
 
           {preview?.sample_rows?.length > 0 && (
             <>
-              <h4>Sample findings</h4>
+              <h4>Sample rows</h4>
               <div className="sample-table-wrap">
                 <table className="sample-table">
                   <thead>
                     <tr>
-                      <th>Vendor</th>
-                      <th>Risk</th>
-                      <th>Score</th>
+                      {Object.keys(preview.sample_rows[0] || {})
+                        .slice(0, 4)
+                        .map((col) => (
+                          <th key={col}>{col}</th>
+                        ))}
                     </tr>
                   </thead>
                   <tbody>
                     {preview.sample_rows.map((row, i) => (
                       <tr key={i}>
-                        <td>{String(row.vendor ?? "")}</td>
-                        <td className={`risk-${row.risk_level}`}>{String(row.risk_level ?? "")}</td>
-                        <td>{String(row.risk_score ?? "")}</td>
+                        {Object.keys(preview.sample_rows[0] || {})
+                          .slice(0, 4)
+                          .map((col) => (
+                            <td key={col}>{String(row[col] ?? "")}</td>
+                          ))}
                       </tr>
                     ))}
                   </tbody>
