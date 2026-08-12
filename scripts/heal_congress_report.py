@@ -1,8 +1,8 @@
-from simulacra.demo.runs import load_state, save_state
+from simulacra.demo.runs import load_state, save_state, project_dir
 from simulacra.demo.design_brief import title_from_prompt, write_brief, merge_brief
 from simulacra.demo.formats import brief_defaults_for
 from simulacra.demo.pipeline import start_approve_build
-from simulacra.demo.paths import data_room_dir
+
 pid = "proj_6c8b4127a8c9"
 state = load_state(pid)
 print("before", state.artifact_kind, state.phase, state.app_config.title)
@@ -17,8 +17,14 @@ state.phase = "plan"
 state.status = "planning"
 write_brief(pid, state.design_brief)
 save_state(state)
-room = data_room_dir(pid)
-for name in ("design_brief.json", "kernel-state.json", "kernel_state.json", "plan_preview.json", "agent_context.json"):
+room = project_dir(pid) / "inputs" / "data-room"
+for name in (
+    "design_brief.json",
+    "kernel-state.json",
+    "kernel_state.json",
+    "plan_preview.json",
+    "agent_context.json",
+):
     p = room / name
     if p.exists():
         p.unlink()
