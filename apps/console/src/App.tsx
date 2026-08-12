@@ -141,6 +141,7 @@ export default function App({
   const pollById = useRef<Record<string, number>>({});
   const viewedIdRef = useRef<string | null>(null);
   const [waitStartedAt, setWaitStartedAt] = useState<number | null>(null);
+  const [sidebarFocusSearch, setSidebarFocusSearch] = useState(false);
   const draftBootstrapped = useRef(false);
   const resumeStarted = useRef(false);
 
@@ -162,6 +163,18 @@ export default function App({
     const t = window.setTimeout(() => setBgNotice(null), 4200);
     return () => window.clearTimeout(t);
   }, [bgNotice]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
+      if (mode === "landing") return;
+      e.preventDefault();
+      setSidebarOpen(true);
+      setSidebarFocusSearch(true);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode]);
 
   useEffect(() => {
     if (draftBootstrapped.current) return;
@@ -650,13 +663,11 @@ export default function App({
     }
   }
 
-  async function handleSend() {
-    const text = input.trim();
+  async function dispatchChat(text: string) {
     if (!snapshot || !text) return;
     setBusy(true);
     markProjectBusy(snapshot.project.id, true);
     setError(null);
-    setInput("");
     try {
       let snap;
       try {
@@ -687,6 +698,19 @@ export default function App({
       setBusy(false);
       markProjectBusy(snapshot.project.id, false);
     }
+  }
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!snapshot || !text) return;
+    setInput("");
+    await dispatchChat(text);
+  }
+
+  async function handleRetry(text: string) {
+    const trimmed = text.trim();
+    if (!snapshot || !trimmed || running) return;
+    await dispatchChat(trimmed);
   }
 
   async function handleCancel() {
@@ -919,8 +943,15 @@ export default function App({
           files={projectFiles}
           focus="projects"
           collapsed={false}
+          user={user}
+          workspaceLabel={
+            tenants.find((t) => t.id === getTenantId())?.name || tenants[0]?.name || "Workspace"
+          }
+          focusSearch={sidebarFocusSearch}
+          onFocusSearchConsumed={() => setSidebarFocusSearch(false)}
           onNew={handleNew}
           onHome={handleNew}
+          onAccount={() => openAccount("account")}
           onSelect={loadProject}
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
@@ -951,6 +982,7 @@ export default function App({
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onInput={setInput}
           onSend={handleSend}
+          onRetry={handleRetry}
           onApprove={handleApprove}
           onRebuild={handleApprove}
           onCancel={running ? handleCancel : undefined}

@@ -47,16 +47,16 @@ export function VersionsMenu({ versions, disabled, onRestore }: Props) {
     <div className="versions-menu" ref={rootRef}>
       <button
         type="button"
-        className="topbar-link"
+        className="composer-action"
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => setOpen((v) => !v)}
         title="Restore an earlier preview"
       >
-        <History size={13} strokeWidth={1.75} />
+        <History size={14} strokeWidth={1.5} />
         Versions
-        <ChevronDown size={12} strokeWidth={1.75} />
+        <ChevronDown size={12} strokeWidth={1.5} />
       </button>
       {open && (
         <ul className="versions-dropdown" role="listbox" aria-label="Versions">

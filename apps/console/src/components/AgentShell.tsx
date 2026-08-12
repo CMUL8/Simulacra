@@ -1,9 +1,14 @@
 import {
   ArrowRight,
+  Copy,
   Globe,
+  MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
+  RotateCcw,
   Square,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
@@ -44,6 +49,7 @@ type Props = {
   onRollback?: (checkpointId?: string) => void;
   onDismissError: () => void;
   onNew?: () => void;
+  onRetry?: (text: string) => void;
 };
 
 type TurnKind = "user" | "assistant" | "status" | "plan";
@@ -337,6 +343,13 @@ function turnKind(m: ChatMessage): TurnKind {
   return "assistant";
 }
 
+function lastUserTextBefore(chat: ChatMessage[], idx: number): string | null {
+  for (let i = idx - 1; i >= 0; i--) {
+    if (turnKind(chat[i]!) === "user") return chat[i]!.content;
+  }
+  return null;
+}
+
 /** One status chip — never Draft + Deployed at once. */
 function statusChip(
   project: Snapshot["project"],
@@ -481,16 +494,173 @@ function PlanSection({
   );
 }
 
+function TurnActions({
+  text,
+  retryText,
+  busy,
+  onRetry,
+}: {
+  text: string;
+  retryText?: string | null;
+  busy?: boolean;
+  onRetry?: (text: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [vote, setVote] = useState<"up" | "down" | null>(null);
+  const copyTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current) window.clearTimeout(copyTimer.current);
+    };
+  }, []);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      if (copyTimer.current) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* clipboard may be blocked */
+    }
+  }
+
+  return (
+    <div className={`turn-actions${vote || copied ? " is-on" : ""}`} role="toolbar" aria-label="Response actions">
+      <button type="button" className="turn-action" onClick={copy} title={copied ? "Copied" : "Copy"} aria-label="Copy">
+        <Copy size={14} strokeWidth={1.5} />
+      </button>
+      {retryText && onRetry ? (
+        <button
+          type="button"
+          className="turn-action"
+          disabled={busy}
+          onClick={() => onRetry(retryText)}
+          title="Retry"
+          aria-label="Retry"
+        >
+          <RotateCcw size={14} strokeWidth={1.5} />
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className={`turn-action${vote === "up" ? " on" : ""}`}
+        onClick={() => setVote((v) => (v === "up" ? null : "up"))}
+        title="Good response"
+        aria-pressed={vote === "up"}
+      >
+        <ThumbsUp size={14} strokeWidth={1.5} />
+      </button>
+      <button
+        type="button"
+        className={`turn-action${vote === "down" ? " on" : ""}`}
+        onClick={() => setVote((v) => (v === "down" ? null : "down"))}
+        title="Bad response"
+        aria-pressed={vote === "down"}
+      >
+        <ThumbsDown size={14} strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
+
+function ChromeMore({
+  sidebarOpen,
+  busy,
+  onAccount,
+  onRebuild,
+}: {
+  sidebarOpen: boolean;
+  busy: boolean;
+  onAccount: () => void;
+  onRebuild?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const showAccount = !sidebarOpen;
+  const showRebuild = Boolean(onRebuild);
+  if (!showAccount && !showRebuild) return null;
+
+  return (
+    <div className="chrome-more" ref={rootRef}>
+      <button
+        type="button"
+        className="composer-action icon-only"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="More actions"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <MoreHorizontal size={16} strokeWidth={1.5} />
+      </button>
+      {open ? (
+        <ul className="chrome-more-menu" role="menu">
+          {showAccount ? (
+            <li>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onAccount();
+                }}
+              >
+                Account
+              </button>
+            </li>
+          ) : null}
+          {showRebuild ? (
+            <li>
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                disabled={busy}
+                onClick={() => {
+                  setOpen(false);
+                  onRebuild?.();
+                }}
+              >
+                Start over
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageTurn({
   message,
   snapshot,
   onOpenPreview,
+  actions,
 }: {
   message: ChatMessage;
   snapshot: Snapshot;
   isLatestAssistant?: boolean;
   busy?: boolean;
   onOpenPreview: () => void;
+  actions?: ReactNode;
 }) {
   const kind = turnKind(message);
 
@@ -518,6 +688,7 @@ function MessageTurn({
           <AnswerBlock>
             <MarkdownBody text={message.content} />
           </AnswerBlock>
+          {actions}
         </div>
       )}
     </article>
@@ -544,6 +715,7 @@ export function AgentShell({
   onGovernance,
   onRollback,
   onDismissError,
+  onRetry,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -625,47 +797,9 @@ export function AgentShell({
       <header className="agent-topbar">
         <div className="agent-topbar-left">
           <button type="button" className="icon-btn" onClick={onToggleSidebar} title="Toggle sidebar">
-            {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
+            {sidebarOpen ? <PanelLeftClose size={16} strokeWidth={1.5} /> : <PanelLeft size={16} strokeWidth={1.5} />}
           </button>
-          <span className="product">
-            Simu<em>lacra</em>
-          </span>
           <span className="project-name">{project.app_config.title}</span>
-        </div>
-        <div className="agent-topbar-right">
-          {!isPlan && project.checkpoints?.length > 0 && onRollback && (
-            <VersionsMenu
-              versions={project.checkpoints as Checkpoint[]}
-              disabled={busy}
-              onRestore={(id) => onRollback(id)}
-            />
-          )}
-          <button type="button" className="topbar-link" onClick={onGovernance} title="Account, policy & admin">
-            Account
-          </button>
-          {isPlan && onApprove && (
-            <button
-              type="button"
-              className={`approve-btn${agentWantsBuild ? " pulse-build" : ""}`}
-              disabled={busy}
-              onClick={onApprove}
-              title={agentWantsBuild ? "Agent is ready — Build when you are" : buildLabel}
-            >
-              {buildLabel}
-              <ArrowRight size={14} />
-            </button>
-          )}
-          {!isPlan && onRebuild && (
-            <button
-              type="button"
-              className="topbar-link danger-quiet"
-              disabled={busy}
-              onClick={onRebuild}
-              title="Throw away the current preview and build again from a blank template"
-            >
-              Start over
-            </button>
-          )}
         </div>
       </header>
 
@@ -702,6 +836,16 @@ export function AgentShell({
                 busy={busy}
                 isLatestAssistant={i === lastAssistantIdx}
                 onOpenPreview={onOpenPreview}
+                actions={
+                  i === lastAssistantIdx && !busy && turnKind(m) === "assistant" && m.content.trim() ? (
+                    <TurnActions
+                      text={m.content}
+                      retryText={lastUserTextBefore(visibleChat, i)}
+                      busy={busy}
+                      onRetry={onRetry}
+                    />
+                  ) : undefined
+                }
               />
             </Fragment>
           ))}
@@ -766,18 +910,16 @@ export function AgentShell({
         <div className="agent-composer-wrap">
           <div className="composer-chrome" role="toolbar" aria-label="Project actions">
             <div className="composer-chrome-meta">
-              {stage && (
-                <span className={`composer-status ${stage.cls}`} title={stage.text}>
+              {stage ? (
+                <span className={`chrome-chip${stage.cls === "source-prime" ? " ok" : ""}`} title={stage.text}>
                   {stage.text}
                 </span>
-              )}
-              <span className="composer-format" title={formatChipHint(project.artifact_kind)}>
-                {stage ? <span className="composer-sep">· </span> : null}
+              ) : null}
+              <span className="chrome-chip" title={formatChipHint(project.artifact_kind)}>
                 {formatChipLabel(project.artifact_kind)}
               </span>
               {needs?.detail ? (
-                <span className="composer-sources" title={needs.title || needs.detail}>
-                  <span className="composer-sep">· </span>
+                <span className="chrome-chip" title={needs.title || needs.detail}>
                   {needs.detail}
                 </span>
               ) : null}
@@ -791,10 +933,29 @@ export function AgentShell({
                 onClick={onOpenPreview}
                 title={hasPreview ? "Open preview" : "Preview appears after Build"}
               >
-                <Globe size={13} strokeWidth={1.75} />
+                <Globe size={14} strokeWidth={1.5} />
                 Preview
               </button>
-              {busy && onCancel && (
+              {!isPlan && project.checkpoints?.length > 0 && onRollback ? (
+                <VersionsMenu
+                  versions={project.checkpoints as Checkpoint[]}
+                  disabled={busy}
+                  onRestore={(id) => onRollback(id)}
+                />
+              ) : null}
+              {isPlan && onApprove ? (
+                <button
+                  type="button"
+                  className={`composer-action emphasis${agentWantsBuild ? " pulse-build" : ""}`}
+                  disabled={busy}
+                  onClick={onApprove}
+                  title={agentWantsBuild ? "Agent is ready — Build when you are" : buildLabel}
+                >
+                  {buildLabel}
+                  <ArrowRight size={14} strokeWidth={1.5} />
+                </button>
+              ) : null}
+              {busy && onCancel ? (
                 <button
                   type="button"
                   className="composer-action danger"
@@ -804,7 +965,13 @@ export function AgentShell({
                   <Square size={10} fill="currentColor" />
                   Stop
                 </button>
-              )}
+              ) : null}
+              <ChromeMore
+                sidebarOpen={sidebarOpen}
+                busy={busy}
+                onAccount={onGovernance}
+                onRebuild={!isPlan ? onRebuild : undefined}
+              />
             </div>
           </div>
           <PromptComposer

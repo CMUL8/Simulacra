@@ -13,7 +13,7 @@ export function FileTypeIcon({ ext }: { ext: string }) {
   const Icon = cfg.icon;
   return (
     <span className="ftype" style={{ color: cfg.color }}>
-      <Icon size={14} strokeWidth={1.75} />
+      <Icon size={14} strokeWidth={1.5} />
     </span>
   );
 }

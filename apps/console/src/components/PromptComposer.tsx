@@ -151,7 +151,7 @@ export function PromptComposer({
             setMentionFilter("");
           }}
         >
-          <AtSign size={15} strokeWidth={1.75} />
+          <AtSign size={16} strokeWidth={1.5} />
         </button>
 
         <textarea
@@ -167,7 +167,7 @@ export function PromptComposer({
         <div className="composer-trailing">
           <span className="model-tag" title={`${modeTag} mode`}>
             {modeTag}
-            <ChevronDown size={12} strokeWidth={2} />
+            <ChevronDown size={12} strokeWidth={1.5} />
           </span>
           {busy ? (
             <button
@@ -187,7 +187,7 @@ export function PromptComposer({
               disabled={disabled || !value.trim()}
               aria-label={submitLabel || "Send"}
             >
-              <ArrowUp size={16} strokeWidth={2.5} />
+              <ArrowUp size={16} strokeWidth={1.5} />
             </button>
           )}
         </div>

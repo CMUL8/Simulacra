@@ -1,14 +1,15 @@
 import {
   Folder,
   FolderOpen,
-  Home,
   MessageSquare,
   Plus,
   Search,
+  Settings,
   Trash2,
+  X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { ChatThreadSummary, DataRoomFile, Project } from "../api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AuthUser, ChatThreadSummary, DataRoomFile, Project } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { humanSourceLabel } from "./agent/AnswerBlock";
@@ -21,6 +22,10 @@ type Props = {
   files: DataRoomFile[];
   focus: "projects" | "files";
   collapsed: boolean;
+  user?: AuthUser | null;
+  workspaceLabel?: string;
+  focusSearch?: boolean;
+  onFocusSearchConsumed?: () => void;
   onNew: () => void;
   onSelect: (id: string) => void;
   onSelectChat?: (projectId: string, chatId: string) => void;
@@ -28,6 +33,7 @@ type Props = {
   onDeleteChat?: (projectId: string, chatId: string) => void;
   onToggle: () => void;
   onHome?: () => void;
+  onAccount?: () => void;
 };
 
 function relativeWhen(iso?: string): string {
@@ -68,7 +74,24 @@ function chatLabel(c: ChatThreadSummary, index: number): string {
   return t;
 }
 
-/** Cursor-like project → chats rail. No tooltip flash; delete on hover. */
+function initials(user?: AuthUser | null): string {
+  const raw = (user?.name || user?.email || "?").trim();
+  const parts = raw.split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]![0] || ""}${parts[1]![0] || ""}`.toUpperCase();
+  }
+  return raw.slice(0, 2).toUpperCase() || "?";
+}
+
+function displayName(user?: AuthUser | null): string {
+  const name = user?.name?.trim();
+  if (name) return name;
+  const email = user?.email?.trim();
+  if (email) return email.split("@")[0] || email;
+  return "Account";
+}
+
+/** Cursor-like project → chats rail. Search is a nav row; identity lives at the bottom. */
 export function Sidebar({
   projects,
   activeId,
@@ -76,6 +99,10 @@ export function Sidebar({
   busyProjectIds = {},
   files,
   collapsed,
+  user = null,
+  workspaceLabel = "Workspace",
+  focusSearch = false,
+  onFocusSearchConsumed,
   onNew,
   onSelect,
   onSelectChat,
@@ -83,13 +110,37 @@ export function Sidebar({
   onDeleteChat,
   onToggle,
   onHome,
+  onAccount,
 }: Props) {
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [dataRoomOpen, setDataRoomOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Keep data room collapsed by default — less chrome noise
-  }, []);
+    if (!focusSearch) return;
+    setSearchOpen(true);
+    onFocusSearchConsumed?.();
+  }, [focusSearch, onFocusSearchConsumed]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    searchRef.current?.focus();
+  }, [searchOpen]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (query) {
+        setQuery("");
+        return;
+      }
+      setSearchOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searchOpen, query]);
 
   const visibleFiles = useMemo(() => userFacingFiles(files), [files]);
   const q = query.trim().toLowerCase();
@@ -115,19 +166,51 @@ export function Sidebar({
   return (
     <aside className="sidebar bui-sidebar">
       <div className="bui-sidebar-top">
-        <div className="bui-sidebar-brand">
-          <span className="bui-sidebar-mark">S</span>
+        <button
+          type="button"
+          className="bui-sidebar-brand"
+          onClick={onHome}
+          aria-label="Home"
+        >
           <strong>Simulacra</strong>
-        </div>
-        <div className="bui-sidebar-search">
-          <Search size={13} aria-hidden />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-            aria-label="Search projects"
-          />
-        </div>
+        </button>
+        <button type="button" className="bui-nav-btn" onClick={onNew}>
+          <Plus size={16} strokeWidth={1.5} aria-hidden />
+          New project
+        </button>
+        {searchOpen ? (
+          <div className="bui-sidebar-search">
+            <Search size={16} strokeWidth={1.5} aria-hidden />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search"
+              aria-label="Search projects"
+            />
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Close search"
+              onClick={() => {
+                setQuery("");
+                setSearchOpen(false);
+              }}
+            >
+              <X size={14} strokeWidth={1.5} />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="bui-nav-btn"
+            onClick={() => setSearchOpen(true)}
+            title="Search (⌘K)"
+          >
+            <Search size={16} strokeWidth={1.5} aria-hidden />
+            Search
+          </button>
+        )}
       </div>
 
       <div className="sidebar-section grow projects-section">
@@ -135,7 +218,7 @@ export function Sidebar({
           <span>Projects</span>
         </div>
         <ul className="project-list nested">
-          {filteredProjects.length === 0 && <li className="empty">No projects</li>}
+          {filteredProjects.length === 0 && <li className="empty">{q ? "No matches" : "No projects"}</li>}
           {filteredProjects.map((p) => {
             const isActive = activeId === p.id;
             const chats = chatsFor(p);
@@ -150,9 +233,9 @@ export function Sidebar({
                     title={isBusy ? "Working…" : undefined}
                   >
                     {isActive ? (
-                      <FolderOpen size={14} className="project-folder" />
+                      <FolderOpen size={14} strokeWidth={1.5} className="project-folder" />
                     ) : (
-                      <Folder size={14} className="project-folder" />
+                      <Folder size={14} strokeWidth={1.5} className="project-folder" />
                     )}
                     <span className="project-title">{p.app_config?.title || "Untitled"}</span>
                     {isBusy ? (
@@ -169,7 +252,7 @@ export function Sidebar({
                         onNewChat(p.id);
                       }}
                     >
-                      <Plus size={13} />
+                      <Plus size={14} strokeWidth={1.5} />
                     </button>
                   ) : null}
                 </div>
@@ -188,7 +271,7 @@ export function Sidebar({
                               else onSelect(p.id);
                             }}
                           >
-                            <MessageSquare size={12} className="chat-icon" />
+                            <MessageSquare size={14} strokeWidth={1.5} className="chat-icon" />
                             <span className="chat-title">{chatLabel(c, i)}</span>
                             {isBusy && chatActive ? (
                               <span className="chat-activity" aria-label="Working" />
@@ -206,7 +289,7 @@ export function Sidebar({
                                 onDeleteChat?.(p.id, c.id);
                               }}
                             >
-                              <Trash2 size={12} />
+                              <Trash2 size={14} strokeWidth={1.5} />
                             </button>
                           ) : null}
                         </li>
@@ -244,13 +327,27 @@ export function Sidebar({
       </div>
 
       <div className="bui-sidebar-foot">
-        {onHome ? (
-          <button type="button" className="bui-sidebar-link icon-only" onClick={onHome} aria-label="Home">
-            <Home size={15} />
-          </button>
-        ) : null}
-        <button type="button" className="bui-sidebar-new icon-only" onClick={onNew} aria-label="New project">
-          <Plus size={16} strokeWidth={2} />
+        <button
+          type="button"
+          className="bui-identity"
+          onClick={onAccount}
+          aria-label="Account"
+        >
+          <span className="bui-avatar" aria-hidden>
+            {initials(user)}
+          </span>
+          <span className="bui-identity-copy">
+            <span className="bui-identity-name">{displayName(user)}</span>
+            <span className="bui-identity-plan">{workspaceLabel}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="bui-sidebar-gear"
+          onClick={onAccount}
+          aria-label="Settings"
+        >
+          <Settings size={16} strokeWidth={1.5} />
         </button>
       </div>
 
