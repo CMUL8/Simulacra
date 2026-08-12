@@ -145,6 +145,17 @@ export type PlanPreview = {
   };
 };
 
+export type ChatThreadSummary = {
+  id: string;
+  title: string;
+  updated_at: string;
+  created_at?: string;
+  message_count?: number;
+  artifact_kind?: string | null;
+  artifact_mode?: "shared" | "own" | string;
+  active?: boolean;
+};
+
 export type Project = {
   id: string;
   prompt: string;
@@ -158,6 +169,9 @@ export type Project = {
   deployed: boolean;
   deploy_url: string | null;
   chat: ChatMessage[];
+  active_chat_id?: string;
+  chats?: ChatThreadSummary[];
+  chat_index?: ChatThreadSummary[];
   app_config: AppConfig;
   row_count: number;
   checkpoints: Checkpoint[];
@@ -528,13 +542,38 @@ export async function approveProject(id: string): Promise<Snapshot> {
   return json(`/projects/${id}/approve`, { method: "POST" });
 }
 
-export async function sendChat(id: string, message: string): Promise<Snapshot> {
-  return json(`/projects/${id}/chat`, { method: "POST", body: JSON.stringify({ message }) });
+export async function sendChat(id: string, message: string, chatId?: string | null): Promise<Snapshot> {
+  return json(`/projects/${id}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ message, chat_id: chatId || undefined }),
+  });
 }
 
 /** @deprecated Alias of sendChat — main chat is always Prime. */
 export async function sendPlanChat(id: string, message: string): Promise<Snapshot> {
   return sendChat(id, message);
+}
+
+export async function createChat(
+  projectId: string,
+  opts?: { title?: string; prompt?: string; artifact_kind?: string; artifact_mode?: "shared" | "own" },
+): Promise<Snapshot> {
+  return json(`/projects/${projectId}/chats`, {
+    method: "POST",
+    body: JSON.stringify({
+      title: opts?.title,
+      prompt: opts?.prompt || "",
+      artifact_kind: opts?.artifact_kind,
+      artifact_mode: opts?.artifact_mode || "shared",
+    }),
+  });
+}
+
+export async function activateChat(projectId: string, chatId: string): Promise<Snapshot> {
+  return json(`/projects/${projectId}/chats/activate`, {
+    method: "POST",
+    body: JSON.stringify({ chat_id: chatId }),
+  });
 }
 
 export async function cancelProjectJob(id: string): Promise<Snapshot> {

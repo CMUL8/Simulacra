@@ -238,9 +238,11 @@ def prime_chat_turn(
 			"Be honest; suggest upload, sample swap, or research for their topic.\n"
 		)
 
-	# One stable session name per project — RLM resume within the project,
-	# never shared across users (session_dir is already per-project).
-	session_name = f"chat-{pid}"
+	# One stable session per chat under the project (Cursor-style threads).
+	from .runs import get_active_thread
+
+	chat_id = get_active_thread(state).id
+	session_name = f"chat-{pid}-{chat_id}"
 
 	if open_turn:
 		design = brief_to_prime_block(state.design_brief or {})

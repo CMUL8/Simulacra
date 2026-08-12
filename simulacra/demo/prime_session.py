@@ -59,8 +59,18 @@ def _prime_kwargs() -> dict[str, Any]:
 	return prime_kwargs()
 
 
-def session_dir_for(project_id: str) -> Path:
-	path = project_dir(project_id) / "work" / "prime-session"
+def session_dir_for(project_id: str, chat_id: str | None = None) -> Path:
+	base = project_dir(project_id) / "work" / "prime-session"
+	if chat_id:
+		path = base / chat_id
+	else:
+		# Prefer active chat dir when available
+		try:
+			from .runs import get_active_thread, load_state
+
+			path = base / get_active_thread(load_state(project_id)).id
+		except Exception:  # noqa: BLE001
+			path = base
 	path.mkdir(parents=True, exist_ok=True)
 	return path
 

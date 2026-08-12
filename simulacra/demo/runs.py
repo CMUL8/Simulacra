@@ -25,6 +25,198 @@ class ChatMessage:
 
 
 @dataclass
+class ChatThread:
+	"""One conversation under a project (Cursor-style nested chat)."""
+
+	id: str
+	title: str
+	created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+	updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+	messages: list[ChatMessage] = field(default_factory=list)
+	prompt: str = ""
+	# None = share the project's artefact; set = this chat targets another format
+	artifact_kind: str | None = None
+	artifact_mode: str = "shared"  # shared | own
+
+
+def _title_from_text(text: str, fallback: str = "New chat") -> str:
+	line = (text or "").strip().split("\n")[0].strip()
+	if not line:
+		return fallback
+	line = line[:56].rstrip()
+	if len((text or "").strip()) > 56:
+		line = f"{line}…"
+	return line or fallback
+
+
+def _new_chat_id() -> str:
+	return f"chat_{uuid.uuid4().hex[:10]}"
+
+
+def _thread_from_dict(raw: dict[str, Any]) -> ChatThread:
+	msgs = [
+		ChatMessage(**{k: v for k, v in m.items() if k in ("role", "content", "at", "source")})
+		for m in (raw.get("messages") or [])
+	]
+	return ChatThread(
+		id=str(raw.get("id") or _new_chat_id()),
+		title=str(raw.get("title") or "Chat"),
+		created_at=str(raw.get("created_at") or datetime.now(UTC).isoformat()),
+		updated_at=str(raw.get("updated_at") or datetime.now(UTC).isoformat()),
+		messages=msgs,
+		prompt=str(raw.get("prompt") or ""),
+		artifact_kind=raw.get("artifact_kind"),
+		artifact_mode=str(raw.get("artifact_mode") or "shared"),
+	)
+
+
+def _migrate_chats(
+	*,
+	chat: list[ChatMessage],
+	chats_raw: list[dict[str, Any]] | None,
+	active_chat_id: str | None,
+	prompt: str,
+) -> tuple[list[ChatThread], str, list[ChatMessage]]:
+	"""Ensure chats[] exists; legacy `chat` becomes the first thread."""
+	chats = [_thread_from_dict(c) for c in (chats_raw or []) if isinstance(c, dict)]
+	if not chats:
+		seed = list(chat)
+		title = _title_from_text(prompt or (seed[0].content if seed else ""), "Main chat")
+		cid = _new_chat_id()
+		chats = [
+			ChatThread(
+				id=cid,
+				title=title,
+				messages=seed,
+				prompt=prompt or "",
+			)
+		]
+		active = cid
+	else:
+		active = active_chat_id or chats[0].id
+		if not any(t.id == active for t in chats):
+			active = chats[0].id
+	active_thread = next(t for t in chats if t.id == active)
+	# Prefer thread messages; fall back to legacy chat if thread empty but legacy has content
+	messages = list(active_thread.messages) if active_thread.messages else list(chat)
+	active_thread.messages = messages
+	return chats, active, messages
+
+
+def sync_chat_threads(state: ProjectState) -> None:
+	"""Keep `state.chat` and the active ChatThread.messages in lockstep."""
+	if not state.chats:
+		state.chats, state.active_chat_id, state.chat = _migrate_chats(
+			chat=list(state.chat),
+			chats_raw=None,
+			active_chat_id=None,
+			prompt=state.prompt,
+		)
+		return
+	thread = next((t for t in state.chats if t.id == state.active_chat_id), None)
+	if thread is None:
+		thread = state.chats[0]
+		state.active_chat_id = thread.id
+	thread.messages = list(state.chat)
+	thread.updated_at = datetime.now(UTC).isoformat()
+	if (not thread.title or thread.title in ("New chat", "Chat", "Main chat")) and state.chat:
+		first_user = next((m.content for m in state.chat if m.role == "user"), "")
+		if first_user:
+			thread.title = _title_from_text(first_user, thread.title or "Chat")
+
+
+def get_active_thread(state: ProjectState) -> ChatThread:
+	sync_chat_threads(state)
+	thread = next((t for t in state.chats if t.id == state.active_chat_id), None)
+	if thread is None:
+		thread = state.chats[0]
+		state.active_chat_id = thread.id
+	return thread
+
+
+def activate_chat(project_id: str, chat_id: str) -> ProjectState:
+	state = load_state(project_id)
+	sync_chat_threads(state)
+	thread = next((t for t in state.chats if t.id == chat_id), None)
+	if thread is None:
+		raise ValueError(f"Unknown chat {chat_id}")
+	# Persist current messages into previous active thread first
+	prev = next((t for t in state.chats if t.id == state.active_chat_id), None)
+	if prev and prev.id != thread.id:
+		prev.messages = list(state.chat)
+		prev.updated_at = datetime.now(UTC).isoformat()
+	state.active_chat_id = thread.id
+	state.chat = list(thread.messages)
+	# Own-artefact chats can steer the project's format when switched in
+	if thread.artifact_mode == "own" and thread.artifact_kind:
+		from .formats import normalize_kind
+
+		state.artifact_kind = normalize_kind(thread.artifact_kind)
+	save_state(state)
+	return load_state(project_id)
+
+
+def create_chat(
+	project_id: str,
+	*,
+	title: str | None = None,
+	prompt: str = "",
+	artifact_kind: str | None = None,
+	artifact_mode: str = "shared",
+) -> ProjectState:
+	"""Start a new conversation under the project (shares sources; artefact optional)."""
+	from .formats import normalize_kind
+
+	state = load_state(project_id)
+	sync_chat_threads(state)
+	# Flush active thread before switching
+	cur = get_active_thread(state)
+	cur.messages = list(state.chat)
+	cur.updated_at = datetime.now(UTC).isoformat()
+
+	mode = "own" if artifact_mode == "own" or artifact_kind else "shared"
+	kind = normalize_kind(artifact_kind) if artifact_kind else None
+	cid = _new_chat_id()
+	seed: list[ChatMessage] = []
+	if prompt.strip():
+		seed.append(ChatMessage(role="user", content=prompt.strip(), source="system"))
+	thread = ChatThread(
+		id=cid,
+		title=_title_from_text(title or prompt, "New chat"),
+		messages=seed,
+		prompt=prompt.strip(),
+		artifact_kind=kind,
+		artifact_mode=mode,
+	)
+	state.chats.insert(0, thread)
+	state.active_chat_id = cid
+	state.chat = list(seed)
+	if mode == "own" and kind:
+		state.artifact_kind = kind
+	save_state(state)
+	return load_state(project_id)
+
+
+def chat_summaries(state: ProjectState) -> list[dict[str, Any]]:
+	sync_chat_threads(state)
+	out: list[dict[str, Any]] = []
+	for t in sorted(state.chats, key=lambda x: x.updated_at, reverse=True):
+		out.append(
+			{
+				"id": t.id,
+				"title": t.title,
+				"updated_at": t.updated_at,
+				"created_at": t.created_at,
+				"message_count": len(t.messages),
+				"artifact_kind": t.artifact_kind,
+				"artifact_mode": t.artifact_mode,
+				"active": t.id == state.active_chat_id,
+			}
+		)
+	return out
+
+
+@dataclass
 class AppConfig:
 	title: str = "Data App"
 	subtitle: str = "Built with Simulacra"
@@ -93,6 +285,9 @@ class ProjectState:
 	deploy_url: str | None = None
 	gates_status: str = "pending"
 	chat: list[ChatMessage] = field(default_factory=list)
+	# Project → many chats (Cursor-style). `chat` mirrors the active thread.
+	active_chat_id: str = ""
+	chats: list[ChatThread] = field(default_factory=list)
 	app_config: AppConfig = field(default_factory=AppConfig)
 	row_count: int = 0
 	checkpoints: list[dict[str, str]] = field(default_factory=list)
@@ -112,6 +307,13 @@ class ProjectState:
 		cfg = data.get("app_config") or {}
 		from .formats import normalize_kind
 
+		chats, active_id, chat = _migrate_chats(
+			chat=chat,
+			chats_raw=data.get("chats"),
+			active_chat_id=data.get("active_chat_id"),
+			prompt=str(data.get("prompt") or ""),
+		)
+
 		return cls(
 			id=data["id"],
 			prompt=data["prompt"],
@@ -129,6 +331,8 @@ class ProjectState:
 			deploy_url=data.get("deploy_url"),
 			gates_status=data.get("gates_status", "pending"),
 			chat=chat,
+			active_chat_id=active_id,
+			chats=chats,
 			app_config=AppConfig(**{k: v for k, v in cfg.items() if k in AppConfig.__dataclass_fields__}),
 			row_count=data.get("row_count", 0),
 			checkpoints=data.get("checkpoints", []),
@@ -162,6 +366,7 @@ def load_state(project_id: str) -> ProjectState:
 
 def save_state(state: ProjectState) -> None:
 	"""Atomic write so concurrent readers never see empty/partial JSON."""
+	sync_chat_threads(state)
 	state.updated_at = datetime.now(UTC).isoformat()
 	path = state_path(state.id)
 	path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,7 +422,20 @@ def create_project(
 		artifact_kind=kind,
 		design_brief=brief,
 	)
-	state.chat.append(ChatMessage(role="user", content=prompt, source="system"))
+	first = ChatMessage(role="user", content=prompt, source="system")
+	cid = _new_chat_id()
+	state.active_chat_id = cid
+	state.chats = [
+		ChatThread(
+			id=cid,
+			title=_title_from_text(prompt, "Main chat"),
+			messages=[first],
+			prompt=prompt,
+			artifact_kind=kind,
+			artifact_mode="shared",
+		)
+	]
+	state.chat = [first]
 	write_brief(project_id, brief)
 	save_state(state)
 

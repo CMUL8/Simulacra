@@ -573,8 +573,12 @@ def follow_up(project_id: str, message: str) -> ProjectState:
 	return plan_chat(project_id, message)
 
 
-def start_follow_up(project_id: str, message: str) -> dict[str, Any]:
+def start_follow_up(project_id: str, message: str, *, chat_id: str | None = None) -> dict[str, Any]:
 	"""Main chat entry — always Prime; Simulacra observes structured requests."""
+	if chat_id:
+		from .runs import activate_chat
+
+		activate_chat(project_id, chat_id)
 	start_agent_chat(project_id, message)
 	snap = project_snapshot(project_id)
 	job = snap.get("job") or {}
@@ -1015,6 +1019,11 @@ def project_snapshot(project_id: str) -> dict:
 		"checkpoints": list_checkpoints(project_id),
 		"preview_stale": preview_is_stale(project_id),
 	}
+	# Lightweight chat index for sidebar nesting (messages stay on project.chat = active)
+	from .runs import chat_summaries, sync_chat_threads
+
+	sync_chat_threads(state)
+	proj["chat_index"] = chat_summaries(state)
 	return {
 		"project": proj,
 		"preview_data": preview,

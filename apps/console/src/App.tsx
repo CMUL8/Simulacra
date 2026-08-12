@@ -5,6 +5,8 @@ import {
   cancelProjectJob,
   clearAuth,
   createProject,
+  createChat,
+  activateChat,
   deployProject,
   fetchMe,
   getProject,
@@ -495,11 +497,47 @@ export default function App({
       setMode(snap.project.phase === "plan" ? "plan" : "workspace");
       setPreviewOpen(false);
       setInput("");
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === snap.project.id
+            ? {
+                ...p,
+                ...snap.project,
+                chat: [],
+                chat_index: snap.project.chat_index || snap.project.chats,
+                active_chat_id: snap.project.active_chat_id,
+              }
+            : p,
+        ),
+      );
+      try {
+        setProjectFiles(await listProjectFiles(id));
+      } catch {
+        /* ignore */
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load project");
     } finally {
       setBusy(false);
     }
+  }
+
+  function mergeProjectMeta(snap: Snapshot) {
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === snap.project.id
+          ? {
+              ...p,
+              app_config: snap.project.app_config,
+              phase: snap.project.phase,
+              status: snap.project.status,
+              chat_index: snap.project.chat_index || snap.project.chats,
+              active_chat_id: snap.project.active_chat_id,
+              artifact_kind: snap.project.artifact_kind,
+            }
+          : p,
+      ),
+    );
   }
 
   async function handleApprove() {
@@ -526,7 +564,7 @@ export default function App({
     setError(null);
     setInput("");
     try {
-      const snap = await sendChat(snapshot.project.id, text);
+      const snap = await sendChat(snapshot.project.id, text, snapshot.project.active_chat_id);
       setSnapshot(snap);
       if (snap.job_id || snap.job?.status === "running" || snap.project.job?.status === "running") {
         setJobLive(true);
@@ -591,6 +629,45 @@ export default function App({
       await refreshProjects();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Deploy failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSelectChat(projectId: string, chatId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const snap = await activateChat(projectId, chatId);
+      setSnapshot(snap);
+      mergeProjectMeta(snap);
+      setMode(snap.project.phase === "ready" ? "workspace" : "plan");
+      setSidebarOpen(false);
+      try {
+        setProjectFiles(await listProjectFiles(projectId));
+      } catch {
+        /* ignore */
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not open chat");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleNewChat(projectId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const snap = await createChat(projectId, { title: "New chat" });
+      setSnapshot(snap);
+      mergeProjectMeta(snap);
+      setMode(snap.project.phase === "ready" ? "workspace" : "plan");
+      setInput("");
+      setSidebarOpen(true);
+      await refreshProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create chat");
     } finally {
       setBusy(false);
     }
@@ -680,12 +757,15 @@ export default function App({
         <Sidebar
           projects={projects}
           activeId={snapshot.project.id}
+          activeChatId={snapshot.project.active_chat_id}
           files={projectFiles}
           focus="projects"
           collapsed={false}
           onNew={handleNew}
           onHome={handleNew}
           onSelect={loadProject}
+          onSelectChat={handleSelectChat}
+          onNewChat={handleNewChat}
           onToggle={() => setSidebarOpen(false)}
         />
       )}

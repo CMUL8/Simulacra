@@ -51,7 +51,16 @@ from simulacra.demo.pipeline import (
 	start_approve_build,
 	start_follow_up,
 )
-from simulacra.demo.runs import create_project, list_projects, load_state, project_dir, save_state
+from simulacra.demo.runs import (
+	activate_chat,
+	chat_summaries,
+	create_chat,
+	create_project,
+	list_projects,
+	load_state,
+	project_dir,
+	save_state,
+)
 from simulacra.demo.sandbox import sandbox_status
 from simulacra.demo.siem import download_filename, export_bundle, siem_status
 from simulacra.demo.tenants import (
@@ -109,6 +118,18 @@ class CreateProjectBody(BaseModel):
 
 class ChatBody(BaseModel):
 	message: str = Field(min_length=1)
+	chat_id: str | None = None
+
+
+class CreateChatBody(BaseModel):
+	title: str | None = None
+	prompt: str = ""
+	artifact_kind: str | None = None
+	artifact_mode: str = "shared"  # shared | own
+
+
+class ActivateChatBody(BaseModel):
+	chat_id: str = Field(min_length=1)
 
 
 class RollbackBody(BaseModel):
@@ -685,10 +706,22 @@ def export_audit(
 
 @app.get("/projects")
 def get_projects(ctx: Annotated[AuthContext, Depends(require_perm("project:read"))]) -> dict:
+	def _list_item(p):
+		d = p.to_dict()
+		d["chat_index"] = chat_summaries(p)
+		# Sidebar only needs chat metadata — full transcript loads with the project
+		d["chat"] = []
+		slim = []
+		for c in d.get("chats") or []:
+			if isinstance(c, dict):
+				slim.append({k: v for k, v in c.items() if k != "messages"})
+		d["chats"] = slim
+		return d
+
 	if ctx.tenant_id == "*":
-		return {"projects": [p.to_dict() for p in list_projects()], "tenant_id": "*"}
+		return {"projects": [_list_item(p) for p in list_projects()], "tenant_id": "*"}
 	return {
-		"projects": [p.to_dict() for p in list_projects(tenant_id=ctx.tenant_id)],
+		"projects": [_list_item(p) for p in list_projects(tenant_id=ctx.tenant_id)],
 		"tenant_id": ctx.tenant_id,
 	}
 
@@ -748,7 +781,7 @@ def post_plan(
 ) -> dict:
 	"""Compat alias — main chat is always Prime via /chat."""
 	try:
-		return start_follow_up(project_id, body.message)
+		return start_follow_up(project_id, body.message, chat_id=body.chat_id)
 	except ValueError as exc:
 		raise _job_conflict_http(exc) from exc
 	except Exception as exc:
@@ -833,9 +866,50 @@ def post_chat(
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 ) -> dict:
 	try:
-		return start_follow_up(project_id, body.message)
+		return start_follow_up(project_id, body.message, chat_id=body.chat_id)
 	except ValueError as exc:
 		raise _job_conflict_http(exc) from exc
+
+
+@app.get("/projects/{project_id}/chats")
+def get_chats(
+	project_id: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+) -> dict:
+	state = load_state(project_id)
+	return {"chats": chat_summaries(state), "active_chat_id": state.active_chat_id}
+
+
+@app.post("/projects/{project_id}/chats", status_code=201)
+def post_create_chat(
+	project_id: str,
+	body: CreateChatBody,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict:
+	try:
+		create_chat(
+			project_id,
+			title=body.title,
+			prompt=body.prompt,
+			artifact_kind=body.artifact_kind,
+			artifact_mode=body.artifact_mode,
+		)
+		return project_snapshot(project_id)
+	except ValueError as exc:
+		raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/projects/{project_id}/chats/activate")
+def post_activate_chat(
+	project_id: str,
+	body: ActivateChatBody,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict:
+	try:
+		activate_chat(project_id, body.chat_id)
+		return project_snapshot(project_id)
+	except ValueError as exc:
+		raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/projects/{project_id}/rollback")
