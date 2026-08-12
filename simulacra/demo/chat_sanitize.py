@@ -20,7 +20,11 @@ _MANIFEST_HEAD = re.compile(
 	r"(?i)^\s{0,3}#{1,3}\s*(what.?s in (the )?data room|data room|sources?|files?|inventory)\b"
 )
 _ADDED_SOURCES_LINE = re.compile(
-	r"(?i)^\s*added\b.+\bto (your |the )?sources?\b\.?\s*$"
+	r"(?i)^\s*added\b.+\bto (your |the )?(sources?|data room)\b\.?\s*$"
+)
+_INTERNAL_SOURCE_NAMES = re.compile(
+	r"(?i)\b(design_brief|kernel-state|kernel_state|agent_context|plan_preview|"
+	r"extract_report|gates?_report|run_manifest|data_profile|sources)\.(json|md)\b"
 )
 _CHOICE_DUMP = re.compile(
 	r"(?is)(what I'?d do differently|want me to try|targeted iterates?|"
@@ -119,6 +123,11 @@ def sanitize_agent_reply(text: str) -> str:
 			continue
 		if _ADDED_SOURCES_LINE.match(line):
 			# Quiet inventory — never echo filename dumps into chat
+			i += 1
+			continue
+		if _INTERNAL_SOURCE_NAMES.search(line) and re.search(
+			r"(?i)\b(added|source|data room|promoted|inventory)\b", line
+		):
 			i += 1
 			continue
 		if _APP_SHOW_HEAD.match(line):

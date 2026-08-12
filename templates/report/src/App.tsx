@@ -9,33 +9,43 @@ type Research = {
   sections?: ResearchSection[];
 };
 
+async function fetchJson<T>(url: string, fallback: T): Promise<T> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return fallback;
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
+    const text = await r.text();
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.startsWith("<")) return fallback;
+    if (ct && !ct.includes("json") && !trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+      return fallback;
+    }
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 /** Minimal report canvas — Prime authors the real document on Build. */
 export default function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [research, setResearch] = useState<Research | null>(null);
   const [rowCount, setRowCount] = useState(0);
-  const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
     const base = import.meta.env.BASE_URL || "/";
     const asset = (name: string) => `${base}${name.replace(/^\//, "")}`;
     Promise.all([
-      fetch(asset("config.json")).then((r) => {
-        if (!r.ok) throw new Error(`config ${r.status}`);
-        return r.json();
-      }),
-      fetch(asset("data.json")).then((r) => (r.ok ? r.json() : [])),
-      fetch(asset("research.json")).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    ])
-      .then(([cfg, data, researchBundle]) => {
-        setConfig(cfg);
-        setRowCount(Array.isArray(data) ? data.length : 0);
-        setResearch(researchBundle);
-      })
-      .catch((err) => setBootError(String(err?.message || err)));
+      fetchJson<Config | null>(asset("config.json"), null),
+      fetchJson<unknown[]>(asset("data.json"), []),
+      fetchJson<Research | null>(asset("research.json"), null),
+    ]).then(([cfg, data, researchBundle]) => {
+      setConfig(cfg || { title: "Report", subtitle: "" });
+      setRowCount(Array.isArray(data) ? data.length : 0);
+      setResearch(researchBundle);
+    });
   }, []);
 
-  if (bootError) return <div className="boot">Failed to load report: {bootError}</div>;
   if (!config) return <div className="boot">Loading report…</div>;
 
   const sections = research?.sections || [];
@@ -78,11 +88,7 @@ export default function App() {
         <p className="meta">{rowCount ? `${rowCount} rows in room` : "Empty room"}</p>
       </header>
       <section>
-        <h2>Canvas</h2>
-        <p className="section-body">
-          Starter shell only. Build with the agent so sections, narrative, and craft match the ask —
-          Simulacra will not invent the report structure for you.
-        </p>
+        <p className="muted">Build with the agent to author the full report from your sources.</p>
       </section>
     </article>
   );

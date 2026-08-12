@@ -1031,13 +1031,19 @@ def serve_project_preview(
 	dist = project_dir(project_id) / "app" / "dist"
 	if not dist.is_dir():
 		raise HTTPException(404, "Preview not ready")
-	target = (dist / (full_path or "index.html")).resolve()
+	rel = (full_path or "index.html").lstrip("/")
+	target = (dist / rel).resolve()
 	try:
 		target.relative_to(dist.resolve())
 	except ValueError as exc:
 		raise HTTPException(404, "Not found") from exc
 	if target.is_file():
 		return FileResponse(target)
+	# Missing asset (.json/.js/.css/…) must NOT fall through to index.html —
+	# SPA fallback makes fetch().json() explode with Unexpected token '<'.
+	suffix = Path(rel).suffix.lower()
+	if suffix and suffix not in {".html", ".htm"}:
+		raise HTTPException(404, f"Not found: {rel}")
 	index = dist / "index.html"
 	if index.is_file():
 		return FileResponse(index)

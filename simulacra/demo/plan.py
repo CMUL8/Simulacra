@@ -411,14 +411,29 @@ def approve_plan(project_id: str) -> ProjectState:
 
 def _purge_ephemeral_status(state: ProjectState) -> None:
 	"""Drop stuck job-status lines that used to live in chat forever."""
-	state.chat = [
-		m
-		for m in state.chat
-		if not (
-			getattr(m, "source", None) == "system"
-			and str(m.content or "").strip().startswith("Building your")
-		)
-	]
+	import re
+
+	_added = re.compile(
+		r"(?i)^Added\b.+\bto (your |the )?(sources|data room)\b"
+	)
+	_internal = re.compile(
+		r"(?i)\b(design_brief|kernel-state|kernel_state|agent_context)\.(json|md)\b"
+	)
+
+	def keep(m) -> bool:
+		src = getattr(m, "source", None)
+		text = str(m.content or "").strip()
+		if src == "system" and text.startswith("Building your"):
+			return False
+		if _added.match(text):
+			return False
+		if _internal.search(text) and re.search(
+			r"(?i)\b(added|source|data room|promoted)\b", text
+		):
+			return False
+		return True
+
+	state.chat = [m for m in state.chat if keep(m)]
 
 
 def _merge_prompt_update(prompt: str, message: str) -> str:

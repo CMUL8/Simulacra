@@ -36,10 +36,14 @@ def test_orphan_pipe_row_dropped_when_file() -> None:
 	assert ".md" not in out
 
 
-def test_softens_inline_filenames() -> None:
-	out = sanitize_agent_reply("See `03_ideology.json` for pillars.")
-	assert ".json" not in out
-	assert "ideology" in out.lower()
+def test_strips_added_sources_inventory() -> None:
+	out = sanitize_agent_reply(
+		"Added `design_brief.json`, `kernel-state.json`, `00_summary.md` (+4 more) to your sources.\n\n"
+		"Ready to build."
+	)
+	assert "design_brief" not in out.lower()
+	assert "to your sources" not in out.lower()
+	assert "Ready to build" in out
 
 
 def test_strips_code_filenames_from_change_summary() -> None:

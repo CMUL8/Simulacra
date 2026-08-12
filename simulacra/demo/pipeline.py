@@ -1006,6 +1006,14 @@ def project_snapshot(project_id: str) -> dict:
 	if len(state.chat) != before:
 		dirty = True
 
+	# Also keep dist JSON mirrored for live preview
+	try:
+		from .deploy import _mirror_public_json_to_dist
+
+		_mirror_public_json_to_dist(project_dir(project_id) / "app")
+	except Exception:
+		pass
+
 	# Honest subtitle — never leave a fake "Built from your sources" claim
 	sub = (state.app_config.subtitle or "").strip()
 	if sub == "Built from your sources":

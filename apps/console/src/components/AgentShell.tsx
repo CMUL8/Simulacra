@@ -301,10 +301,13 @@ function ShipReceipt({
   );
 }
 
-function isOrphanJobStatus(m: ChatMessage): boolean {
+def isOrphanJobStatus(m: ChatMessage): boolean {
   const text = m.content.trim();
   // Old builds left "Building your app…" in chat forever — never show it.
   if (m.source === "system" && /^Building your\b/i.test(text)) return true;
+  // Inventory spam — filenames / "Added … to your sources"
+  if (/^Added\b.+\bto (your |the )?(sources|data room)\b/i.test(text)) return true;
+  if (/\b(design_brief|kernel-state|kernel_state|agent_context)\.(json|md)\b/i.test(text)) return true;
   // Legacy rollback jargon — hide; restores use plain copy
   if (/^Rolled back to checkpoint/i.test(text)) return true;
   if (/^Undid — preview restored/i.test(text)) return true;

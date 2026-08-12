@@ -2,30 +2,36 @@ import { useEffect, useState } from "react";
 
 type Config = { title: string; subtitle: string };
 
+async function fetchJson<T>(url: string, fallback: T): Promise<T> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return fallback;
+    const text = await r.text();
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.startsWith("<")) return fallback;
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 /** Minimal one-pager canvas — Prime authors the sheet on Build. */
 export default function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [rowCount, setRowCount] = useState(0);
-  const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
     const base = import.meta.env.BASE_URL || "/";
     const asset = (name: string) => `${base}${name.replace(/^\//, "")}`;
     Promise.all([
-      fetch(asset("config.json")).then((r) => {
-        if (!r.ok) throw new Error(`config ${r.status}`);
-        return r.json();
-      }),
-      fetch(asset("data.json")).then((r) => (r.ok ? r.json() : [])),
-    ])
-      .then(([cfg, data]) => {
-        setConfig(cfg);
-        setRowCount(Array.isArray(data) ? data.length : 0);
-      })
-      .catch((err) => setBootError(String(err?.message || err)));
+      fetchJson<Config | null>(asset("config.json"), null),
+      fetchJson<unknown[]>(asset("data.json"), []),
+    ]).then(([cfg, data]) => {
+      setConfig(cfg || { title: "One-pager", subtitle: "" });
+      setRowCount(Array.isArray(data) ? data.length : 0);
+    });
   }, []);
 
-  if (bootError) return <div className="boot">Failed to load one-pager: {bootError}</div>;
   if (!config) return <div className="boot">Loading…</div>;
 
   return (

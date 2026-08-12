@@ -40,10 +40,11 @@ Starter scaffold: `src/App.tsx` + `src/styles.css` — treat as disposable canva
 ## Contract
 1. Author the artifact for the USER GOAL. You judge sections, KPIs, narrative, and layout.
 2. Make durable edits to `src/App.tsx` and/or `src/styles.css` (required). Narration-only = fail.
-3. Use the palette from the brief when sensible; keep contrast readable.
-4. Update `public/config.json` title/subtitle to match the goal.
-5. Valid React/TypeScript; stay in this directory; no servers / npm install.
-6. Empty room → honest empty state. Never invent records or a wrong product domain.
+3. When fetching public JSON, parse safely: if the body is empty/HTML, fall back to []/null — never crash the preview with Unexpected token '<'.
+4. Use the palette from the brief when sensible; keep contrast readable.
+5. Update `public/config.json` title/subtitle to match the goal.
+6. Valid React/TypeScript; stay in this directory; no servers / npm install.
+7. Empty room → honest empty state. Never invent records or a wrong product domain.
 
 CRITICAL: Write files with your tools. Do not stop after only reading.
 """

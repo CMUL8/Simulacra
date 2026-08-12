@@ -109,6 +109,8 @@ def refresh_app_data(
 			indent=2,
 		)
 	)
+	# Keep live preview in sync — dist is what the iframe serves.
+	_mirror_public_json_to_dist(app_dir)
 	try:
 		from .sources import profile_rows, write_agent_context
 
@@ -126,6 +128,70 @@ def refresh_app_data(
 	except Exception:
 		pass
 	return app_dir
+
+
+def _mirror_public_json_to_dist(app_dir: Path) -> None:
+	"""Copy data/config/analytics/research JSON into dist when a build exists.
+
+	Without this, refresh_app_data updates public/ only and the preview iframe
+	(served from dist/) either serves stale JSON or SPA-fallback HTML.
+	"""
+	dist = app_dir / "dist"
+	public = app_dir / "public"
+	if not dist.is_dir() or not public.is_dir():
+		return
+	for name in (
+		"data.json",
+		"analytics.json",
+		"config.json",
+		"research.json",
+		"design_brief.json",
+	):
+		src = public / name
+		if not src.is_file():
+			continue
+		dest = dist / name
+		try:
+			dest.parent.mkdir(parents=True, exist_ok=True)
+			shutil.copy2(src, dest)
+		except OSError:
+			pass
+
+
+def _heal_unsafe_json_fetches(app_dir: Path) -> bool:
+	"""Rewrite fragile `r.json()` boots so HTML/404 never crashes the preview."""
+	tsx = app_dir / "src" / "App.tsx"
+	if not tsx.is_file():
+		return False
+	try:
+		text = tsx.read_text(encoding="utf-8")
+	except OSError:
+		return False
+	original = text
+	# Common brittle pattern: assume every 200 body is JSON
+	text = text.replace(
+		".then((r) => (r.ok ? r.json() : []))",
+		'.then(async (r) => { if (!r.ok) return []; const t = await r.text(); const s = t.trim(); if (!s || s.startsWith("<")) return []; try { return JSON.parse(s); } catch { return []; } })',
+	)
+	text = text.replace(
+		".then((r) => (r.ok ? r.json() : null))",
+		'.then(async (r) => { if (!r.ok) return null; const t = await r.text(); const s = t.trim(); if (!s || s.startsWith("<")) return null; try { return JSON.parse(s); } catch { return null; } })',
+	)
+	# Bare r.json() after ok check — soften via text parse
+	import re
+
+	text = re.sub(
+		r"if\s*\(\s*!r\.ok\s*\)\s*throw new Error\([^)]*\);\s*return r\.json\(\);",
+		'if (!r.ok) return null; const __t = await r.text(); const __s = __t.trim(); if (!__s || __s.startsWith("<")) return null; try { return JSON.parse(__s); } catch { return null; }',
+		text,
+	)
+	if text == original:
+		return False
+	try:
+		tsx.write_text(text, encoding="utf-8")
+	except OSError:
+		return False
+	return True
 
 
 def _npm_install(app_dir: Path) -> None:
@@ -153,6 +219,7 @@ def start_preview(state: ProjectState, data_rows: list[dict], *, app_dir: Path |
 	stop_preview(state)
 	if app_dir is None:
 		app_dir = sync_app(state.id, state.app_config, data_rows, artifact_kind=state.artifact_kind)
+	_heal_unsafe_json_fetches(app_dir)
 	_npm_install(app_dir)
 
 	base = preview_path(state.id)

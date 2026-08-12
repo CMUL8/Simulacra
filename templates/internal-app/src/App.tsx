@@ -3,27 +3,34 @@ import { useEffect, useMemo, useState } from "react";
 type Config = { title: string; subtitle: string };
 type Row = Record<string, string | number>;
 
+async function fetchJson<T>(url: string, fallback: T): Promise<T> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return fallback;
+    const text = await r.text();
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.startsWith("<")) return fallback;
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 /** Minimal canvas — Prime authors the real artifact on Build. */
 export default function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
-  const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
     const base = import.meta.env.BASE_URL || "/";
     const asset = (name: string) => `${base}${name.replace(/^\//, "")}`;
     Promise.all([
-      fetch(asset("config.json")).then((r) => {
-        if (!r.ok) throw new Error(`config ${r.status}`);
-        return r.json();
-      }),
-      fetch(asset("data.json")).then((r) => (r.ok ? r.json() : [])),
-    ])
-      .then(([cfg, data]) => {
-        setConfig(cfg);
-        setRows(Array.isArray(data) ? data : []);
-      })
-      .catch((err) => setBootError(String(err?.message || err)));
+      fetchJson<Config | null>(asset("config.json"), null),
+      fetchJson<Row[]>(asset("data.json"), []),
+    ]).then(([cfg, data]) => {
+      setConfig(cfg || { title: "App", subtitle: "" });
+      setRows(Array.isArray(data) ? data : []);
+    });
   }, []);
 
   const columns = useMemo(() => {
@@ -32,7 +39,6 @@ export default function App() {
     return [...keys].slice(0, 6);
   }, [rows]);
 
-  if (bootError) return <div className="boot">Could not load ({bootError}).</div>;
   if (!config) return <div className="boot">Loading…</div>;
 
   return (

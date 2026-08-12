@@ -390,6 +390,13 @@ def write_research_bundle(
 
 	app_public.mkdir(parents=True, exist_ok=True)
 	out_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+	# Keep served preview in sync when dist already exists
+	try:
+		from .deploy import _mirror_public_json_to_dist
+
+		_mirror_public_json_to_dist(root / "app")
+	except Exception:
+		pass
 
 	# Inventory: copy primary research into data-room if missing
 	if primary is not None:
