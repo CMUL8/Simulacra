@@ -8,7 +8,7 @@ import {
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
-import { AnswerBlock, humanSourceLabel } from "./agent/AnswerBlock";
+import { AnswerBlock } from "./agent/AnswerBlock";
 import { ApprovalCard } from "./agent/ApprovalCard";
 import {
   SelectionActions,
@@ -445,29 +445,22 @@ function PlanSection({
 function MessageTurn({
   message,
   snapshot,
-  files,
   isLatestAssistant,
+  busy,
   onOpenPreview,
   onFollowUp,
 }: {
   message: ChatMessage;
   snapshot: Snapshot;
-  files: DataRoomFile[];
   isLatestAssistant?: boolean;
+  busy?: boolean;
   onOpenPreview: () => void;
   onFollowUp?: (text: string) => void;
 }) {
   const kind = turnKind(message);
-  const sources =
-    kind === "assistant" && isLatestAssistant
-      ? userFacingFiles(files)
-          .slice(0, 8)
-          .map((f) => ({ id: f.name, label: humanSourceLabel(f.name) }))
-      : [];
+  // Follow-ups only when idle — never under a live wait stage
   const followUps =
-    kind === "assistant" && isLatestAssistant && onFollowUp
-      ? followUpsFor(snapshot)
-      : [];
+    kind === "assistant" && isLatestAssistant && onFollowUp && !busy ? followUpsFor(snapshot) : [];
 
   return (
     <article className={`cursor-turn cursor-turn-${kind}`} data-role={kind}>
@@ -476,7 +469,7 @@ function MessageTurn({
       ) : kind === "plan" ? (
         <Fragment>
           <div className="cursor-answer">
-            <AnswerBlock sources={sources} followUps={followUps} onFollowUp={onFollowUp}>
+            <AnswerBlock followUps={followUps} onFollowUp={onFollowUp}>
               <MarkdownBody text={message.content} />
             </AnswerBlock>
           </div>
@@ -490,7 +483,7 @@ function MessageTurn({
         </div>
       ) : (
         <div className="cursor-answer">
-          <AnswerBlock sources={sources} followUps={followUps} onFollowUp={onFollowUp}>
+          <AnswerBlock followUps={followUps} onFollowUp={onFollowUp}>
             <MarkdownBody text={message.content} />
           </AnswerBlock>
         </div>
@@ -667,7 +660,7 @@ export function AgentShell({
               <MessageTurn
                 message={m}
                 snapshot={snapshot}
-                files={files}
+                busy={busy}
                 isLatestAssistant={i === lastAssistantIdx}
                 onOpenPreview={onOpenPreview}
                 onFollowUp={(text) => onInput(text)}

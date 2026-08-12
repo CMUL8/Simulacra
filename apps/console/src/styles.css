@@ -2067,12 +2067,14 @@ body {
   box-sizing: border-box;
 }
 .cursor-turn-user {
-  background: var(--turn-user-bg);
+  background: transparent;
   border: none;
-  border-radius: var(--radius-md);
-  margin: 0 var(--thread-pad, 20px);
-  width: auto;
-  padding: var(--space-3) var(--space-4);
+  border-radius: 0;
+  margin: 0;
+  width: 100%;
+  padding: var(--space-3) var(--thread-pad, 20px);
+  display: flex;
+  justify-content: flex-end;
 }
 .cursor-turn-assistant,
 .cursor-turn-plan,
@@ -2441,11 +2443,12 @@ a.md-link:hover {
 }
 .cursor-user-bubble {
   display: inline-block;
-  max-width: min(42rem, 100%);
+  max-width: min(36rem, 92%);
   padding: 10px 14px;
-  border-radius: 14px;
-  background: var(--turn-user-bg, rgba(255, 255, 255, 0.055));
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
+  box-shadow: none;
 }
 .cursor-user-bubble .cursor-prose {
   font-size: 14.5px;
@@ -4859,42 +4862,6 @@ a.md-link:hover {
 }
 .bui-answer.streaming .bui-answer-body {
   mask-image: linear-gradient(to bottom, #000 85%, transparent);
-}
-.bui-answer-sources {
-  display: flex;
-  align-items: center;
-}
-.bui-answer-source-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.bui-source-cite {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  padding: 0;
-  border-radius: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  max-width: 7.5rem;
-  opacity: 0.75;
-}
-.bui-source-cite:hover {
-  opacity: 1;
-  color: var(--text);
-}
-.bui-source-cite em {
-  font-style: normal;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bui-source-cite.more {
-  opacity: 0.7;
-  max-width: none;
 }
 /* Cursor-style suggestions: plain text, no pill / no box-in-box */
 .bui-followups {
