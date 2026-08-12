@@ -525,42 +525,62 @@ def duplicate_project_warnings(
 
 def heal_display_title(state: ProjectState) -> ProjectState:
 	"""Unstick stock vendor titles and raw imperative prompts as product names."""
-	from .chat import infer_app_config
-	from .design_brief import title_from_prompt
+	from .design_brief import is_stock_vendor_name, title_from_prompt
 
 	title = (state.app_config.title or "").strip()
-	stock = {"Vendor Risk Command Center", "Vendor Risk Dashboard"}
 	prompt = (state.prompt or "").strip()
 	product = str((state.design_brief or {}).get("product_name") or "").strip()
-	lower = f"{prompt} {product}".lower()
 	dirty = False
 
-	if title in stock:
-		# Real vendor projects keep the title
-		if ("vendor" in lower or "diligence" in lower) and not any(
-			x in lower for x in ("bjp", "bharatiya", "bhartiya", "replace vendor", "ignore")
-		):
-			return state
-		if product and product not in stock and len(product) > 3:
-			state.app_config.title = product[:80]
-		else:
-			fixed = infer_app_config(prompt or product or "Report", None)
-			if fixed.title and fixed.title not in stock:
-				state.app_config.title = fixed.title[:80]
-			elif prompt:
-				state.app_config.title = title_from_prompt(prompt)[:80]
+	# Forever ban: stock Vendor Risk identity on non-vendor prompts
+	prompt_is_vendor = bool(
+		re.search(r"\bvendor\b", prompt.lower())
+		and re.search(r"\b(risk|diligence|third[- ]party)\b", prompt.lower())
+	)
+	if (is_stock_vendor_name(title) or is_stock_vendor_name(product)) and not prompt_is_vendor:
+		fixed = title_from_prompt(prompt) if prompt else "Untitled"
+		state.app_config.title = fixed[:80]
+		if state.design_brief is not None:
+			state.design_brief["product_name"] = fixed
+			if is_stock_vendor_name(str(state.design_brief.get("one_liner") or "")):
+				state.design_brief["one_liner"] = f"{fixed} — research brief"
+		dirty = True
+		title = state.app_config.title
+		product = fixed
+
+	stock = {"Vendor Risk Command Center", "Vendor Risk Dashboard", "Vendor Risk"}
+	if title in stock and prompt_is_vendor:
+		# Even for real vendor asks, prefer prompt-derived title over the stock brand
+		state.app_config.title = title_from_prompt(prompt)[:80]
 		dirty = True
 	elif prompt and title.lower().startswith(("write ", "create ", "make ", "build ", "generate ")):
 		state.app_config.title = title_from_prompt(prompt)[:80]
 		dirty = True
+	elif not title or title in {"Data App", "Data Explorer", "Custom App", "Untitled"}:
+		if product and not is_stock_vendor_name(product):
+			state.app_config.title = product[:80]
+			dirty = True
+		elif prompt:
+			state.app_config.title = title_from_prompt(prompt)[:80]
+			dirty = True
 
 	if dirty:
 		if state.design_brief is not None:
 			state.design_brief["product_name"] = state.app_config.title
 			liner = str(state.design_brief.get("one_liner") or "")
-			if liner.lower().startswith(("write ", "create ", "make ", "build ")) or liner == "Built with Simulacra":
+			if (
+				liner.lower().startswith(("write ", "create ", "make ", "build "))
+				or liner in ("Built with Simulacra", "Monitor vendor findings and risk scores")
+				or is_stock_vendor_name(liner)
+			):
 				state.design_brief["one_liner"] = f"{state.app_config.title} — research brief"
-			if state.app_config.subtitle in ("", "Built with Simulacra", "Built from your sources"):
+			if state.app_config.subtitle in (
+				"",
+				"Built with Simulacra",
+				"Built from your sources",
+				"Third-party diligence · live risk posture",
+				"Monitor vendor findings and risk scores",
+			):
 				state.app_config.subtitle = str(state.design_brief.get("one_liner") or "")[:120]
 		save_state(state)
 		return load_state(state.id)

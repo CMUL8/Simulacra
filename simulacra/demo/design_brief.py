@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_BRIEF: dict[str, Any] = {
-	"product_name": "Vendor Risk Command Center",
-	"one_liner": "Monitor vendor findings and risk scores",
-	"audience": "internal risk / ops",
+	"product_name": "Untitled",
+	"one_liner": "Chat with the agent — Build when ready",
+	"audience": "internal stakeholders",
 	"aesthetic": {
 		"direction": "dense-ops",
 		"density": "compact",
@@ -33,7 +33,7 @@ DEFAULT_BRIEF: dict[str, Any] = {
 	},
 	"information_architecture": {
 		"primary_view": "overview",
-		"must_have": ["KPI strip", "findings table", "vendor leaderboard"],
+		"must_have": ["KPI strip", "primary table", "clear hierarchy"],
 		"must_not": ["emoji", "purple glow", "generic Inter-on-white", "rounded pills"],
 	},
 	"copy_tone": "precise",
@@ -85,15 +85,32 @@ def default_brief(*, prompt: str = "", artifact_kind: str | None = None) -> dict
 	from .formats import brief_defaults_for, normalize_kind
 
 	brief = copy.deepcopy(DEFAULT_BRIEF)
-	if prompt:
-		title = title_from_prompt(prompt)
-		if len(title) > 3:
-			brief["product_name"] = title
-			brief["one_liner"] = one_liner_from_prompt(prompt, title)
+	title = title_from_prompt(prompt) if prompt else "Untitled"
+	if len(title) > 3:
+		brief["product_name"] = title
+		brief["one_liner"] = one_liner_from_prompt(prompt, title) if prompt else brief["one_liner"]
+	# Never leave the stock Vendor Risk identity on a new brief
+	if is_stock_vendor_name(brief.get("product_name")):
+		brief["product_name"] = title if title and title != "Untitled" else "Untitled"
+		brief["one_liner"] = one_liner_from_prompt(prompt, brief["product_name"]) if prompt else "Chat with the agent — Build when ready"
 	kind = normalize_kind(artifact_kind) if artifact_kind else None
 	if kind:
 		brief = _deep_merge(brief, brief_defaults_for(kind))
 	return brief
+
+
+STOCK_VENDOR_NAMES = frozenset(
+	{
+		"vendor risk command center",
+		"vendor risk dashboard",
+		"vendor risk",
+		"monitor vendor findings and risk scores",
+	}
+)
+
+
+def is_stock_vendor_name(value: str | None) -> bool:
+	return (value or "").strip().lower() in STOCK_VENDOR_NAMES
 
 
 _TITLE_PREFIX = re.compile(

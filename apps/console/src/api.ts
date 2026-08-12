@@ -630,9 +630,9 @@ export function subscribeEvents(projectId: string, onEvent: (evt: AgentEvent) =>
 }
 
 export const DEFAULT_DESIGN_BRIEF: DesignBrief = {
-  product_name: "Vendor Risk Command Center",
-  one_liner: "Monitor vendor findings and risk scores",
-  audience: "internal risk / ops",
+  product_name: "Untitled",
+  one_liner: "Chat with the agent — Build when ready",
+  audience: "internal stakeholders",
   aesthetic: {
     direction: "dense-ops",
     density: "compact",
@@ -651,7 +651,7 @@ export const DEFAULT_DESIGN_BRIEF: DesignBrief = {
   },
   information_architecture: {
     primary_view: "overview",
-    must_have: ["KPI strip", "findings table", "vendor leaderboard"],
+    must_have: ["KPI strip", "primary table", "clear hierarchy"],
     must_not: ["emoji", "purple glow", "generic Inter-on-white"],
   },
   copy_tone: "precise",

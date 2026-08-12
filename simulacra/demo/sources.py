@@ -339,19 +339,21 @@ def profile_rows(rows: list[dict[str, Any]]) -> DataProfile:
 	scores = [float(r["risk_score"]) for r in rows if isinstance(r.get("risk_score"), (int, float))]
 
 	notes: list[str] = []
-	must = ["KPI strip", "findings table"]
+	must = ["KPI strip", "primary table"]
 	primary = "overview"
 
 	if high / max(len(rows), 1) >= 0.25:
 		notes.append(f"High-risk density is elevated ({high}/{len(rows)}) — lead with severity triage.")
 		must.insert(0, "High-risk triage")
 		primary = "findings"
+	# Only suggest a vendor leaderboard when the DATA actually has multiple vendors —
+	# never because the product default is "Vendor Risk".
 	if len(vendors) >= 5:
-		notes.append(f"{len(vendors)} vendors — leaderboard/scorecard is first-class.")
-		must.append("vendor leaderboard")
+		notes.append(f"{len(vendors)} entities in vendor field — leaderboard/scorecard is useful.")
+		must.append("entity leaderboard")
 	elif len(vendors) == 1:
 		notes.append(
-			f"Single vendor ({vendors[0]}) — deepen theme/evidence, de-emphasize multi-vendor chrome."
+			f"Single entity ({vendors[0]}) — deepen theme/evidence, de-emphasize multi-entity chrome."
 		)
 		must.append("theme breakdown")
 	if regions:

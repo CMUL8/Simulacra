@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 
+from .design_brief import is_stock_vendor_name, title_from_prompt
 from .runs import AppConfig, ChatMessage, ProjectState
 
 
 def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfig:
+	"""Derive app title/layout from the user prompt — never invent Vendor Risk branding."""
 	cfg = existing or AppConfig()
 	lower = prompt.lower()
 	stock_titles = {
@@ -13,42 +15,34 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 		"Data Explorer",
 		"Data App",
 		"Custom App",
+		"Untitled",
 		"Vendor Risk Command Center",
 		"Vendor Risk Dashboard",
+		"Vendor Risk",
 	}
-	placeholder = existing is None or (existing.title or "").strip() in stock_titles
-
-	# "replace vendor sample with BJP" is NOT a vendor-risk product — don't rename to VRCC
-	vendor_topic = (
-		("vendor" in lower or "diligence" in lower)
-		and "bjp" not in lower
-		and "bharatiya" not in lower
-		and "bhartiya" not in lower
-		and not re.search(r"\breplace\b.*\bvendor\b", lower)
-		and not re.search(r"\bignore\b.*\b(vendor|sample|data)\b", lower)
-	)
+	cur = (existing.title if existing else "") or ""
+	placeholder = existing is None or cur.strip() in stock_titles or is_stock_vendor_name(cur)
 
 	if any(w in lower for w in ("game", "quiz", "flashcard", "learn", "learning", "training", "tutorial")):
 		if placeholder:
 			cfg.title = "Learning Game"
 		cfg.subtitle = "Practice with your source material"
-	elif vendor_topic and ("risk" in lower or "vendor" in lower or "diligence" in lower):
-		if placeholder:
-			cfg.title = "Vendor Risk Command Center"
-			cfg.subtitle = "Third-party diligence · live risk posture"
 	elif "sales" in lower or "revenue" in lower:
 		if placeholder:
-			cfg.title = "Sales Analytics"
-		cfg.subtitle = "Internal revenue view"
-	elif "analytics" in lower or "dashboard" in lower or "explore" in lower:
-		if placeholder:
-			cfg.title = "Analytics Explorer"
-		cfg.subtitle = "Explore your sources"
+			cfg.title = title_from_prompt(prompt) or "Sales Analytics"
+		if not cfg.subtitle or cfg.subtitle in ("Built from your sources", "Data Explorer", "Built with Simulacra"):
+			cfg.subtitle = "Internal revenue view"
 	elif placeholder:
-		clause = prompt.strip().split("\n")[0].strip()[:60]
-		cfg.title = clause[:1].upper() + clause[1:] if clause else "Custom App"
-		# Honest until Build — never imply the artifact already exists
-		if not cfg.subtitle or cfg.subtitle in ("Built from your sources", "Data Explorer"):
+		# Topic comes from the prompt — including real vendor-risk asks.
+		# Never hardcode "Vendor Risk Command Center" as a product name.
+		cfg.title = title_from_prompt(prompt) or "Custom App"
+		if not cfg.subtitle or cfg.subtitle in (
+			"Built from your sources",
+			"Data Explorer",
+			"Built with Simulacra",
+			"Monitor vendor findings and risk scores",
+			"Third-party diligence · live risk posture",
+		):
 			cfg.subtitle = "Chat with the agent — Build when ready"
 
 	if "region" in lower or "country" in lower:
@@ -73,6 +67,10 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 	m = re.search(r"(?:call it|rename to|title)\s+[\"']?([^\"'\n]+)[\"']?", prompt, re.I)
 	if m:
 		cfg.title = m.group(1).strip()[:80]
+
+	# Absolute ban: stock Vendor Risk name never sticks unless the user typed it verbatim
+	if is_stock_vendor_name(cfg.title) and "vendor risk command center" not in lower:
+		cfg.title = title_from_prompt(prompt) or "Custom App"
 
 	return cfg
 

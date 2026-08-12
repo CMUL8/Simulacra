@@ -171,6 +171,8 @@ def _envelope_schema_block() -> str:
 		"- Prefer section labels as a plain line like \"In the preview\" then bullets.\n"
 		"- Summarize what you learned in prose; Simulacra shows sources in the data room.\n"
 		"- Never invent vendor/risk UI sections unless the user asked for vendor risk.\n"
+		"- Never brand the product as 'Vendor Risk Command Center' unless the user typed that name.\n"
+		"- Title and copy must come from the user's topic — not from the scaffold demo.\n"
 	)
 
 

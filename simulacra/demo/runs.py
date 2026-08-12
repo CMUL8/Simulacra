@@ -218,8 +218,8 @@ def chat_summaries(state: ProjectState) -> list[dict[str, Any]]:
 
 @dataclass
 class AppConfig:
-	title: str = "Data App"
-	subtitle: str = "Built with Simulacra"
+	title: str = "Untitled"
+	subtitle: str = "Chat with the agent — Build when ready"
 	search_enabled: bool = True
 	sort_column: str = "risk_score"
 	sort_direction: str = "desc"
@@ -227,13 +227,11 @@ class AppConfig:
 	highlight_column: str = "risk_level"
 	columns: list[str] = field(
 		default_factory=lambda: [
-			"vendor",
 			"theme",
 			"risk_level",
 			"risk_score",
-			"region",
-			"owner",
 			"evidence",
+			"source_file",
 		]
 	)
 
@@ -412,6 +410,13 @@ def create_project(
 		from .design_brief import merge_brief
 
 		brief = merge_brief(brief, brief_defaults_for(kind))
+	from .design_brief import is_stock_vendor_name, title_from_prompt
+
+	product = str(brief.get("product_name") or "").strip()
+	if not product or is_stock_vendor_name(product):
+		product = title_from_prompt(prompt)
+		brief["product_name"] = product
+		brief["one_liner"] = str(brief.get("one_liner") or f"{product} — research brief")
 	state = ProjectState(
 		id=project_id,
 		prompt=prompt,
@@ -421,6 +426,10 @@ def create_project(
 		status="planning",
 		artifact_kind=kind,
 		design_brief=brief,
+		app_config=AppConfig(
+			title=product[:80],
+			subtitle=str(brief.get("one_liner") or "Chat with the agent — Build when ready")[:120],
+		),
 	)
 	first = ChatMessage(role="user", content=prompt, source="system")
 	cid = _new_chat_id()

@@ -7,26 +7,22 @@ import { SourcesPanel } from "./SourcesPanel";
 
 /** Prompt chips — three shown; set rotates each UTC day. */
 const IDEA_BANK = [
-  "A vendor risk dashboard from my diligence pack",
   "A findings table ranked by severity",
   "An analytics app my team can explore",
-  "A diligence room explorer with search and filters",
-  "A risk score board for our top vendors",
-  "An ops console that surfaces critical findings first",
+  "A shareable research report my partners can open",
   "A theme breakdown of issues across the data room",
-  "A shareable risk report my partners can open",
-  "A vendor scorecard with evidence links",
-  "A compliance findings browser for the audit pack",
-  "A heatmap of risk by region and owner",
+  "A board deck from our latest research pack",
+  "A one-page briefing for tomorrow's review",
   "A triage queue ordered by severity and score",
-  "An internal briefing app for tomorrow's risk review",
+  "An internal briefing app for the weekly review",
   "A source inventory of what we ingested and why",
-  "A comparison view of vendors by max risk score",
-  "A compact command center for diligence follow-ups",
-  "A findings explorer my analysts can query in chat",
+  "A heatmap of risk by region and owner",
+  "A compliance findings browser for the audit pack",
+  "A diligence room explorer with search and filters",
   "A portfolio risk strip with drill-down to evidence",
-  "A board deck on vendor risk from our diligence pack",
-  "A one-page risk briefing for tomorrow's review",
+  "A comparison view ranked by max risk score",
+  "A compact command center for follow-ups",
+  "A findings explorer my analysts can query in chat",
 ];
 
 const FORMAT_OPTIONS: { kind: ArtifactKind; label: string; hint: string }[] = [
