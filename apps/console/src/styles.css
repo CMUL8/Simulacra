@@ -22,8 +22,8 @@
   --fail: #e85d5d;
   --warn: #f0c040;
   --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
-  --font-ui: "Instrument Sans", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-ui: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
   /* Rows 6 · controls 8 · composer 12 · chips pill */
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -50,9 +50,13 @@ html, body, #root { height: 100%; margin: 0; }
 body {
   font-family: var(--font-ui);
   font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.014em;
   color: var(--text);
   background: var(--bg-0);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern" 1, "liga" 1;
 }
 
 .shell { display: flex; height: 100vh; overflow: hidden; }
@@ -527,17 +531,17 @@ body {
   -webkit-backdrop-filter: blur(18px) saturate(1.15);
 }
 .landing-nav-brand {
-  font-family: var(--font-display);
-  font-size: 20px;
-  font-weight: 400;
-  font-style: italic;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  font-style: normal;
   color: #f4f0e8;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
 }
-.landing-nav-brand em { font-style: italic; }
+.landing-nav-brand em { font-style: normal; font-weight: 600; }
 .landing-nav-links {
   display: flex;
   align-items: center;
@@ -764,12 +768,13 @@ body {
 .landing-sub {
   margin: 0 auto 32px;
   max-width: 460px;
-  color: rgba(244, 240, 232, 0.55);
-  font-family: var(--font-display);
-  font-style: italic;
-  font-size: clamp(18px, 2.2vw, 22px);
-  line-height: 1.4;
+  color: rgba(244, 240, 232, 0.52);
+  font-family: var(--font-ui);
+  font-style: normal;
+  font-size: clamp(15px, 1.7vw, 16.5px);
+  line-height: 1.5;
   font-weight: 400;
+  letter-spacing: -0.018em;
   text-shadow: none;
 }
 .landing-error {
@@ -2161,14 +2166,14 @@ body {
   letter-spacing: -0.01em;
 }
 .cursor-prose .md-section {
-  margin: 1em 0 0.4em;
-  font-family: var(--font-display);
-  font-size: 1.22em;
-  font-weight: 400;
-  letter-spacing: -0.03em;
+  margin: 0.95em 0 0.4em;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   text-transform: none;
-  color: #f4f0e8;
-  line-height: 1.25;
+  color: var(--text-bright);
+  line-height: 1.35;
 }
 .cursor-prose .md-section:first-child {
   margin-top: 0.15em;
@@ -2809,8 +2814,11 @@ a.md-link:hover {
 }
 .policy-stat-num {
   display: block;
-  font-family: var(--font-display);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
   color: var(--text-bright);
   line-height: 1;
   margin-bottom: 6px;
@@ -3749,9 +3757,10 @@ a.md-link:hover {
 }
 .login-card h1 {
   margin: 0 0 4px;
-  font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 400;
+  font-family: var(--font-ui);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
 }
 .login-sub { color: var(--text-dim); font-size: 13px; margin: 0 0 18px; }
 .login-tabs {
@@ -4043,10 +4052,10 @@ a.md-link:hover {
 .acct-close:hover { color: var(--text-bright); background: rgba(255, 255, 255, 0.08); }
 .acct-title {
   margin: 0 0 8px;
-  font-family: var(--font-display);
-  font-size: 36px;
-  font-weight: 400;
-  letter-spacing: -0.02em;
+  font-family: var(--font-ui);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   color: var(--text-bright);
 }
 .acct-sub {
@@ -4204,10 +4213,11 @@ a.md-link:hover {
 }
 .profile-rail-title {
   margin: 4px 0 0;
-  font-family: var(--font-display);
-  font-size: 34px;
-  font-weight: 400;
-  line-height: 1;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 .profile-nav {
   display: flex;
@@ -4265,10 +4275,10 @@ a.md-link:hover {
 }
 .profile-pane-title {
   margin: 0 0 8px;
-  font-family: var(--font-display);
-  font-size: 40px;
-  font-weight: 400;
-  letter-spacing: -0.02em;
+  font-family: var(--font-ui);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
 }
 .profile-pane-sub {
   margin: 0 0 24px;

@@ -235,7 +235,7 @@ export function Landing({
       <div className="landing-atmosphere" aria-hidden="true" />
       <header className="landing-nav">
         <div className="landing-nav-pill">
-          <span className="landing-nav-brand">Simu<em>lacra</em></span>
+          <span className="landing-nav-brand">Simulacra</span>
 
           <nav className="landing-nav-links" aria-label="Primary">
             {authed && recent.length > 0 && (
