@@ -232,9 +232,10 @@ export function Landing({
 
   return (
     <div className="landing" ref={landingRef}>
+      <div className="landing-atmosphere" aria-hidden="true" />
       <header className="landing-nav">
         <div className="landing-nav-pill">
-          <span className="landing-nav-brand">Simulacra</span>
+          <span className="landing-nav-brand">Simu<em>lacra</em></span>
 
           <nav className="landing-nav-links" aria-label="Primary">
             {authed && recent.length > 0 && (
@@ -258,10 +259,9 @@ export function Landing({
       </header>
 
       <div className="landing-content" id="start">
-        <h1 className="brand-mark">Simulacra</h1>
+        <h1 className="brand-mark">Simu<em>lacra</em></h1>
         <p className="landing-sub">
-          Describe what you need. Pick a format — the agent opens in chat to steer sources
-          and scope, then you Build, refine, and Ship.
+          Describe the brief. The agent builds it — then you refine and ship.
         </p>
 
         {error && (
