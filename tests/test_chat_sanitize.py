@@ -55,6 +55,18 @@ def test_rewrites_hit_build_cta() -> None:
 	assert "Start over" in sanitize_agent_reply("Try **Rebuild from draft**.")
 	assert "Build app" not in sanitize_agent_reply("retry **Build app**")
 	assert "Start over" in sanitize_agent_reply("retry **Build app**")
+	click = sanitize_agent_reply("One click on Build and you'll see it. Ready when you are.")
+	assert "click on Build" not in click
+	assert "Confirm below" in click
+	from simulacra.demo.chat_sanitize import reply_asks_to_build as asks
+	assert asks("Ready when you are.")
+	assert asks("I'll scaffold once you give the go-ahead.")
+	assert not asks("Want me to go ahead with that research?")
+	assert "bjp_research.json" not in sanitize_agent_reply("All saved to bjp_research.json.")
+	assert "high risk" not in sanitize_agent_reply("Sources: 39 rows · 16 high risk · 22 vendors")
+	assert "craft fallback" not in sanitize_agent_reply(
+		"Built. Layout was personalized from your Style brief (craft fallback — agent file edits incomplete)."
+	)
 	done = sanitize_agent_reply(
 		"Built **BJP History Report**. Build complete — open **Preview** to review."
 	)

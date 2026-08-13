@@ -108,13 +108,23 @@ function projectCardTitle(p: Project): string {
   return title || p.goal || "Untitled";
 }
 
+const STOCK_SUBTITLES = new Set([
+  "Built from your sources",
+  "Data Explorer",
+  "From your sources",
+  "Chat with the agent — Build when ready",
+  "Built with Simulacra",
+  "Third-party diligence · live risk posture",
+  "Monitor vendor findings and risk scores",
+]);
+
 function projectCardSummary(p: Project): string {
   const sub = (p.app_config?.subtitle || "").trim();
-  if (sub && !["Built from your sources", "Data Explorer", "From your sources", "Chat with the agent — Build when ready"].includes(sub)) {
+  if (sub && !STOCK_SUBTITLES.has(sub)) {
     return sub.slice(0, 96);
   }
   const one = (p.design_brief?.one_liner || "").trim();
-  if (one && one !== sub) return one.slice(0, 96);
+  if (one && one !== sub && !STOCK_SUBTITLES.has(one)) return one.slice(0, 96);
   const prompt = (p.prompt || "").trim();
   const title = projectCardTitle(p);
   if (prompt && prompt !== title) {
@@ -253,7 +263,7 @@ export function Landing({
             className="landing-nav-cta"
             onClick={() => (authed ? promptRef.current?.focus() : onLogin?.())}
           >
-            {authed ? "Start building" : "Get started"}
+            {authed ? "Start" : "Get started"}
           </button>
         </div>
       </header>
@@ -261,7 +271,7 @@ export function Landing({
       <div className="landing-content" id="start">
         <h1 className="brand-mark">Simu<em>lacra</em></h1>
         <p className="landing-sub">
-          Describe the brief. The agent builds it — then you refine and ship.
+          Describe the brief. Chat to shape it, then confirm, refine, and ship.
         </p>
 
         {error && (
@@ -325,7 +335,7 @@ export function Landing({
               className="send-orb"
               disabled={!canBuild}
               onClick={onBuild}
-              aria-label="Start planning"
+              aria-label="Start"
             >
               <ArrowUp size={18} />
             </button>

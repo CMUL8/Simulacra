@@ -44,7 +44,18 @@ _WIDGET_BULLET = re.compile(
 	r"dashboard|timeline|scorecard|strip|map|filters?|vendor)\b"
 )
 _PREVIEW_HOLDS = "The preview holds the layout — charts, tables, and empty states live there."
-_HIT_BUILD = re.compile(r"(?i)\b(?:hit|press|click|tap)\s+\*{0,2}build\*{0,2}")
+_HIT_BUILD = re.compile(
+	r"(?i)(?:one\s+click\s+on|click\s+on|(?:hit|press|click|tap)\s+)\s*\*{0,2}build\*{0,2}"
+)
+_ASKS_BUILD = re.compile(
+	r"(?i)("
+	r"(?:one\s+click\s+on|click\s+on|(?:hit|press|click|tap)\s+)\s*\*{0,2}build\*{0,2}"
+	r"|confirm below"
+	r"|give the go-ahead"
+	r"|ready when you are"
+	r"|whenever you say go"
+	r")"
+)
 _REBUILD_DRAFT = re.compile(r"(?i)\*{0,2}Rebuild from draft\*{0,2}")
 _RETRY_BUILD = re.compile(
 	r"(?i)retry\s+\*{0,2}Build(?:\s+(?:app|report|slides|one-pager))?\*{0,2}"
@@ -57,6 +68,23 @@ _BUILD_COMPLETE_PREVIEW = re.compile(
 _READY_CONFIRM = re.compile(
 	r"(?i)when you['’]re ready,\s*confirm below\.?"
 )
+_VENDOR_KPI_LINE = re.compile(
+	r"(?i)^\s*(?:\*{0,2}Sources?:\*{0,2}\s*)?\d+\s+rows(?:\s*[·•,]\s*\d+\s+high(?:\s+risk)?)?(?:\s*[·•,]\s*\d+\s+vendors?)?\s*$"
+)
+_FILENAME_ONLY_LINE = re.compile(
+	r"(?i)^\s*(?:`?[\w.-]+\.(?:json|csv|md|tsv|txt)`?(?:\s*[,·•]\s*)?){2,}\s*$"
+)
+_SAVED_TO_FILE = re.compile(
+	r"(?i)^\s*all saved to `?[\w./-]+\.(?:json|md|csv)`?\.?\s*$"
+)
+_CRAFT_FALLBACK = re.compile(
+	r"(?i)\s*\(craft fallback[^)]*\)|\bagent file edits incomplete\.?"
+)
+_STYLE_BRIEF = re.compile(
+	r"(?i)layout was personalized from your style brief[^.]*\."
+)
+_HITTING_ITERATE = re.compile(r"(?i)\bhitting iterate\b")
+_SERPER_ASIDE = re.compile(r"(?i)\s*\(since serper web search isn't configured\)")
 _WHAT_CHANGED_HEAD = re.compile(r"(?i)^\s{0,3}(\*{0,2}|#{1,3}\s*)what changed\b")
 _INVENTORY_BULLET = re.compile(
 	r"(?i)^\s*[-*]\s*(title\s*&\s*(config|framing)|layout\s*(/\s*ui|&\s*structure)|"
@@ -122,8 +150,8 @@ def _table_to_bullets(block_lines: list[str]) -> list[str]:
 
 
 def reply_asks_to_build(text: str) -> bool:
-	"""True when the agent told the user to press a Build control."""
-	return bool(text and _HIT_BUILD.search(text))
+	"""True when the agent is waiting for the user to confirm scaffold."""
+	return bool(text and _ASKS_BUILD.search(text))
 
 
 def _rewrite_control_ctas(text: str) -> str:
@@ -135,6 +163,10 @@ def _rewrite_control_ctas(text: str) -> str:
 	text = _APPROVE_AGAIN.sub("You can refine in chat, or Start over.", text)
 	text = _BUILD_COMPLETE_PREVIEW.sub("It's in Preview.", text)
 	text = _READY_CONFIRM.sub("Confirm below when you’re ready.", text)
+	text = _HITTING_ITERATE.sub("Updating", text)
+	text = _SERPER_ASIDE.sub("", text)
+	text = _CRAFT_FALLBACK.sub("", text)
+	text = _STYLE_BRIEF.sub("Preview is ready.", text)
 	return text
 
 
@@ -159,6 +191,9 @@ def sanitize_agent_reply(text: str) -> str:
 			continue
 		if _ADDED_SOURCES_LINE.match(line) or _SOURCES_IN_ROOM.match(line):
 			# Quiet inventory — never echo filename dumps / filler into chat
+			i += 1
+			continue
+		if _VENDOR_KPI_LINE.match(line) or _FILENAME_ONLY_LINE.match(line) or _SAVED_TO_FILE.match(line):
 			i += 1
 			continue
 		if _INTERNAL_SOURCE_NAMES.search(line) and re.search(

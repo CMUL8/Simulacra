@@ -87,19 +87,34 @@ function scrubCodeFilenames(text: string): string {
   return out;
 }
 
-function rewritePhantomControls(text: string): string {
-  return text
-    .replace(/\b(?:hit|press|click|tap)\s+\*{0,2}build\*{0,2}/gi, "Confirm below")
+function rewritePhantomControls(text: string, mode: "plan" | "workspace" = "workspace"): string {
+  const buildCta = mode === "plan" ? "Confirm below" : "Open Preview";
+  let out = text
+    .replace(/(?:one\s+click\s+on|click\s+on|(?:hit|press|click|tap)\s+)\s*\*{0,2}build\*{0,2}/gi, buildCta)
     .replace(/\*{0,2}Rebuild from draft\*{0,2}/gi, "**Start over**")
     .replace(/\bretry\s+\*{0,2}Build(?:\s+(?:app|report|slides|one-pager))?\*{0,2}/gi, "use **Start over**")
     .replace(/_\(Build first — then I can apply edits\.\)_/gi, "Confirm below first — then I can apply edits.")
     .replace(/You can refine or Approve again\.?/gi, "You can refine in chat, or Start over.")
     .replace(/\bBuild complete\s*[—–-]\s*open\s+\*{0,2}Preview\*{0,2}\s+to review\.?/gi, "It's in Preview.")
-    .replace(/when you['’]re ready,\s*Confirm below/gi, "Confirm below when you’re ready");
+    .replace(/when you['’]re ready,\s*Confirm below/gi, "Confirm below when you’re ready")
+    .replace(/\bHitting iterate\b/gi, "Updating")
+    .replace(/\s*\(since Serper web search isn't configured\)/gi, "")
+    .replace(/\s*\(craft fallback[^)]*\)/gi, "")
+    .replace(/\bagent file edits incomplete\.?/gi, "")
+    .replace(/Layout was personalized from your Style brief[^.]*\./gi, "Preview is ready.")
+    .replace(/^[^\n]*Sources?:\s*\d+\s+rows[^\n]*$/gim, "")
+    .replace(/^(?:`?[\w.-]+\.(?:json|csv|md)`?(?:\s*[,·•]\s*)?){2,}\s*$/gim, "")
+    .replace(/^\s*All saved to `?[\w./-]+\.(?:json|md|csv)`?\.?\s*$/gim, "");
+  if (mode === "workspace") {
+    out = out.replace(/\bConfirm below\b/gi, "Open Preview");
+  }
+  return out;
 }
 
 function asksToBuild(text: string): boolean {
-  return /(?:hit|press|click|tap)\s+\*{0,2}build\*{0,2}|confirm below/i.test(text);
+  return /(?:one\s+click\s+on|click\s+on|(?:hit|press|click|tap)\s+)\s*\*{0,2}build\*{0,2}|confirm below|give the go-ahead|ready when you are|whenever you say go/i.test(
+    text,
+  );
 }
 
 function truncateMiddle(s: string, max = 42): string {
@@ -225,9 +240,20 @@ function isShipMessage(m: ChatMessage): boolean {
 }
 
 /** Document-style markdown — no raw pipes, hash headings, or leftover dashes. */
-function MarkdownBody({ text, onOpenPreview }: { text: string; onOpenPreview?: () => void }) {
+function MarkdownBody({
+  text,
+  onOpenPreview,
+  ctaMode = "workspace",
+}: {
+  text: string;
+  onOpenPreview?: () => void;
+  ctaMode?: "plan" | "workspace";
+}) {
   const cleaned = tightenLooseLists(
-    rewritePhantomControls(scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n"))),
+    rewritePhantomControls(
+      scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n")),
+      ctaMode,
+    ),
   ).trim();
   const blocks = cleaned.split(/\n{2,}/);
   const nodes: ReactNode[] = [];
@@ -599,9 +625,6 @@ function PlanSection({
   const preview = p.plan_preview;
   const hasPreview = Boolean(snapshot.preview_url);
   const rows = preview?.row_count ?? p.row_count ?? 0;
-  const high = preview?.high_risk ?? 0;
-  const vendors = preview?.vendors?.length ?? 0;
-  const files = (preview?.files ?? []).slice(0, 5);
 
   return (
     <div className={`plan-section ${compact ? "compact" : ""}`}>
@@ -611,13 +634,11 @@ function PlanSection({
           {p.app_config?.subtitle && <p className="plan-section-sub">{p.app_config.subtitle}</p>}
         </div>
       )}
-      <div className="plan-section-meta">
-        <span>
-          {rows} rows
-          {high && vendors ? ` · ${high} high · ${vendors} vendors` : ""}
-        </span>
-        {files.length > 0 && <span className="plan-section-files">{files.map((f) => f.name).join(" · ")}</span>}
-      </div>
+      {rows > 0 ? (
+        <div className="plan-section-meta">
+          <span>{rows} source row{rows === 1 ? "" : "s"}</span>
+        </div>
+      ) : null}
       <div className="plan-section-actions">
         <button type="button" className="plan-preview-btn" disabled={!hasPreview} onClick={onOpenPreview}>
           <Globe size={14} />
@@ -811,7 +832,11 @@ function MessageTurn({
         <Fragment>
           <div className="cursor-answer">
             <AnswerBlock>
-              <MarkdownBody text={message.content} onOpenPreview={onOpenPreview} />
+              <MarkdownBody
+                text={message.content}
+                onOpenPreview={onOpenPreview}
+                ctaMode={snapshot.project.phase === "plan" ? "plan" : "workspace"}
+              />
             </AnswerBlock>
           </div>
           <PlanSection snapshot={snapshot} onOpenPreview={onOpenPreview} compact />
@@ -825,7 +850,11 @@ function MessageTurn({
       ) : (
         <div className="cursor-answer">
           <AnswerBlock>
-            <MarkdownBody text={message.content} onOpenPreview={onOpenPreview} />
+            <MarkdownBody
+              text={message.content}
+              onOpenPreview={onOpenPreview}
+              ctaMode={snapshot.project.phase === "plan" ? "plan" : "workspace"}
+            />
           </AnswerBlock>
           {actions}
         </div>

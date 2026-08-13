@@ -158,7 +158,7 @@ def _prepare_data_and_gates(state: ProjectState) -> tuple[ProjectState, list[dic
 	if not rows:
 		state.status = "failed"
 		state.phase = "plan"
-		msg = "No rows extracted from the data room — attach extractable sources (.md/.csv/.json) and re-ingest."
+		msg = "Nothing extractable in sources yet. Add a .md, .csv, or .json, or ask the agent to gather material."
 		if report.skipped:
 			msg += f" Skipped: {', '.join(report.skipped[:5])}."
 		if report.errors:
@@ -338,17 +338,6 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 
 	spec = get_format(state.artifact_kind)
 	state = _scaffold_and_preview(state, rows, run_prime=True, leave_in_plan=False)
-	preview = state.plan_preview or {}
-	files = list(preview.get("files") or [])
-	vendors = list(preview.get("vendors") or [])
-	high = int(preview.get("high_risk") or 0)
-	file_names = ", ".join(f["name"] for f in files[:5]) if files else "your data room"
-	facts = f"{len(rows)} rows"
-	if high:
-		facts += f" · {high} high"
-	if vendors:
-		facts += f" · {len(vendors)} vendors"
-
 	source = state.prime.get("source") or "prime"
 	changed = [str(x) for x in (state.prime.get("changed_files") or []) if x]
 	if not changed and source in ("prime", "craft"):
@@ -356,35 +345,23 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	req_note = _honesty_change_note(
 		state.prompt, changed, layout=source in ("prime", "craft")
 	)
+	title = state.app_config.title or spec.label
 	if source in ("prime", "craft"):
 		body = (
-			f"## {spec.label}: {state.app_config.title}\n\n"
-			f"{state.app_config.subtitle}\n\n"
-			f"**Sources:** {facts}\n"
-			f"{file_names}\n\n"
+			f"**{title}** is ready in Preview.\n\n"
 			f"{req_note}"
-			"Preview is ready — open it, then chat to refine. "
-			"**Ship** in Preview when you want an approved share link.\n\n"
-			"Need a clean restart? Use **Start over**."
+			"Chat to refine, or **Ship** in Preview for a share link."
 		)
 		if source == "craft":
 			body = (
-				f"## {spec.label}: {state.app_config.title}\n\n"
-				f"{state.app_config.subtitle}\n\n"
-				f"**Sources:** {facts}\n"
-				f"{file_names}\n\n"
+				f"**{title}** is ready in Preview.\n\n"
 				f"{req_note}"
-				"Preview is ready (layout applied from your brief). "
-				"Open **Preview**, chat to refine style or content, or **Ship** when ready."
+				"Open **Preview**, chat to refine, or **Ship** when ready."
 			)
 	else:
 		body = (
-			f"## {spec.label}: {state.app_config.title}\n\n"
-			f"{state.app_config.subtitle}\n\n"
-			f"**Sources:** {facts}\n"
-			f"{file_names}\n\n"
-			f"Scaffold preview is up, but the builder did not finish customizing. "
-			f"Try **Start over**, or describe changes in chat."
+			f"**{title}** is in Preview, but the builder did not finish customizing. "
+			"Try **Start over**, or describe changes in chat."
 		)
 		source = source if source in ("error", "heuristic", "timeout") else "heuristic"
 
@@ -1016,16 +993,35 @@ def project_snapshot(project_id: str) -> dict:
 
 	# Honest subtitle — never leave a fake "Built from your sources" claim
 	sub = (state.app_config.subtitle or "").strip()
-	if sub == "Built from your sources":
+	stock_subs = {
+		"built from your sources",
+		"data explorer",
+		"from your sources",
+		"chat with the agent — build when ready",
+		"built with simulacra",
+		"third-party diligence · live risk posture",
+		"monitor vendor findings and risk scores",
+	}
+	if sub.lower() in stock_subs:
 		src = (state.prime or {}).get("source")
-		if src in ("prime", "craft"):
-			state.app_config.subtitle = ""
-		else:
+		prompt = (state.prompt or "").lower()
+		vendorish = any(w in prompt for w in ("vendor", "diligence", "tprm", "third-party", "third party"))
+		if sub.lower() in {
+			"third-party diligence · live risk posture",
+			"monitor vendor findings and risk scores",
+		} and not vendorish:
+			one = str((state.design_brief or {}).get("one_liner") or "").strip()
+			state.app_config.subtitle = one if one and one.lower() not in stock_subs else ""
+			dirty = True
+		elif sub == "Built from your sources":
+			if src in ("prime", "craft"):
+				state.app_config.subtitle = ""
+			else:
+				state.app_config.subtitle = "From your sources"
+			dirty = True
+		elif sub == "Data Explorer" and state.phase == "plan":
 			state.app_config.subtitle = "From your sources"
-		dirty = True
-	elif sub == "Data Explorer" and state.phase == "plan":
-		state.app_config.subtitle = "From your sources"
-		dirty = True
+			dirty = True
 
 	# Heal stuck in-progress status when no live job is running
 	# (heal_broken_preview also covers building_* — keep subtitle/job heals here)
