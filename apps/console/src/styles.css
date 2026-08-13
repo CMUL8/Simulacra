@@ -763,10 +763,12 @@ body {
 .brand-mark em { font-style: italic; font-weight: 400; }
 .landing-sub {
   margin: 0 auto 32px;
-  max-width: 440px;
-  color: rgba(244, 240, 232, 0.52);
-  font-size: clamp(15px, 1.8vw, 17px);
-  line-height: 1.5;
+  max-width: 460px;
+  color: rgba(244, 240, 232, 0.55);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: clamp(18px, 2.2vw, 22px);
+  line-height: 1.4;
   font-weight: 400;
   text-shadow: none;
 }
@@ -2130,8 +2132,8 @@ body {
   letter-spacing: -0.01em;
 }
 .cursor-prose {
-  font-size: 14.5px;
-  line-height: 1.52;
+  font-size: 15px;
+  line-height: 1.58;
   color: var(--text);
   letter-spacing: -0.011em;
   font-feature-settings: "kern" 1, "liga" 1;
@@ -2140,8 +2142,8 @@ body {
 .cursor-turn-user .cursor-prose,
 .cursor-turn-assistant .cursor-prose,
 .cursor-turn-plan .cursor-prose {
-  font-size: 14.5px;
-  line-height: 1.52;
+  font-size: 15px;
+  line-height: 1.58;
 }
 .cursor-turn-assistant .cursor-prose {
   color: var(--text-bright);
@@ -2159,16 +2161,17 @@ body {
   letter-spacing: -0.01em;
 }
 .cursor-prose .md-section {
-  margin: 0.85em 0 0.35em;
-  font-family: var(--font-ui);
-  font-size: 14.5px;
-  font-weight: 600;
-  letter-spacing: -0.011em;
+  margin: 1em 0 0.4em;
+  font-family: var(--font-display);
+  font-size: 1.22em;
+  font-weight: 400;
+  letter-spacing: -0.03em;
   text-transform: none;
-  color: var(--text-bright);
+  color: #f4f0e8;
+  line-height: 1.25;
 }
 .cursor-prose .md-section:first-child {
-  margin-top: 0.25em;
+  margin-top: 0.15em;
 }
 .cursor-prose .md-h,
 .cursor-prose .md-h1,
@@ -2179,17 +2182,19 @@ body {
   color: var(--text-bright);
   margin-bottom: 0.55em;
 }
-.cursor-prose .md-ul {
-  margin: 0 0 0.9em;
+.cursor-prose .md-ul,
+.cursor-prose .md-ol {
+  margin: 0.15em 0 1.05em;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0.55em;
+  gap: 0.62em;
 }
-.cursor-prose .md-ul li {
+.cursor-prose .md-ul li,
+.cursor-prose .md-ol li {
   position: relative;
-  padding-left: 1em;
+  padding-left: 1.45rem;
   margin: 0;
   color: var(--text);
   line-height: 1.55;
@@ -2197,12 +2202,40 @@ body {
 .cursor-prose .md-ul li::before {
   content: "";
   position: absolute;
-  left: 0;
-  top: 0.55em;
-  width: 4px;
-  height: 4px;
+  left: 0.4rem;
+  top: 0.58em;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(244, 240, 232, 0.55);
+}
+.cursor-prose .md-ol {
+  counter-reset: md-ol;
+}
+.cursor-prose .md-ol li {
+  counter-increment: md-ol;
+}
+.cursor-prose .md-ol li::before {
+  content: counter(md-ol);
+  position: absolute;
+  left: 0;
+  top: 0.08em;
+  width: 1.15rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(244, 240, 232, 0.38);
+  text-align: right;
+  letter-spacing: -0.03em;
+}
+.cursor-prose .md-li-label {
+  color: var(--text-bright);
+  font-weight: 550;
+  letter-spacing: -0.014em;
+}
+.cursor-prose .md-li-rest {
+  color: var(--text-dim);
+  font-weight: 400;
 }
 .cursor-prose .md-cards {
   list-style: none;

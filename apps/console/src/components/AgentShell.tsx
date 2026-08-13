@@ -109,6 +109,48 @@ function inlineFormat(text: string) {
   return html;
 }
 
+const LIST_ITEM_RE = /^(\s*)(?:[-*+•]|[–—]|\d+[.)])\s+(\S.*)$/;
+
+function listMatch(line: string): { indent: number; kind: "ul" | "ol"; text: string } | null {
+  const trimmed = line.trimEnd();
+  if (/^[-*_•]{3,}$/.test(trimmed.trim())) return null;
+  const m = trimmed.match(LIST_ITEM_RE);
+  if (!m) return null;
+  const indent = (m[1] || "").replace(/\t/g, "    ").length;
+  const ordered = /^\s*\d+[.)]\s+/.test(trimmed);
+  return { indent, kind: ordered ? "ol" : "ul", text: m[2] || "" };
+}
+
+/** Bold the lead-in (`KPI strip: …` / `**Title** — …`) so lists read like Cursor, not markdown. */
+function formatListItem(raw: string): string {
+  const t = raw.trim();
+  const labeled = t.match(/^(?:\*\*)?([^*:—–]{2,42})(?:\*\*)?\s*[:—–]\s+(.+)$/);
+  if (labeled && !/https?:|\/\//.test(labeled[1]!)) {
+    const label = labeled[1]!.trim();
+    const rest = labeled[2]!;
+    return `<strong class="md-li-label">${escapeHtml(label)}</strong> <span class="md-li-rest">${inlineFormat(rest)}</span>`;
+  }
+  return inlineFormat(t);
+}
+
+/** Drop blank lines that only exist between list items so loose markdown stays one list. */
+function tightenLooseLists(src: string): string {
+  const lines = src.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.trim()) {
+      const prev = out.length ? out[out.length - 1]! : "";
+      let j = i + 1;
+      while (j < lines.length && !lines[j]!.trim()) j++;
+      const next = j < lines.length ? lines[j]! : "";
+      if (listMatch(prev) && listMatch(next)) continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 /** Make Ship share paths absolute when chat still has a relative preview URL. */
 function absolutizeShareUrls(text: string): string {
   if (typeof window === "undefined") return text;
@@ -135,9 +177,11 @@ function isShipMessage(m: ChatMessage): boolean {
   return m.source === "ship" || /^##\s*Shipped\b/i.test(m.content.trim());
 }
 
-/** Document-style markdown — no raw pipes or hash headings. */
+/** Document-style markdown — no raw pipes, hash headings, or leftover dashes. */
 function MarkdownBody({ text }: { text: string }) {
-  const cleaned = scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n")).trim();
+  const cleaned = tightenLooseLists(
+    scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n")),
+  ).trim();
   const blocks = cleaned.split(/\n{2,}/);
   const nodes: ReactNode[] = [];
 
@@ -155,11 +199,116 @@ function MarkdownBody({ text }: { text: string }) {
     return stem ? stem.charAt(0).toUpperCase() + stem.slice(1) : "Source";
   };
 
+  const emitList = (kind: "ul" | "ol", items: string[], key: string) => {
+    const Tag = kind === "ol" ? "ol" : "ul";
+    return (
+      <Tag key={key} className={kind === "ol" ? "md-ol" : "md-ul"}>
+        {items.map((item, li) => (
+          <li key={li} dangerouslySetInnerHTML={{ __html: formatListItem(item) }} />
+        ))}
+      </Tag>
+    );
+  };
+
+  const emitFlow = (rawLines: string[], key: string) => {
+    const lines = rawLines.filter((l) => l.trim().length > 0);
+    const out: ReactNode[] = [];
+    let i = 0;
+    let n = 0;
+    while (i < lines.length) {
+      const hit = listMatch(lines[i]!);
+      if (hit) {
+        const items: string[] = [];
+        const kind = hit.kind;
+        while (i < lines.length) {
+          const m = listMatch(lines[i]!);
+          if (!m || m.kind !== kind) break;
+          let text = m.text;
+          i += 1;
+          while (i < lines.length) {
+            const nxt = lines[i]!;
+            if (listMatch(nxt)) break;
+            const lead = (nxt.match(/^\s*/)?.[0] || "").replace(/\t/g, "    ").length;
+            if (lead <= m.indent) break;
+            text += ` ${nxt.trim()}`;
+            i += 1;
+          }
+          items.push(text);
+        }
+        out.push(emitList(kind, items, `${key}-l-${n++}`));
+        continue;
+      }
+
+      let t = lines[i]!.trim();
+      i += 1;
+      if (!t) continue;
+      const hm = t.match(/^#{1,3}\s+(.*)$/);
+      if (hm) {
+        const title = (hm[1] || "").trim();
+        if (
+          /^(what.?s in (the )?data room|in the preview|sources?|files?|inventory|what the (app|report) can show)\b/i.test(
+            title,
+          )
+        ) {
+          continue;
+        }
+        out.push(
+          <p key={`${key}-h-${n++}`} className="md-section">
+            <span dangerouslySetInnerHTML={{ __html: inlineFormat(title) }} />
+          </p>,
+        );
+        continue;
+      }
+      if (
+        lines.length === 1 &&
+        t.length < 48 &&
+        !/[.!?]$/.test(t) &&
+        !listMatch(t)
+      ) {
+        const label = t.replace(/^#+\s*/, "").trim();
+        if (
+          /^(what.?s in (the )?data room|in the preview|sources?|files?|inventory)\b/i.test(label) ||
+          /^sources are in the data room\.?$/i.test(label)
+        ) {
+          continue;
+        }
+        out.push(
+          <p key={`${key}-sec-${n++}`} className="md-section">
+            {label}
+          </p>,
+        );
+        continue;
+      }
+      if (/^sources are in the data room\.?$/i.test(t)) continue;
+      if (/^added\b.+\bto (your |the )?(sources|data room)\b/i.test(t)) continue;
+      if (/^\|/.test(t) && t.includes("|")) {
+        const cells = parseCells(t);
+        if (/\.(json|md|csv)\b/i.test(cells[0] || "")) continue;
+        out.push(
+          <div key={`${key}-or-${n++}`} className="md-card">
+            <span className="md-card-title">{humanFile(cells[0] || "")}</span>
+            {cells[1] ? <span className="md-card-body">{cells.slice(1).join(" — ")}</span> : null}
+          </div>,
+        );
+        continue;
+      }
+      if (t.startsWith("**") && t.endsWith("**") && t.indexOf("**", 2) === t.length - 2) {
+        out.push(
+          <p key={`${key}-p-${n++}`} className="md-lead" dangerouslySetInnerHTML={{ __html: inlineFormat(t) }} />,
+        );
+      } else {
+        out.push(
+          <p key={`${key}-p-${n++}`} dangerouslySetInnerHTML={{ __html: inlineFormat(t) }} />,
+        );
+      }
+    }
+    return out;
+  };
+
   blocks.forEach((block, bi) => {
     const lines = block.split("\n").filter((l) => l.trim().length > 0);
     if (!lines.length) return;
 
-    // Any pipe block → cards or soft note (never show |)
     const pipeLines = lines.filter((l) => l.includes("|") && /^\s*\|/.test(l));
     const looksLikeTable =
       pipeLines.length >= 1 &&
@@ -174,7 +323,6 @@ function MarkdownBody({ text }: { text: string }) {
         });
       const fileish = rows.filter((c) => /\.(json|md|csv|tsv|txt)\b/i.test(c[0] || "")).length;
       if (!rows.length || fileish >= Math.max(1, Math.ceil(rows.length / 2))) {
-        // File inventory belongs in the data room — don't dump filler into chat
         return;
       }
       nodes.push(
@@ -194,91 +342,7 @@ function MarkdownBody({ text }: { text: string }) {
       return;
     }
 
-    const isList = lines.every((l) => /^[-*]\s+/.test(l.trim()) || /^\d+\.\s+/.test(l.trim()));
-    if (isList) {
-      nodes.push(
-        <ul key={`ul-${bi}`} className="md-ul">
-          {lines.map((l, li) => (
-            <li
-              key={li}
-              dangerouslySetInnerHTML={{
-                __html: inlineFormat(l.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "")),
-              }}
-            />
-          ))}
-        </ul>,
-      );
-      return;
-    }
-
-    // Bare section title — sentence case label, never forced ALL CAPS via CSS
-    if (
-      lines.length === 1 &&
-      lines[0]!.length < 48 &&
-      !/[.!?]$/.test(lines[0]!) &&
-      !/^[-*]/.test(lines[0]!)
-    ) {
-      const label = lines[0]!.replace(/^#+\s*/, "").trim();
-      // Drop inventory chrome headings
-      if (
-        /^(what.?s in (the )?data room|in the preview|sources?|files?|inventory)\b/i.test(label) ||
-        /^sources are in the data room\.?$/i.test(label)
-      ) {
-        return;
-      }
-      nodes.push(
-        <p key={`sec-${bi}`} className="md-section">
-          {label}
-        </p>,
-      );
-      return;
-    }
-
-    lines.forEach((line, li) => {
-      let t = line.trim();
-      if (!t) return;
-      // Strip leftover markdown heading marks
-      const hm = t.match(/^#{1,3}\s+(.*)$/);
-      if (hm) {
-        const title = (hm[1] || "").trim();
-        if (
-          /^(what.?s in (the )?data room|in the preview|sources?|files?|inventory|what the (app|report) can show)\b/i.test(
-            title,
-          )
-        ) {
-          return;
-        }
-        nodes.push(
-          <p key={`h-${bi}-${li}`} className="md-section">
-            <span dangerouslySetInnerHTML={{ __html: inlineFormat(title) }} />
-          </p>,
-        );
-        return;
-      }
-      if (/^sources are in the data room\.?$/i.test(t)) return;
-      if (/^added\b.+\bto (your |the )?(sources|data room)\b/i.test(t)) return;
-      // Orphan pipe row
-      if (/^\|/.test(t) && t.includes("|")) {
-        const cells = parseCells(t);
-        if (/\.(json|md|csv)\b/i.test(cells[0] || "")) return;
-        nodes.push(
-          <div key={`or-${bi}-${li}`} className="md-card">
-            <span className="md-card-title">{humanFile(cells[0] || "")}</span>
-            {cells[1] ? <span className="md-card-body">{cells.slice(1).join(" — ")}</span> : null}
-          </div>,
-        );
-        return;
-      }
-      if (t.startsWith("**") && t.endsWith("**") && t.indexOf("**", 2) === t.length - 2) {
-        nodes.push(
-          <p key={`p-${bi}-${li}`} className="md-lead" dangerouslySetInnerHTML={{ __html: inlineFormat(t) }} />,
-        );
-      } else {
-        nodes.push(
-          <p key={`p-${bi}-${li}`} dangerouslySetInnerHTML={{ __html: inlineFormat(t) }} />,
-        );
-      }
-    });
+    nodes.push(...emitFlow(block.split("\n"), `b${bi}`));
   });
 
   return <div className="cursor-prose">{nodes}</div>;
