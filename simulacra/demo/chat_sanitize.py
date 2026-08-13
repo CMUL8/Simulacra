@@ -39,6 +39,11 @@ _CHOICE_DUMP = re.compile(
 _APP_SHOW_HEAD = re.compile(
 	r"(?i)^\s{0,3}#{0,3}\s*what the (app|report|deck|artifact) can show\b"
 )
+_WIDGET_BULLET = re.compile(
+	r"(?i)^\s*[-*+]\s*(?:\*\*)?(kpi|chart|tables?|findings|leaderboard|empty state|"
+	r"dashboard|timeline|scorecard|strip|map|filters?|vendor)\b"
+)
+_PREVIEW_HOLDS = "The preview holds the layout — charts, tables, and empty states live there."
 _WHAT_CHANGED_HEAD = re.compile(r"(?i)^\s{0,3}(\*{0,2}|#{1,3}\s*)what changed\b")
 _INVENTORY_BULLET = re.compile(
 	r"(?i)^\s*[-*]\s*(title\s*&\s*(config|framing)|layout\s*(/\s*ui|&\s*structure)|"
@@ -132,9 +137,26 @@ def sanitize_agent_reply(text: str) -> str:
 			i += 1
 			continue
 		if _APP_SHOW_HEAD.match(line):
-			# Drop meta "what the app can show" chrome — keep following bullets
 			i += 1
+			while i < len(lines) and (not lines[i].strip() or _WIDGET_BULLET.match(lines[i]) or lines[i].lstrip().startswith(("- ", "* "))):
+				i += 1
+			out.append("")
+			out.append(_PREVIEW_HOLDS)
+			out.append("")
 			continue
+		if _WIDGET_BULLET.match(line):
+			block = [line]
+			j = i + 1
+			while j < len(lines) and (not lines[j].strip() or _WIDGET_BULLET.match(lines[j])):
+				if lines[j].strip():
+					block.append(lines[j])
+				j += 1
+			if len(block) >= 3:
+				out.append("")
+				out.append(_PREVIEW_HOLDS)
+				out.append("")
+				i = j
+				continue
 		if _WHAT_CHANGED_HEAD.match(line):
 			i += 1
 			while i < len(lines) and (

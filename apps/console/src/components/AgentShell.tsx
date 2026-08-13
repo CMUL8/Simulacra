@@ -87,6 +87,28 @@ function scrubCodeFilenames(text: string): string {
   return out;
 }
 
+function truncateMiddle(s: string, max = 42): string {
+  if (s.length <= max) return s;
+  const keep = max - 1;
+  const head = Math.ceil(keep * 0.58);
+  const tail = keep - head;
+  return `${s.slice(0, head)}…${s.slice(-tail)}`;
+}
+
+function isPreviewHref(href: string): boolean {
+  return /\/projects\/[^/\s]+/i.test(href);
+}
+
+function linkHtml(label: string, href: string): string {
+  const abs = absolutizeUrl(href);
+  const safe = escapeHtml(abs);
+  if (isPreviewHref(href)) {
+    return `<a class="md-link-chip" data-preview="1" href="${safe}" target="_blank" rel="noopener noreferrer">Open preview</a>`;
+  }
+  const shown = label === href || label === abs ? truncateMiddle(href) : truncateMiddle(label, 56);
+  return `<a class="md-link" href="${safe}" target="_blank" rel="noopener noreferrer">${escapeHtml(shown)}</a>`;
+}
+
 function inlineFormat(text: string) {
   let html = escapeHtml(text);
   const codes: string[] = [];
@@ -97,19 +119,29 @@ function inlineFormat(text: string) {
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(
     /\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/projects\/[^)\s]+)\)/g,
-    (_m, label: string, href: string) =>
-      `<a class="md-link" href="${escapeHtml(absolutizeUrl(href))}" target="_blank" rel="noopener noreferrer">${label}</a>`,
+    (_m, label: string, href: string) => linkHtml(label, href),
   );
   html = html.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, (_m, pre: string, url: string) => {
     const clean = url.replace(/[.,;:!?)]+$/, "");
     const trail = url.slice(clean.length);
-    return `${pre}<a class="md-link" href="${escapeHtml(clean)}" target="_blank" rel="noopener noreferrer">${escapeHtml(clean)}</a>${trail}`;
+    return `${pre}${linkHtml(clean, clean)}${trail}`;
   });
   html = html.replace(/\u0000C(\d+)\u0000/g, (_m, i: string) => codes[Number(i)] || "");
   return html;
 }
 
 const LIST_ITEM_RE = /^(\s*)(?:[-*+•]|[–—]|\d+[.)])\s+(\S.*)$/;
+const WIDGET_INVENTORY =
+  /^(kpi|chart|tables?|findings|leaderboard|empty state|dashboard|timeline|scorecard|strip|map|filters?|vendor)\b/i;
+
+function isWidgetInventory(items: string[]): boolean {
+  if (items.length < 3) return false;
+  const hits = items.filter((raw) => {
+    const label = raw.replace(/^\*\*/, "").split(/[:—–*]/)[0]!.trim();
+    return WIDGET_INVENTORY.test(label);
+  }).length;
+  return hits >= 3 && hits >= Math.ceil(items.length * 0.6);
+}
 
 function listMatch(line: string): { indent: number; kind: "ul" | "ol"; text: string } | null {
   const trimmed = line.trimEnd();
@@ -178,7 +210,7 @@ function isShipMessage(m: ChatMessage): boolean {
 }
 
 /** Document-style markdown — no raw pipes, hash headings, or leftover dashes. */
-function MarkdownBody({ text }: { text: string }) {
+function MarkdownBody({ text, onOpenPreview }: { text: string; onOpenPreview?: () => void }) {
   const cleaned = tightenLooseLists(
     scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n")),
   ).trim();
@@ -200,6 +232,13 @@ function MarkdownBody({ text }: { text: string }) {
   };
 
   const emitList = (kind: "ul" | "ol", items: string[], key: string) => {
+    if (isWidgetInventory(items)) {
+      return (
+        <p key={key} className="md-soft">
+          The preview holds the layout — charts, tables, and empty states live there.
+        </p>
+      );
+    }
     const Tag = kind === "ol" ? "ol" : "ul";
     return (
       <Tag key={key} className={kind === "ol" ? "md-ol" : "md-ul"}>
@@ -345,7 +384,19 @@ function MarkdownBody({ text }: { text: string }) {
     nodes.push(...emitFlow(block.split("\n"), `b${bi}`));
   });
 
-  return <div className="cursor-prose">{nodes}</div>;
+  return (
+    <div
+      className="cursor-prose"
+      onClick={(e) => {
+        const hit = (e.target as HTMLElement).closest("a.md-link-chip[data-preview]");
+        if (!hit || !onOpenPreview) return;
+        e.preventDefault();
+        onOpenPreview();
+      }}
+    >
+      {nodes}
+    </div>
+  );
 }
 
 function ShipReceipt({
@@ -360,11 +411,20 @@ function ShipReceipt({
     <div className="ship-receipt">
       <h3 className="ship-receipt-title">Shipped</h3>
       <p className="ship-receipt-lead">Approved for your team. Share this preview:</p>
-      {share && (
-        <a className="ship-receipt-link" href={share} target="_blank" rel="noopener noreferrer">
-          {share}
-        </a>
-      )}
+      {share ? (
+        <div className="md-link-chip-row">
+          <button type="button" className="md-link-chip" onClick={onOpenPreview}>
+            Open preview
+          </button>
+          <button
+            type="button"
+            className="md-link-chip ghost"
+            onClick={() => void navigator.clipboard?.writeText(share)}
+          >
+            Copy link
+          </button>
+        </div>
+      ) : null}
       <div className="ship-receipt-actions">
         <button type="button" className="ship-receipt-btn" onClick={onOpenPreview}>
           Open preview
@@ -736,7 +796,7 @@ function MessageTurn({
         <Fragment>
           <div className="cursor-answer">
             <AnswerBlock>
-              <MarkdownBody text={message.content} />
+              <MarkdownBody text={message.content} onOpenPreview={onOpenPreview} />
             </AnswerBlock>
           </div>
           <PlanSection snapshot={snapshot} onOpenPreview={onOpenPreview} compact />
@@ -750,7 +810,7 @@ function MessageTurn({
       ) : (
         <div className="cursor-answer">
           <AnswerBlock>
-            <MarkdownBody text={message.content} />
+            <MarkdownBody text={message.content} onOpenPreview={onOpenPreview} />
           </AnswerBlock>
           {actions}
         </div>
