@@ -249,9 +249,12 @@ def _agent_chat_turn(
 
 	request = turn.request if turn.meta.source == "prime" and turn.reply else "await_user"
 
-	from .chat_sanitize import sanitize_agent_reply
+	from .chat_sanitize import reply_asks_to_build, sanitize_agent_reply
 
+	asks_build = reply_asks_to_build(reply)
 	reply = sanitize_agent_reply(reply)
+	if request == "await_user" and state.phase == "plan" and asks_build:
+		request = "build"
 
 	state.chat.append(ChatMessage(role="assistant", content=reply, source=source))
 	pending_topic = str(prime_meta.pop("_pending_topic_note", "") or "").strip()
@@ -468,8 +471,7 @@ def _open_reply(
 		f"**{title}** — {state.app_config.subtitle}\n\n"
 		f"{room}\n\n"
 		"Chat with me to steer: upload files, use the sample pack, "
-		"or ask me to research / gather material for your topic. "
-		"When you’re ready, hit **Build**."
+		"or ask me to research / gather material for your topic."
 	)
 
 
@@ -489,8 +491,7 @@ def _heuristic_chat_reply(state: ProjectState, message: str) -> str:
 	if any(w in lower for w in ("research", "scrape", "web", "gather", "online")):
 		return (
 			f"**{title}** — the agent couldn’t finish that turn. "
-			"Send again (research outline, sources to fetch), or upload files"
-			+ (" / hit **Build** when ready." if state.phase == "plan" else ".")
+			"Send again (research outline, sources to fetch), or upload files."
 		)
 
 	if any(w in lower for w in ("how many", "count", "rows", "findings")) and rows:
@@ -518,7 +519,4 @@ def _heuristic_chat_reply(state: ProjectState, message: str) -> str:
 			"Send the change again (e.g. denser summary, tighter opening) and I’ll retry."
 		)
 
-	return (
-		f"Noted for **{title}**. "
-		f"Keep chatting (sources, research, scope), or hit **Build** when ready."
-	)
+	return f"Noted for **{title}**. Keep chatting — sources, research, or scope."

@@ -44,6 +44,19 @@ _WIDGET_BULLET = re.compile(
 	r"dashboard|timeline|scorecard|strip|map|filters?|vendor)\b"
 )
 _PREVIEW_HOLDS = "The preview holds the layout — charts, tables, and empty states live there."
+_HIT_BUILD = re.compile(r"(?i)\b(?:hit|press|click|tap)\s+\*{0,2}build\*{0,2}")
+_REBUILD_DRAFT = re.compile(r"(?i)\*{0,2}Rebuild from draft\*{0,2}")
+_RETRY_BUILD = re.compile(
+	r"(?i)retry\s+\*{0,2}Build(?:\s+(?:app|report|slides|one-pager))?\*{0,2}"
+)
+_BUILD_FIRST = re.compile(r"(?i)_\(Build first — then I can apply edits\.\)_")
+_APPROVE_AGAIN = re.compile(r"(?i)you can refine or Approve again\.?")
+_BUILD_COMPLETE_PREVIEW = re.compile(
+	r"(?i)\bBuild complete\s*[—–-]\s*open\s+\*{0,2}Preview\*{0,2}\s+to review\.?"
+)
+_READY_CONFIRM = re.compile(
+	r"(?i)when you['’]re ready,\s*confirm below\.?"
+)
 _WHAT_CHANGED_HEAD = re.compile(r"(?i)^\s{0,3}(\*{0,2}|#{1,3}\s*)what changed\b")
 _INVENTORY_BULLET = re.compile(
 	r"(?i)^\s*[-*]\s*(title\s*&\s*(config|framing)|layout\s*(/\s*ui|&\s*structure)|"
@@ -106,6 +119,23 @@ def _table_to_bullets(block_lines: list[str]) -> list[str]:
 		else:
 			bullets.append(f"- {left}")
 	return bullets
+
+
+def reply_asks_to_build(text: str) -> bool:
+	"""True when the agent told the user to press a Build control."""
+	return bool(text and _HIT_BUILD.search(text))
+
+
+def _rewrite_control_ctas(text: str) -> str:
+	"""Chat may only name controls that exist: Confirm below, Preview, Ship, Start over."""
+	text = _HIT_BUILD.sub("Confirm below", text)
+	text = _REBUILD_DRAFT.sub("**Start over**", text)
+	text = _RETRY_BUILD.sub("use **Start over**", text)
+	text = _BUILD_FIRST.sub("Confirm below first — then I can apply edits.", text)
+	text = _APPROVE_AGAIN.sub("You can refine in chat, or Start over.", text)
+	text = _BUILD_COMPLETE_PREVIEW.sub("It's in Preview.", text)
+	text = _READY_CONFIRM.sub("Confirm below when you’re ready.", text)
+	return text
 
 
 def sanitize_agent_reply(text: str) -> str:
@@ -222,5 +252,6 @@ def sanitize_agent_reply(text: str) -> str:
 		i += 1
 
 	text_out = "\n".join(out)
+	text_out = _rewrite_control_ctas(text_out)
 	text_out = re.sub(r"\n{3,}", "\n\n", text_out).strip()
 	return text_out

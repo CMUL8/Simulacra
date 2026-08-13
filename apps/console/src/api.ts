@@ -637,7 +637,7 @@ export function subscribeEvents(projectId: string, onEvent: (evt: AgentEvent) =>
 
 export const DEFAULT_DESIGN_BRIEF: DesignBrief = {
   product_name: "Untitled",
-  one_liner: "Chat with the agent — Build when ready",
+  one_liner: "From your sources",
   audience: "internal stakeholders",
   aesthetic: {
     direction: "dense-ops",

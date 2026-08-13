@@ -364,8 +364,8 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 			f"{file_names}\n\n"
 			f"{req_note}"
 			"Preview is ready — open it, then chat to refine. "
-			"**Ship** when you want an approved share link.\n\n"
-			"Need a clean restart? Use **Rebuild from draft**."
+			"**Ship** in Preview when you want an approved share link.\n\n"
+			"Need a clean restart? Use **Start over**."
 		)
 		if source == "craft":
 			body = (
@@ -384,7 +384,7 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 			f"**Sources:** {facts}\n"
 			f"{file_names}\n\n"
 			f"Scaffold preview is up, but the builder did not finish customizing. "
-			f"Try **Rebuild from draft**, or describe changes in chat."
+			f"Try **Start over**, or describe changes in chat."
 		)
 		source = source if source in ("error", "heuristic", "timeout") else "heuristic"
 
@@ -457,7 +457,7 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 			"## Built\n\n"
 			"The builder customized your draft.\n\n"
 			f"{req_note}"
-			"Chat to refine layout, viz, or copy. When it looks right, open Preview → **Ship**."
+			"Chat to refine layout, viz, or copy. When it looks right, open Preview, then **Ship**."
 		),
 		"craft": (
 			"## Built\n\n"
@@ -467,9 +467,9 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 		),
 		"heuristic": (
 			"Styles from your brief were applied, but the builder did **not** rewrite the layout. "
-			"Retry **Build app**, or describe the change in chat after a successful build."
+			"Use **Start over**, or describe the change in chat after a successful build."
 		),
-		"error": "Build did not finish. Draft preview kept — retry **Build app**.",
+		"error": "Build did not finish. Draft preview kept — use **Start over**.",
 		"template": "Draft unchanged.",
 	}.get(source, "Build finished.")
 
@@ -479,7 +479,7 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 			"## Partial update\n\n"
 			"Styles applied from your Style chips.\n\n"
 			f"{req_note}"
-			"The builder did not rewrite the layout — retry **Build**."
+			"The builder did not rewrite the layout — use **Start over**."
 		)
 
 	state.prime["source"] = source
@@ -522,15 +522,15 @@ def build_project(state: ProjectState, *, run_prime: bool = True) -> ProjectStat
 	state = _scaffold_and_preview(state, rows, run_prime=run_prime, leave_in_plan=False)
 	source = state.prime.get("source") or ("prime" if run_prime else "template")
 	honesty = {
-		"prime": "Build complete — open **Preview** to review.",
-		"heuristic": "Built from the draft scaffold — open **Preview**.",
-		"error": "Build did not finish — shipping last good draft. You can retry.",
-		"template": "Draft ready — open **Preview**, then refine or build again.",
-	}.get(str(source), "Build complete.")
+		"prime": "Ready in Preview.",
+		"heuristic": "Draft scaffold is in Preview.",
+		"error": "Build did not finish — last good draft kept. You can retry in chat.",
+		"template": "Draft is in Preview — refine in chat or Start over.",
+	}.get(str(source), "Ready in Preview.")
 	state.chat.append(
 		ChatMessage(
 			role="assistant",
-			content=f"Built **{state.app_config.title}**. {honesty}",
+			content=f"**{state.app_config.title}** is ready. {honesty}",
 			source=str(source),
 		)
 	)
@@ -802,7 +802,7 @@ def cancel_job(project_id: str) -> dict[str, Any]:
 		state.chat.append(
 			ChatMessage(
 				role="assistant",
-				content="**Stopped** — last good preview kept. You can refine or Approve again.",
+				content="**Stopped** — last good preview kept. You can refine in chat, or Start over.",
 				source="system",
 			)
 		)
@@ -909,7 +909,7 @@ def reingest_sources(project_id: str, *, refresh_preview: bool = True) -> Projec
 			"Add `.md` / `.csv` / `.json`, or tell the agent in chat how you want material gathered."
 		)
 	elif state.phase == "plan":
-		msg += "\n\nChat with the agent about next steps, or hit **Build** when ready."
+		msg += "\n\nChat with the agent about next steps."
 	state.chat.append(ChatMessage(role="assistant", content=msg, source="system"))
 	state.status = "draft" if state.phase == "plan" else state.status
 	if state.phase == "plan" and rows:
@@ -1021,10 +1021,10 @@ def project_snapshot(project_id: str) -> dict:
 		if src in ("prime", "craft"):
 			state.app_config.subtitle = ""
 		else:
-			state.app_config.subtitle = "Chat with the agent — Build when ready"
+			state.app_config.subtitle = "From your sources"
 		dirty = True
 	elif sub == "Data Explorer" and state.phase == "plan":
-		state.app_config.subtitle = "Chat with the agent — Build when ready"
+		state.app_config.subtitle = "From your sources"
 		dirty = True
 
 	# Heal stuck in-progress status when no live job is running

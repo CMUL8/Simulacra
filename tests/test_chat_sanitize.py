@@ -35,7 +35,32 @@ def test_no_filler_sources_line() -> None:
 		"Research done.\n\nSources are in the data room.\n\nHit Build when ready."
 	)
 	assert "Sources are in the data room" not in out
-	assert "Hit Build" in out
+	assert "Hit Build" not in out
+	assert "Confirm below" in out
+
+
+def test_rewrites_hit_build_cta() -> None:
+	from simulacra.demo.chat_sanitize import reply_asks_to_build
+
+	raw = (
+		"Hit Build when you're ready, and I'll scaffold the interactive report "
+		"with the timeline, electoral charts, leadership profiles, and policy deep-dives."
+	)
+	assert reply_asks_to_build(raw)
+	out = sanitize_agent_reply(raw)
+	assert "Hit Build" not in out
+	assert "Confirm below" in out
+	assert "scaffold the interactive report" in out
+	assert "Rebuild from draft" not in sanitize_agent_reply("Try **Rebuild from draft**.")
+	assert "Start over" in sanitize_agent_reply("Try **Rebuild from draft**.")
+	assert "Build app" not in sanitize_agent_reply("retry **Build app**")
+	assert "Start over" in sanitize_agent_reply("retry **Build app**")
+	done = sanitize_agent_reply(
+		"Built **BJP History Report**. Build complete — open **Preview** to review."
+	)
+	assert "Hit Build" not in done
+	assert "Build complete" not in done
+	assert "Preview" in done
 
 
 def test_orphan_pipe_row_dropped_when_file() -> None:

@@ -10,7 +10,7 @@ from typing import Any
 
 DEFAULT_BRIEF: dict[str, Any] = {
 	"product_name": "Untitled",
-	"one_liner": "Chat with the agent — Build when ready",
+	"one_liner": "From your sources",
 	"audience": "internal stakeholders",
 	"aesthetic": {
 		"direction": "dense-ops",
@@ -92,7 +92,7 @@ def default_brief(*, prompt: str = "", artifact_kind: str | None = None) -> dict
 	# Never leave the stock Vendor Risk identity on a new brief
 	if is_stock_vendor_name(brief.get("product_name")):
 		brief["product_name"] = title if title and title != "Untitled" else "Untitled"
-		brief["one_liner"] = one_liner_from_prompt(prompt, brief["product_name"]) if prompt else "Chat with the agent — Build when ready"
+		brief["one_liner"] = one_liner_from_prompt(prompt, brief["product_name"]) if prompt else "From your sources"
 	kind = normalize_kind(artifact_kind) if artifact_kind else None
 	if kind:
 		brief = _deep_merge(brief, brief_defaults_for(kind))
@@ -422,7 +422,7 @@ def brief_to_prime_block(brief: dict[str, Any], *, delta_note: str = "") -> str:
 	if is_stock_vendor_name(str(safe.get("one_liner") or "")) or str(safe.get("one_liner") or "").lower() in {
 		"monitor vendor findings and risk scores",
 	}:
-		safe["one_liner"] = "Chat with the agent — Build when ready"
+		safe["one_liner"] = "From your sources"
 	# Do not prescribe IA — Prime judges structure
 	ia = dict(safe.get("information_architecture") or {})
 	ia["must_have"] = []

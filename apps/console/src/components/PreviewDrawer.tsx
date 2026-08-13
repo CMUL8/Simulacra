@@ -83,7 +83,7 @@ export function PreviewDrawer({
   if (!open) return null;
 
   const emptyCopy = snapshot?.preview_url?.includes("127.0.0.1")
-    ? "This project still points at an old local preview. Start a new project or hit Build again."
+    ? "This project still points at an old local preview. Start a new project, or Start over."
     : hasData
       ? "Preview appears here when the draft is ready."
       : "Sources aren't loaded yet. Add data, then send a message — the preview fills in here.";

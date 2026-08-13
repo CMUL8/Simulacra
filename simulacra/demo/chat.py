@@ -42,8 +42,9 @@ def infer_app_config(prompt: str, existing: AppConfig | None = None) -> AppConfi
 			"Built with Simulacra",
 			"Monitor vendor findings and risk scores",
 			"Third-party diligence · live risk posture",
+			"Chat with the agent — Build when ready",
 		):
-			cfg.subtitle = "Chat with the agent — Build when ready"
+			cfg.subtitle = "From your sources"
 
 	if "region" in lower or "country" in lower:
 		cfg.group_by = "theme"

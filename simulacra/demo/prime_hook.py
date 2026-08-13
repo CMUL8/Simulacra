@@ -160,13 +160,19 @@ def _envelope_schema_block() -> str:
 		"}\n\n"
 		"request meanings:\n"
 		"- await_user — keep talking; default\n"
-		"- build — you are ready for the user to hit Build (do not claim Built)\n"
+		"- build — you are ready to scaffold; the product shows Confirm below. "
+		"Do not tell the user to hit, press, or click Build. Do not claim Built.\n"
 		"- iterate — edit the existing artifact (only if one already exists)\n"
 		"- research — you want to gather/web material (say what you would do; "
 		"do not invent finished research as fact)\n\n"
 		"Reply rules:\n"
 		"- Write for a product user, not a developer.\n"
 		"- Prefer short prose and bullet lists. Never shout section labels in ALL CAPS.\n"
+		"- Never name a button that is not on the message. No 'Hit Build', "
+		"'Rebuild from draft', or 'Approve'. When ready to scaffold, set "
+		"request=build and say you will scaffold it — Confirm below is the control.\n"
+		"- After a preview exists, say it is in Preview. Ship lives in Preview. "
+		"Start over is the menu item for a clean restart.\n"
 		"- Do NOT invent inventory sections like \"What's in the data room\" or "
 		"\"What the app can show\" — the product owns that UI.\n"
 		"- Do NOT announce 'Added X.json to your sources' — the data room updates quietly.\n"
@@ -332,9 +338,9 @@ def prime_chat_turn(
 		if out_meta.source == "prime" and not turn.request:
 			turn.request = "await_user"
 	if turn.request == "iterate" and not has_artifact:
-		turn.request = "await_user"
-		if turn.brief and turn.reply:
-			turn.reply = f"{turn.reply}\n\n_(Build first — then I can apply edits.)_"
+		turn.request = "build"
+		if turn.reply:
+			turn.reply = f"{turn.reply}\n\nConfirm below first — then I can apply edits."
 	if out_meta.source == "error" and not turn.reply:
 		out_meta.source = "error"
 	elif turn.reply and out_meta.source != "error":

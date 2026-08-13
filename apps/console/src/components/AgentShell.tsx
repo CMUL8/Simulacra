@@ -87,6 +87,21 @@ function scrubCodeFilenames(text: string): string {
   return out;
 }
 
+function rewritePhantomControls(text: string): string {
+  return text
+    .replace(/\b(?:hit|press|click|tap)\s+\*{0,2}build\*{0,2}/gi, "Confirm below")
+    .replace(/\*{0,2}Rebuild from draft\*{0,2}/gi, "**Start over**")
+    .replace(/\bretry\s+\*{0,2}Build(?:\s+(?:app|report|slides|one-pager))?\*{0,2}/gi, "use **Start over**")
+    .replace(/_\(Build first — then I can apply edits\.\)_/gi, "Confirm below first — then I can apply edits.")
+    .replace(/You can refine or Approve again\.?/gi, "You can refine in chat, or Start over.")
+    .replace(/\bBuild complete\s*[—–-]\s*open\s+\*{0,2}Preview\*{0,2}\s+to review\.?/gi, "It's in Preview.")
+    .replace(/when you['’]re ready,\s*Confirm below/gi, "Confirm below when you’re ready");
+}
+
+function asksToBuild(text: string): boolean {
+  return /(?:hit|press|click|tap)\s+\*{0,2}build\*{0,2}|confirm below/i.test(text);
+}
+
 function truncateMiddle(s: string, max = 42): string {
   if (s.length <= max) return s;
   const keep = max - 1;
@@ -212,7 +227,7 @@ function isShipMessage(m: ChatMessage): boolean {
 /** Document-style markdown — no raw pipes, hash headings, or leftover dashes. */
 function MarkdownBody({ text, onOpenPreview }: { text: string; onOpenPreview?: () => void }) {
   const cleaned = tightenLooseLists(
-    scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n")),
+    rewritePhantomControls(scrubCodeFilenames(absolutizeShareUrls(text).replace(/\r\n/g, "\n"))),
   ).trim();
   const blocks = cleaned.split(/\n{2,}/);
   const nodes: ReactNode[] = [];
@@ -866,7 +881,9 @@ export function AgentShell({
   const lastAssistant = [...project.chat].reverse().find((m) => m.role === "assistant");
   const stage = statusChip(project, lastAssistant?.source ?? project.prime?.source);
   const needs = agentNeedsLine(project, busy, jobKind);
-  const agentWantsBuild = project.prime?.request === "build";
+  const agentWantsBuild =
+    project.prime?.request === "build" ||
+    (isPlan && Boolean(lastAssistant?.content && asksToBuild(lastAssistant.content)));
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const visibleChat = project.chat.filter((m) => !isOrphanJobStatus(m));
   const showStandalonePlan =
@@ -944,7 +961,11 @@ export function AgentShell({
         >
           {visibleChat.length === 0 && !busy ? (
             <div className="thread-first">
-              <p>Describe what to change. Preview updates after each message.</p>
+              <p>
+                {isPlan
+                  ? "Describe what you want — sources, research, or scope."
+                  : "Describe what to change. Preview updates after each message."}
+              </p>
             </div>
           ) : null}
 
@@ -1012,9 +1033,9 @@ export function AgentShell({
           {!busy && isPlan && agentWantsBuild && onApprove ? (
             <div className="cursor-turn cursor-turn-approval">
               <ApprovalCard
-                question={`Ready to build your ${noun}? I have enough to generate it — confirm to start, or keep shaping the brief.`}
+                question={`Ready to scaffold your ${noun}?`}
                 options={[
-                  { id: "build", label: buildLabel, primary: true },
+                  { id: "build", label: "Build", primary: true },
                   { id: "refine", label: "Keep refining" },
                 ]}
                 busy={busy}
@@ -1056,16 +1077,17 @@ export function AgentShell({
             </div>
 
             <div className="composer-chrome-actions">
-              <button
-                type="button"
-                className="composer-action"
-                disabled={!hasPreview}
-                onClick={onOpenPreview}
-                title={hasPreview ? "Open preview" : "Preview appears after Build"}
-              >
-                <Globe size={14} strokeWidth={1.5} />
-                Preview
-              </button>
+              {hasPreview ? (
+                <button
+                  type="button"
+                  className="composer-action"
+                  onClick={onOpenPreview}
+                  title="Open preview"
+                >
+                  <Globe size={14} strokeWidth={1.5} />
+                  Preview
+                </button>
+              ) : null}
               {!isPlan && project.checkpoints?.length > 0 && onRollback ? (
                 <VersionsMenu
                   versions={project.checkpoints as Checkpoint[]}
@@ -1079,9 +1101,9 @@ export function AgentShell({
                   className={`composer-action emphasis${agentWantsBuild ? " pulse-build" : ""}`}
                   disabled={busy}
                   onClick={onApprove}
-                  title={agentWantsBuild ? "Agent is ready — Build when you are" : buildLabel}
+                  title={agentWantsBuild ? "Ready to scaffold" : buildLabel}
                 >
-                  {buildLabel}
+                  Build
                   <ArrowRight size={14} strokeWidth={1.5} />
                 </button>
               ) : null}

@@ -257,7 +257,7 @@ def chat_summaries(state: ProjectState) -> list[dict[str, Any]]:
 @dataclass
 class AppConfig:
 	title: str = "Untitled"
-	subtitle: str = "Chat with the agent — Build when ready"
+	subtitle: str = "From your sources"
 	search_enabled: bool = True
 	sort_column: str = ""
 	sort_direction: str = "desc"
@@ -458,7 +458,7 @@ def create_project(
 		design_brief=brief,
 		app_config=AppConfig(
 			title=product[:80],
-			subtitle=str(brief.get("one_liner") or "Chat with the agent — Build when ready")[:120],
+			subtitle=str(brief.get("one_liner") or "From your sources")[:120],
 		),
 	)
 	first = ChatMessage(role="user", content=prompt, source="system")

@@ -665,7 +665,7 @@ def prewarm_for_build(project_id: str) -> None:
 		project_id,
 		"phase",
 		label="Ready to Build",
-		detail="Sources synced — hit Build when you want the artifact",
+		detail="Sources synced — confirm below when you want the artifact",
 		status="done",
 	)
 	# Keep request=build so the UI still surfaces Build — prewarm never claims Built

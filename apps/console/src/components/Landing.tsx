@@ -110,7 +110,7 @@ function projectCardTitle(p: Project): string {
 
 function projectCardSummary(p: Project): string {
   const sub = (p.app_config?.subtitle || "").trim();
-  if (sub && !["Built from your sources", "Data Explorer", "Chat with the agent — Build when ready"].includes(sub)) {
+  if (sub && !["Built from your sources", "Data Explorer", "From your sources", "Chat with the agent — Build when ready"].includes(sub)) {
     return sub.slice(0, 96);
   }
   const one = (p.design_brief?.one_liner || "").trim();
