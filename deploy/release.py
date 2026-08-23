@@ -4,10 +4,62 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
 from .bundle import canonical_json
+
+_IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class UpgradeAssessment:
+    ready: bool
+    rollback_allowed: bool
+    errors: tuple[str, ...]
+    gates: tuple[str, ...]
+
+
+def assess_upgrade(current: Mapping[str, object], target: Mapping[str, object]) -> UpgradeAssessment:
+    """Assess immutable artifacts, schema direction, and recovery evidence."""
+    errors: list[str] = []
+    for label, state in (("current", current), ("target", target)):
+        try:
+            _bundle_id(str(state["bundle_hash"]))
+        except (KeyError, ValueError):
+            errors.append(f"{label}.bundle_hash must be a lowercase SHA-256 digest")
+        if not _IMAGE_DIGEST.fullmatch(str(state.get("image_digest", ""))):
+            errors.append(f"{label}.image_digest must be an immutable sha256 digest")
+        if not str(state.get("chart_version", "")).strip():
+            errors.append(f"{label}.chart_version is required")
+    if current.get("bundle_hash") == target.get("bundle_hash"):
+        errors.append("target bundle must differ from current bundle")
+    try:
+        if isinstance(current.get("schema_version"), bool) or isinstance(target.get("schema_version"), bool):
+            raise ValueError
+        current_schema = int(current["schema_version"])
+        target_schema = int(target["schema_version"])
+        if current_schema < 0 or target_schema < 0:
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        current_schema = target_schema = 0
+        errors.append("schema_version values must be non-negative integers")
+    if target_schema < current_schema:
+        errors.append("schema downgrade is unsupported")
+    schema_change = target_schema > current_schema
+    if schema_change and not str(target.get("backup_reference", "")).strip():
+        errors.append("schema-changing upgrade requires a backup reference")
+    if schema_change and not str(target.get("restore_test_reference", "")).strip():
+        errors.append("schema-changing upgrade requires tested restore evidence")
+    backward_compatible = target.get("migration_backward_compatible") is True
+    return UpgradeAssessment(
+        ready=not errors,
+        rollback_allowed=not errors and (not schema_change or backward_compatible),
+        errors=tuple(errors),
+        gates=("verify-artifacts", "preflight", "backup-evidence", "migrate", "rollout", "smoke", "promote"),
+    )
 
 
 def _bundle_id(value: str) -> str:

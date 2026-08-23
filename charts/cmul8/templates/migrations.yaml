@@ -11,12 +11,14 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
   backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
   template:
     metadata:
       labels:
         {{- include "cmul8.labels" . | nindent 8 }}
         app.kubernetes.io/component: migrations
     spec:
+      enableServiceLinks: false
       restartPolicy: Never
       serviceAccountName: {{ include "cmul8.serviceAccountName" . }}
       automountServiceAccountToken: false
@@ -31,5 +33,9 @@ spec:
           env:
             {{- include "cmul8.env" . | nindent 12 }}
           volumeMounts: [{name: tmp, mountPath: /tmp}]
-      volumes: [{name: tmp, emptyDir: {}}]
+          resources:
+            {{- toYaml .Values.resources.migrations | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.temporaryStorage.sizeLimit }}}
 {{- end }}

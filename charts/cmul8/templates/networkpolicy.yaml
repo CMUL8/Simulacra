@@ -11,7 +11,13 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "cmul8.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - {protocol: TCP, port: 8080}
         - {protocol: TCP, port: 8000}

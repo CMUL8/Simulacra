@@ -121,8 +121,18 @@ def test_chart_has_processes_probes_security_external_state_and_hooks():
     for security in ("runAsNonRoot", "readOnlyRootFilesystem", "allowPrivilegeEscalation", 'drop: ["ALL"]'):
         assert security in values
     assert "secretKeyRef" in all_templates
+    assert "CMUL8_IMAGE_REGISTRY" in all_templates
+    assert "CMUL8_TLS_REQUIRED" in all_templates
     assert "pre-install,pre-upgrade" in all_templates
     assert "post-install,post-upgrade,post-rollback" in all_templates
+    assert 'helm.sh/hook-weight: "-20"' in all_templates
+    assert 'helm.sh/hook-weight: "-10"' in all_templates
+    assert "kind: PodDisruptionBudget" in all_templates
+    assert "topologySpreadConstraints" in all_templates
+    assert "enableServiceLinks: false" in all_templates
+    assert "cmul8-worker-health" in all_templates
+    assert "worker.alive" not in all_templates and "worker.ready" not in all_templates
+    assert "namespaceSelector: {}" not in all_templates
     assert "kind: StatefulSet" not in all_templates
     assert "kind: Secret" not in all_templates
 
@@ -133,5 +143,9 @@ def test_terraform_modules_are_honest_customer_managed_contracts():
         content = "\n".join(path.read_text() for path in (root / cloud).glob("*.tf"))
         assert 'customer_managed       = true' in content
         assert 'output "runtime_contract"' in content
+        assert 'output "recovery_assessment"' in content
+        assert 'output "network_assessment"' in content
+        assert "tested_restore_reference" in content
+        assert "attestation_only          = true" in content
         assert "postgres_endpoint" in content and "redis_endpoint" in content
         assert 'resource "' not in content

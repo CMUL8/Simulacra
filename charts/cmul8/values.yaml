@@ -55,21 +55,54 @@ containerSecurityContext:
     drop: ["ALL"]
 
 resources:
-  web: {}
-  api: {}
-  worker: {}
+  web:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  api:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  worker:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  migrations:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  smoke:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 128Mi}
+  preflight:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 128Mi}
 
 rollout:
   revisionHistoryLimit: 5
   progressDeadlineSeconds: 600
+  minReadySeconds: 10
+
+disruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+topologySpread:
+  enabled: true
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+preflight:
+  enabled: true
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
 
 migrations:
   enabled: true
   backoffLimit: 1
+  activeDeadlineSeconds: 900
 
 smoke:
   enabled: false
   backoffLimit: 0
+  activeDeadlineSeconds: 300
   paths:
     api: /health
     worker: /api/runtime/smoke/worker
@@ -79,3 +112,8 @@ smoke:
 
 networkPolicy:
   enabled: true
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+
+temporaryStorage:
+  sizeLimit: 1Gi

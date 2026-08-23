@@ -2,7 +2,7 @@
   "format": "cmul8.oci-process-contract.v1",
   "image": {
     "entrypoint": ["/opt/cmul8/bin/cmul8-entrypoint"],
-    "processArgument": "exactly one of web, api, worker, migrations, smoke",
+    "processArgument": "exactly one of web, api, worker, preflight, migrations, smoke",
     "requiredLabels": [
       "org.opencontainers.image.revision",
       "org.opencontainers.image.source",
@@ -27,7 +27,17 @@
     },
     "worker": {
       "command": ["/opt/cmul8/bin/cmul8-worker"],
-      "health": "process"
+      "health": {
+        "liveness": ["/opt/cmul8/bin/cmul8-worker-health", "--live"],
+        "readiness": ["/opt/cmul8/bin/cmul8-worker-health", "--ready"],
+        "contract": "must test the running worker and queue-consumption readiness; marker-file-only implementations are forbidden"
+      }
+    },
+    "preflight": {
+      "command": ["/opt/cmul8/bin/cmul8-preflight"],
+      "checks": ["environment-contract", "postgres", "redis", "object-storage", "secret-provider"],
+      "lifecycle": "pre-install-pre-upgrade-hook-before-migrations",
+      "restartPolicy": "Never"
     },
     "migrations": {
       "command": ["/opt/cmul8/bin/cmul8-migrate"],

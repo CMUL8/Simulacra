@@ -25,16 +25,17 @@ they provision nothing.
    optional and must be run from the target network with `--resolve-hosts`.
 4. Mirror the OCI image by digest. Create the external runtime Secret; do not
    put credentials in values files or the Operational Bundle.
-5. Run `helm upgrade --install` with tenant/environment, immutable image digest,
-   external secret, ingress, TLS, service-account annotations, resources, and
-   replicas. The pre-install/pre-upgrade migration Job must complete first.
+5. Run `helm upgrade --install --atomic --wait --timeout 15m` with
+   tenant/environment, immutable image digest, external secret, ingress, TLS,
+   service-account annotations, resources, and replicas. Preflight runs before
+   the migration Job; either failure stops the rollout.
 6. Inject checks for API, worker, queue, storage, and connectors into
    `deploy.run_smoke_checks`. Promote only if all five pass. The optional Helm
    smoke hook is disabled until the image implements the configured internal
    health endpoints; enabling it runs after install, upgrade, and rollback.
 
 The image must implement `deploy/processes.json`: its entrypoint dispatches one
-explicit process argument to the web, API, worker, migration, or smoke binary.
+explicit process argument to the web, API, worker, preflight, migration, or smoke binary.
 The chart does not retrofit this contract onto the repository's development
 image. Validate labels, non-root execution, read-only-root compatibility,
 shutdown behavior, ports, and probes in release CI before promotion.
@@ -44,4 +45,5 @@ undeclared files, duplicate members, absolute/traversal paths, links, special
 files, suspected credential material, and a mismatched content-addressed name.
 
 See [upgrade and rollback](upgrade-rollback.md), [release promotion](release-promotion.md),
-and [support bundles](support.md).
+[installation hardening](installation-hardening.md), [backup and restore](backup-restore.md),
+[air-gap readiness boundary](air-gap-readiness.md), and [support bundles](support.md).

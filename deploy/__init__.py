@@ -9,7 +9,7 @@ from .bundle import (
 )
 from .environment import PreflightResult, validate_environment
 from .install import install_bundle
-from .release import create_rollback_manifest, create_upgrade_manifest
+from .release import UpgradeAssessment, assess_upgrade, create_rollback_manifest, create_upgrade_manifest
 from .smoke import CheckResult, run_smoke_checks
 from .support import create_support_bundle
 
@@ -19,6 +19,8 @@ __all__ = [
     "OperationalBundleBuilder",
     "PreflightResult",
     "VerificationResult",
+    "UpgradeAssessment",
+    "assess_upgrade",
     "build_bundle",
     "create_rollback_manifest",
     "create_support_bundle",

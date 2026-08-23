@@ -25,6 +25,10 @@ cmul8.io/environment: {{ .Values.environment | quote }}
   value: {{ .Values.environment | quote }}
 - name: CMUL8_SECRET_PROVIDER
   value: {{ .Values.external.secretProvider | quote }}
+- name: CMUL8_IMAGE_REGISTRY
+  value: {{ .Values.image.repository | quote }}
+- name: CMUL8_TLS_REQUIRED
+  value: "true"
 - name: CMUL8_POSTGRES_URL
   valueFrom:
     secretKeyRef: {name: {{ .Values.external.secretName | quote }}, key: {{ .Values.external.postgresKey | quote }}}
