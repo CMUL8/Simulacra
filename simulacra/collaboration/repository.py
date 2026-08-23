@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
-from .errors import ConflictError, NotFoundError, ScopeError
+from .errors import AuthorizationError, ConflictError, NotFoundError, ScopeError
 from .models import Comment, DomainEvent, ProjectRoom, Review, Task, validate_scope_id
 
 Record = TypeVar("Record", ProjectRoom, Task, Comment, Review)
@@ -188,9 +188,11 @@ class JsonCollaborationRepository:
 		return self._create_record("tasks", task)
 
 	def get_task(self, tenant_id: str, project_id: str, task_id: str) -> Task:
+		self.get_room(tenant_id, project_id)
 		return self._get_record("tasks", Task, tenant_id, project_id, task_id)
 
 	def list_tasks(self, tenant_id: str, project_id: str) -> list[Task]:
+		self.get_room(tenant_id, project_id)
 		return self._list_records("tasks", Task, tenant_id, project_id)
 
 	def save_task(self, task: Task, expected_revision: int) -> Task:
@@ -205,6 +207,7 @@ class JsonCollaborationRepository:
 		return self._create_record("comments", comment)
 
 	def list_comments(self, tenant_id: str, project_id: str) -> list[Comment]:
+		self.get_room(tenant_id, project_id)
 		return self._list_records("comments", Comment, tenant_id, project_id)
 
 	def create_review(self, review: Review) -> Review:
@@ -215,10 +218,12 @@ class JsonCollaborationRepository:
 		return self._create_record("reviews", review)
 
 	def list_reviews(self, tenant_id: str, project_id: str, task_id: str | None = None) -> list[Review]:
+		self.get_room(tenant_id, project_id)
 		rows = self._list_records("reviews", Review, tenant_id, project_id)
 		return [row for row in rows if task_id is None or row.task_id == task_id]
 
 	def append_event(self, event: DomainEvent) -> DomainEvent:
+		self.get_room(event.tenant_id, event.project_id)
 		validate_scope_id(event.id, "event_id")
 		if not event.id.startswith("evt_"):
 			raise ScopeError("event id must use the evt_ prefix")
@@ -242,6 +247,7 @@ class JsonCollaborationRepository:
 		return event
 
 	def list_events(self, tenant_id: str, project_id: str) -> list[DomainEvent]:
+		self.get_room(tenant_id, project_id)
 		path = self._project_dir(tenant_id, project_id) / "events.jsonl"
 		if not path.exists():
 			return []
@@ -256,6 +262,9 @@ class JsonCollaborationRepository:
 
 	def get_inbox_state(self, tenant_id: str, project_id: str, actor_id: str) -> dict[str, Any]:
 		validate_scope_id(actor_id, "actor_id")
+		room = self.get_room(tenant_id, project_id)
+		if actor_id not in {member.actor_id for member in room.members}:
+			raise AuthorizationError("actor is not a project room member")
 		path = self._project_dir(tenant_id, project_id) / "inbox_state.json"
 		states = self._read_json(path, {})
 		return dict(states.get(actor_id, {"last_read_position": 0, "updated_at": None}))
@@ -264,6 +273,9 @@ class JsonCollaborationRepository:
 		self, tenant_id: str, project_id: str, actor_id: str, *, last_read_position: int, updated_at: str
 	) -> dict[str, Any]:
 		validate_scope_id(actor_id, "actor_id")
+		room = self.get_room(tenant_id, project_id)
+		if actor_id not in {member.actor_id for member in room.members}:
+			raise AuthorizationError("actor is not a project room member")
 		if last_read_position < 0:
 			raise ConflictError("read position cannot be negative")
 		with self._lock:
