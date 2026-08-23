@@ -956,7 +956,9 @@ export function AgentShell({
       message: trace.detail,
     })),
     connected: true,
-    deployments: project.deployed ? [{ environment: "Production", state: "healthy", version: project.checkpoints?.at(-1)?.label || "current", checkedAt: new Date().toISOString(), url: project.deploy_url || undefined }] : [],
+    // A deploy receipt is not a health signal. Runtime health appears only when a
+    // telemetry-backed adapter supplies it; the legacy snapshot does not.
+    deployments: [],
     versions: (project.checkpoints || []).map((checkpoint) => ({ id: checkpoint.id, label: checkpoint.label, createdAt: checkpoint.created_at, createdBy: "CMUL8", summary: checkpoint.raw_label || checkpoint.label, previewUrl: snapshot.preview_url || undefined, state: checkpoint.current ? "candidate" : "superseded" })),
     selectedVersionId: project.checkpoints?.find((checkpoint) => checkpoint.current)?.id,
   };
@@ -1022,7 +1024,7 @@ export function AgentShell({
 
       <div className="agent-center">
         {roomOpen ? (
-          <ProjectRoom room={roomModel} permissions={{ manageTasks: false, reviewTasks: false, reviewGraph: false, handoff: false, invite: false }} onOpenActivity={() => undefined} onOpenGraph={() => undefined} />
+          <ProjectRoom room={roomModel} permissions={{ manageTasks: false, reviewTasks: false, reviewGraph: false, handoff: false, invite: false }} />
         ) : (
           <>
         <div
