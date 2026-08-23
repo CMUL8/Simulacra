@@ -122,10 +122,12 @@ function clearLandingDraft() {
 }
 
 export default function App({
+  authRequired = true,
   clerkEnabled = false,
   clerkAvailable = false,
   onUseClerk,
 }: {
+  authRequired?: boolean;
   clerkEnabled?: boolean;
   clerkAvailable?: boolean;
   onUseClerk?: () => void;
@@ -227,11 +229,11 @@ export default function App({
     }
   }, []);
 
-  useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setAuthed(false);
-      return;
+	useEffect(() => {
+		const token = getToken();
+		if (!token && authRequired) {
+			setAuthed(false);
+			return;
     }
     let cancelled = false;
     const timeout = window.setTimeout(() => {
@@ -258,7 +260,7 @@ export default function App({
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, []);
+	}, [authRequired]);
 
   // Deep-link password reset: /#reset=spr_…
   useEffect(() => {

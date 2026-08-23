@@ -6,6 +6,7 @@ import { clearAuth, fetchMe, setTenantId, setToken } from "./api";
 import "./styles.css";
 
 type AuthConfig = {
+  auth_required: boolean;
   clerk_enabled: boolean;
   clerk_publishable_key: string | null;
 };
@@ -22,6 +23,7 @@ async function loadAuthConfig(): Promise<AuthConfig> {
   }
   const baked = (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined) || "";
   return {
+    auth_required: true,
     clerk_enabled: Boolean(baked),
     clerk_publishable_key: baked || null,
   };
@@ -85,7 +87,7 @@ function Root() {
   useEffect(() => {
     loadAuthConfig()
       .then(setConfig)
-      .catch(() => setConfig({ clerk_enabled: false, clerk_publishable_key: null }));
+      .catch(() => setConfig({ auth_required: true, clerk_enabled: false, clerk_publishable_key: null }));
   }, []);
 
   if (!config) {
@@ -106,6 +108,7 @@ function Root() {
   if (!wantClerk || !pk || !clerkAvailable) {
     return (
       <App
+        authRequired={config.auth_required}
         clerkEnabled={false}
         clerkAvailable={clerkAvailable}
         onUseClerk={() => setWantClerk(true)}
@@ -116,7 +119,7 @@ function Root() {
   return (
     <ClerkProvider publishableKey={pk} afterSignOutUrl="/">
       <ClerkSessionSync>
-        <App clerkEnabled clerkAvailable onUseClerk={() => setWantClerk(true)} />
+        <App authRequired={config.auth_required} clerkEnabled clerkAvailable onUseClerk={() => setWantClerk(true)} />
       </ClerkSessionSync>
     </ClerkProvider>
   );

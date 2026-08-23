@@ -1,0 +1,70 @@
+# CMUL8 V0 demo path
+
+This path exercises durable CMUL8 contracts without requiring external model,
+connector, Kubernetes, or cloud credentials.
+
+## Local console
+
+```bash
+uv sync --extra demo
+SIMULACRA_AUTH_REQUIRED=0 uv run uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
+cd apps/console && npm ci && npm run dev
+```
+
+`SIMULACRA_AUTH_REQUIRED=0` is development-only. Production and private-runtime
+configurations must retain authentication and an external secret provider.
+
+Open `http://127.0.0.1:5173`, select an existing project, then open Project Room
+from the people icon. The room is created through the tenant-authorized CMUL8
+API; tasks, comments, reviews, graph revisions, approvals, and inbox positions
+are durable records rather than browser fixtures.
+
+## Vendor-onboarding reference
+
+```bash
+PYTHONPATH=. python examples/vendor-onboarding/run.py
+PYTHONPATH=. python examples/vendor-onboarding/run.py --fail-first-notification
+```
+
+The second command demonstrates durable retry and exactly one idempotent
+external delivery. Both paths enforce independent runtime and collaboration
+self-approval denial.
+
+## Verification
+
+```bash
+uv run pytest -q
+cd apps/console && npx tsc --noEmit && npm run build
+```
+
+The two deployment tests skipped on machines without Helm are intentional.
+Run the following in release CI with Helm and Terraform installed:
+
+```bash
+helm template cmul8 charts/cmul8 -f charts/cmul8/ci/private-runtime-values.yaml
+terraform -chdir=infra/terraform/modules/aws validate
+terraform -chdir=infra/terraform/modules/azure validate
+terraform -chdir=infra/terraform/modules/gcp validate
+```
+
+## Private-runtime boundary
+
+The image uses `/opt/cmul8/bin/cmul8-entrypoint` for `web`, `api`, `worker`,
+`preflight`, `migrations`, and `smoke`. Worker probes contact the running worker
+over a Unix socket; readiness additionally verifies queue reachability. The
+chart requires a digest-pinned image and externally supplied PostgreSQL, Redis,
+object-storage, and secret-provider settings.
+
+Air-gap readiness is documented in `docs/private-runtime/air-gap-readiness.md`;
+end-to-end air-gap support is not certified in V0.
+
+## Observability API
+
+Telemetry is ingested and queried per authorized project:
+
+- `POST /projects/{project_id}/cmul8/observability/events`
+- `GET /projects/{project_id}/cmul8/observability`
+- `GET /projects/{project_id}/cmul8/observability/{kind}/{entity_id}`
+
+The API rejects credential-like telemetry attributes and filters every aggregate
+to the requested tenant and project before computing dashboard metrics.

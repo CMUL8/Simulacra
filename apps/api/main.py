@@ -255,6 +255,7 @@ def auth_config() -> dict:
 		or ""
 	).strip()
 	return {
+		"auth_required": auth_required(),
 		"clerk_enabled": clerk_enabled() and bool(pk),
 		"clerk_publishable_key": pk or None,
 		"clerk_frontend_api": os.environ.get("CLERK_FRONTEND_API", "https://clerk.platform.cmul8.com"),
