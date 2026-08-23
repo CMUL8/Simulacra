@@ -100,12 +100,14 @@ export function mapCmul8RoomPayload(payload: Cmul8RoomPayload): { room: ProjectR
     room: {
       id: payload.room.id, name: payload.project.name,
       context: { objective: payload.project.objective, decisions: [], constraints: [] },
-      members: payload.room.members.map((member) => ({
+      members: payload.room.members.map((member) => {
+        const live = payload.presence.find((item) => item.actor_id === member.actor_id);
+        return {
         id: member.actor_id, name: member.display_name || member.actor_id, role: member.role,
         kind: member.actor_type === "human" ? "human" : member.actor_type === "builder_agent" || member.actor_type === "runtime_agent" ? "agent" : undefined,
-        presence: member.presence === "active" || member.presence === "away" || member.presence === "offline" ? member.presence : undefined,
-        currentTask: member.current_task, lastSeenAt: member.last_seen_at,
-      })),
+        presence: live?.status ?? (member.presence === "active" || member.presence === "away" || member.presence === "offline" ? member.presence : undefined),
+        currentTask: member.current_task, lastSeenAt: live?.last_seen_at ?? member.last_seen_at,
+      }; }),
       tasks: payload.tasks.map((task) => mapTask(task, payload.reviews)), graph: mapGraph(payload),
       workEvents: payload.events.map(mapWorkEvent).filter((event): event is WorkEvent => event !== null),
       connectionState: "unknown", deployments: [], versions: [], activity,

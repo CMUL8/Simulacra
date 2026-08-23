@@ -47,6 +47,7 @@ approval_rules:
     name: Approve external replies
     required: true
     approvals_required: 1
+    approver_roles: [admin, owner]
     actions: [connector_support.write]
 schedules:
   - id: schedule_triage

@@ -18,7 +18,8 @@ _CREDENTIAL_URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*://[^/@:\s]+:[^/@\s]+@", re.
 
 
 def _normalized_key(key: Any) -> str:
-	return str(key).strip().lower().replace("-", "_").replace(" ", "_")
+	text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key).strip())
+	return text.lower().replace("-", "_").replace(" ", "_")
 
 
 def _credential_key(key: str) -> bool:

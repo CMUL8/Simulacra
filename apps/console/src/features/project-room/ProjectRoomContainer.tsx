@@ -5,7 +5,9 @@ import {
   approveCmul8Graph,
   createCmul8Room,
   getCmul8Room,
+  heartbeatCmul8Presence,
   reviewCmul8Task,
+  claimCmul8Task,
   transitionCmul8Task,
   type Cmul8RoomPayload,
 } from "../../api";
@@ -57,7 +59,12 @@ export function ProjectRoomContainer({ projectId }: { projectId: string }) {
     }
   }, [projectId, payload]);
 
-  useEffect(() => { setPayload(null); setState("loading"); void load(); }, [projectId]); // load is intentionally reset by project identity only
+  useEffect(() => {
+    setPayload(null); setState("loading");
+    void heartbeatCmul8Presence(projectId).then(load, load);
+    const timer = window.setInterval(() => { void heartbeatCmul8Presence(projectId); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [projectId]); // load is intentionally reset by project identity only
 
   const mapped = useMemo(() => payload ? mapCmul8RoomPayload(payload) : null, [payload]);
   const mutate = useCallback(async (operation: () => Promise<unknown>) => {
@@ -66,7 +73,18 @@ export function ProjectRoomContainer({ projectId }: { projectId: string }) {
   }, [load]);
 
   const adapter = useMemo<Partial<ProjectRoomFeatureAdapter>>(() => ({
-    transitionTask: async (taskId, next, revision) => { await mutate(() => transitionCmul8Task(projectId, taskId, next, revision)); },
+    transitionTask: async (taskId, next, revision) => {
+      const current = mapped?.room.tasks.find((task) => task.id === taskId);
+      await mutate(async () => {
+        let expected = revision;
+        if (current && !current.ownerId) {
+          const claimed = await claimCmul8Task(projectId, taskId, revision);
+          expected = claimed.revision;
+          if (next === "ready") return;
+        }
+        await transitionCmul8Task(projectId, taskId, next, expected);
+      });
+    },
     submitTaskReview: async (taskId, decision, note, revision) => { await mutate(() => reviewCmul8Task(projectId, taskId, commandDecision(decision), note ?? "", revision)); },
     reconnect: load,
     approveGraph: async (revisionHash) => { await mutate(() => approveCmul8Graph(projectId, revisionHash)); },
@@ -75,7 +93,7 @@ export function ProjectRoomContainer({ projectId }: { projectId: string }) {
       await load();
       return { id: created.id, author: created.author_id, body: created.body, createdAt: created.created_at, resolved: false, mentions: created.mentions?.map((item) => `${item.ref_type}:${item.ref_id}`), section: created.graph_path?.replace(/^\/review\//, "") ?? undefined };
     },
-  }), [load, mutate, projectId]);
+  }), [load, mapped, mutate, projectId]);
 
   return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} actionError={actionError} onRetryLoad={() => void load()} />;
 }

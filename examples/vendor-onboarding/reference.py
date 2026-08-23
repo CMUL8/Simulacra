@@ -272,7 +272,7 @@ class VendorOnboardingReference:
 
 	def attempt_submitter_approval(self, case: VendorCase) -> None:
 		"""Demonstrate both runtime and collaboration segregation boundaries."""
-		self.runtime.approvals.decide(case.approval_id, actor_id=case.submitted_by, decision="approved")
+		self.runtime.approvals.decide(case.approval_id, actor_id=case.submitted_by, decision="approved", actor_roles={"vendor_submitter"})
 
 	def attempt_submitter_collaboration_review(self, case: VendorCase) -> None:
 		task = self.collaboration_repository.get_task(TENANT_ID, PROJECT_ID, case.collaboration_task_id)
@@ -286,7 +286,7 @@ class VendorOnboardingReference:
 		)
 
 	def approve(self, case: VendorCase, *, approver_id: str = "approval_manager") -> None:
-		self.runtime.approvals.decide(case.approval_id, actor_id=approver_id, decision="approved")
+		self.runtime.approvals.decide(case.approval_id, actor_id=approver_id, decision="approved", actor_roles={"approval_manager"})
 		task = self.collaboration_repository.get_task(TENANT_ID, PROJECT_ID, case.collaboration_task_id)
 		self.collaboration.review_task(
 			tenant_id=TENANT_ID, project_id=PROJECT_ID, task_id=task.id,

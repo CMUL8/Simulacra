@@ -95,6 +95,17 @@ def test_render_validator_rejects_unresolved_templates_and_secrets():
         validate_rendered_manifest(RENDERED_CONTRACT + "\nkind: Secret\n")
 
 
+def test_private_runtime_maps_database_and_durable_state_contracts():
+    helpers = (CHART / "templates" / "_helpers.tpl").read_text()
+    deployments = (CHART / "templates" / "deployments.yaml").read_text()
+    pvc = (CHART / "templates" / "pvc.yaml").read_text()
+    assert "SIMULACRA_DATABASE_URL" in helpers
+    assert "SIMULACRA_DATA_DIR" in helpers and "SIMULACRA_RUNS_DIR" in helpers
+    assert "mountPath: /var/lib/cmul8" in deployments
+    assert "persistentVolumeClaim" in deployments
+    assert "kind: PersistentVolumeClaim" in pvc
+
+
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm binary unavailable; CI must run this real render")
 @pytest.mark.parametrize("upgrade", [False, True], ids=["install", "upgrade"])
 def test_real_helm_install_and_upgrade_render(upgrade: bool):

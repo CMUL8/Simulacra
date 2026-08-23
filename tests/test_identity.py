@@ -120,6 +120,16 @@ def test_rbac_viewer_cannot_write():
 		ctx.require("project:write")
 
 
+def test_only_admins_and_owners_can_approve_projects():
+	from simulacra.demo.identity import AuthContext, User
+
+	user = User(id="usr_review", email="review@example.test", name="Reviewer", password_hash="unused")
+	member = AuthContext(user=user, tenant_id="tenant_review", role="member", auth_via="test")
+	with pytest.raises(PermissionError):
+		member.require("project:approve")
+	AuthContext(user=user, tenant_id="tenant_review", role="admin", auth_via="test").require("project:approve")
+
+
 def test_project_quota():
 	from simulacra.demo.identity import ensure_bootstrap
 	from simulacra.demo.runs import create_project

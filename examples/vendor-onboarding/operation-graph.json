@@ -91,6 +91,7 @@
       "required": true,
       "approvals_required": 1,
       "allow_self_approval": false,
+      "approver_roles": ["approval_manager"],
       "actions": ["connector_notifications.send"]
     }
   ],

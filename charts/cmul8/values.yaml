@@ -117,3 +117,10 @@ networkPolicy:
 
 temporaryStorage:
   sizeLimit: 1Gi
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  accessModes: [ReadWriteMany]
+  size: 10Gi
+  storageClass: ""

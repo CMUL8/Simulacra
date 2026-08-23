@@ -61,6 +61,13 @@ def test_room_task_and_graph_are_durable_not_synthesized(monkeypatch, tmp_path):
 	assert task["owner_id"] == "user_owner"
 	loaded = cmul8_routes.get_room("project_api", ctx)
 	assert [item["id"] for item in loaded["tasks"]] == [task["id"]]
+	proposed = cmul8_routes.create_task(
+		"project_api", cmul8_routes.TaskCreateBody(
+			title="Claim me", objective="Atomically assign work", acceptance_criteria=["Owner recorded"],
+		), request, ctx,
+	)
+	claimed = cmul8_routes.claim_task("project_api", proposed["id"], proposed["revision"], request, ctx)
+	assert claimed["owner_id"] == "user_owner" and claimed["state"] == "ready"
 
 	graph = json.loads((Path(__file__).parents[1] / "examples/vendor-onboarding/operation-graph.json").read_text())
 	graph["metadata"]["tenant_id"] = "tenant_api"
@@ -80,6 +87,8 @@ def test_room_payload_does_not_invent_deployment_health(monkeypatch, tmp_path):
 	payload = cmul8_routes.create_room("project_api", cmul8_routes.RoomCreateBody(), request, ctx)
 	assert "deployments" not in payload
 	assert payload["permissions"]["review_graph"] is True
+	cmul8_routes.heartbeat_presence("project_api", cmul8_routes.PresenceBody(), ctx)
+	assert cmul8_routes.get_room("project_api", ctx)["presence"][0]["actor_id"] == "user_owner"
 
 
 def test_observability_is_project_and_tenant_scoped(monkeypatch, tmp_path):

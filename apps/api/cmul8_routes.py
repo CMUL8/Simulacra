@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from apps.api.security import audit_request, require_project_access
-from simulacra.collaboration import ActivityInbox, CollaborationService, JsonCollaborationRepository
+from simulacra.collaboration import ActivityInbox, CollaborationService, JsonCollaborationRepository, PresenceRegistry
 from simulacra.collaboration.errors import CollaborationError
 from simulacra.collaboration.models import CommentTargetType, ReviewDecision, TaskState
 from simulacra.demo.identity import AuthContext
@@ -32,6 +32,7 @@ from simulacra.observability import (
 router = APIRouter(prefix="/projects/{project_id}/cmul8", tags=["cmul8-v0"])
 _collaboration_root = RUNS_DIR / ".cmul8-control"
 _telemetry_root = RUNS_DIR / ".cmul8-telemetry"
+_presence = PresenceRegistry(ttl_seconds=60)
 
 
 def _collaboration() -> tuple[JsonCollaborationRepository, CollaborationService]:
@@ -56,6 +57,17 @@ def _translate(exc: Exception) -> HTTPException:
 
 class RoomCreateBody(BaseModel):
 	display_name: str = Field(default="", max_length=120)
+
+
+class RoomMemberBody(BaseModel):
+	member_id: str
+	role: str = Field(default="member", pattern="^(owner|admin|member|viewer|reviewer|approver)$")
+	expected_revision: int = Field(ge=1)
+
+
+class PresenceBody(BaseModel):
+	status: str = Field(default="active", pattern="^(active|away)$")
+	location: str | None = Field(default=None, max_length=200)
 
 
 class TaskCreateBody(BaseModel):
@@ -155,6 +167,7 @@ def _room_payload(project_id: str, ctx: AuthContext) -> dict[str, Any]:
 				for item in away.highlights
 			],
 		},
+		"presence": [asdict(item) for item in _presence.list_active(tenant_id=ctx.tenant_id, project_id=project_id)],
 		"permissions": {
 			"manage_tasks": ctx.role in {"owner", "admin", "member"} or ctx.user.is_platform_admin,
 			"review_tasks": ctx.role in {"owner", "admin"} or ctx.user.is_platform_admin,
@@ -193,6 +206,57 @@ def get_room(
 		raise _translate(exc) from exc
 
 
+@router.post("/room/members")
+def add_room_member(
+	project_id: str, body: RoomMemberBody, request: Request,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:approve"))],
+) -> dict[str, Any]:
+	_, service = _collaboration()
+	try:
+		room = service.add_member(
+			tenant_id=ctx.tenant_id, project_id=project_id, actor_id=ctx.user.id,
+			member_id=body.member_id, role=body.role, expected_revision=body.expected_revision,
+		)
+	except CollaborationError as exc:
+		raise _translate(exc) from exc
+	audit_request(request, ctx, "cmul8.room.member_add", project_id=project_id, member_id=body.member_id)
+	return room.to_dict()
+
+
+@router.post("/presence")
+def heartbeat_presence(
+	project_id: str, body: PresenceBody,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+) -> dict[str, Any]:
+	repository, _ = _collaboration()
+	try:
+		room = repository.get_room(ctx.tenant_id, project_id)
+		if ctx.user.id not in {member.actor_id for member in room.members}:
+			raise HTTPException(403, "project room membership required")
+		return asdict(_presence.heartbeat(
+			tenant_id=ctx.tenant_id, project_id=project_id, actor_id=ctx.user.id,
+			status=body.status, location=body.location,
+		))
+	except CollaborationError as exc:
+		raise _translate(exc) from exc
+
+
+@router.post("/inbox/read")
+def mark_inbox_read(
+	project_id: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+	position: int | None = None, event_id: str | None = None,
+) -> dict[str, Any]:
+	repository, _ = _collaboration()
+	try:
+		return ActivityInbox(repository).mark_read(
+			tenant_id=ctx.tenant_id, project_id=project_id, actor_id=ctx.user.id,
+			position=position, event_id=event_id,
+		)
+	except CollaborationError as exc:
+		raise _translate(exc) from exc
+
+
 @router.post("/tasks")
 def create_task(
 	project_id: str, body: TaskCreateBody, request: Request,
@@ -225,6 +289,23 @@ def transition_task(
 	except CollaborationError as exc:
 		raise _translate(exc) from exc
 	audit_request(request, ctx, "cmul8.task.transition", project_id=project_id, task_id=task_id)
+	return task.to_dict()
+
+
+@router.post("/tasks/{task_id}/claim")
+def claim_task(
+	project_id: str, task_id: str, expected_revision: int, request: Request,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict[str, Any]:
+	_, service = _collaboration()
+	try:
+		task = service.claim_task(
+			tenant_id=ctx.tenant_id, project_id=project_id, task_id=task_id,
+			actor_id=ctx.user.id, expected_revision=expected_revision,
+		)
+	except CollaborationError as exc:
+		raise _translate(exc) from exc
+	audit_request(request, ctx, "cmul8.task.claim", project_id=project_id, task_id=task_id)
 	return task.to_dict()
 
 
@@ -309,7 +390,7 @@ def ingest_telemetry(
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 ) -> dict[str, Any]:
 	try:
-		assert_opaque_credentials(body.attributes, context="telemetry attributes")
+		assert_opaque_credentials(body.model_dump(), context="telemetry event")
 		event = TelemetryEvent(
 			id=body.id, tenant_id=ctx.tenant_id, entity_kind=body.entity_kind,
 			entity_id=body.entity_id, entity_name=body.entity_name, signal=body.signal,

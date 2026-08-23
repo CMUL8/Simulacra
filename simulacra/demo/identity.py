@@ -16,7 +16,7 @@ from typing import Any, Literal
 from .paths import REPO_ROOT
 from .tenants import assert_tenant_active, create_tenant, default_tenant_id, get_tenant, list_tenants
 
-DATA_DIR = REPO_ROOT / "data"
+DATA_DIR = Path(os.environ.get("SIMULACRA_DATA_DIR", REPO_ROOT / "data")).resolve()
 USERS_PATH = DATA_DIR / "users.json"
 KEYS_PATH = DATA_DIR / "api_keys.json"
 SESSIONS_PATH = DATA_DIR / "sessions.json"
@@ -30,7 +30,7 @@ ROLE_RANK = {"viewer": 1, "member": 2, "admin": 3, "owner": 4}
 PERMISSIONS: dict[str, Role] = {
 	"project:read": "viewer",
 	"project:write": "member",
-	"project:approve": "member",
+	"project:approve": "admin",
 	"project:deploy": "admin",
 	"tenant:read": "viewer",
 	"tenant:manage": "admin",

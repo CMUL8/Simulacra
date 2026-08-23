@@ -127,6 +127,12 @@ class ApprovedGraph:
 				return bool(rule.get("required", True)), max(1, int(rule.get("approvals_required", 1))), bool(rule.get("allow_self_approval", False))
 		return False, 1, False
 
+	def approver_roles(self, action: str) -> frozenset[str]:
+		for rule in self.graph.get("approval_rules", []):
+			if action in rule.get("actions", []):
+				return frozenset(str(role) for role in rule.get("approver_roles", ("admin", "owner")))
+		return frozenset({"admin", "owner"})
+
 	def runtime_agent(self, agent_id: str) -> Mapping[str, Any]:
 		agent = self.item("agents", agent_id)
 		if agent.get("actor_type") != "runtime_agent":

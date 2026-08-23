@@ -146,12 +146,14 @@ class ApprovalService:
 	def get(self, approval_id: str) -> ApprovalRequest:
 		return self.repository.get_approval(self.policy.tenant_id, self.environment_id, self.policy.project_id, approval_id)
 
-	def decide(self, approval_id: str, *, actor_id: str, decision: str, reason: str = "", expected_revision: int | None = None) -> ApprovalRequest:
+	def decide(self, approval_id: str, *, actor_id: str, decision: str, actor_roles: tuple[str, ...] | list[str] | set[str] = (), reason: str = "", expected_revision: int | None = None) -> ApprovalRequest:
 		if decision not in {"approved", "rejected"}: raise ValueError("decision must be approved or rejected")
 		current = self.get(approval_id)
 		if current.status != "pending": raise RuntimeConflictError("approval request is no longer pending")
 		if expected_revision is not None and expected_revision != current.revision: raise RuntimeConflictError("stale approval revision")
 		if actor_id == current.requester_id and not current.allow_self_approval: raise RuntimeAuthorizationError("requester may not self-approve")
+		eligible = self.policy.approver_roles(current.action)
+		if not eligible.intersection(actor_roles): raise RuntimeAuthorizationError(f"approval requires one of roles: {', '.join(sorted(eligible))}")
 		if any(item["actor_id"] == actor_id for item in current.decisions): raise RuntimeConflictError("actor already decided this approval")
 		now = self.clock()
 		if current.expires_at and _parse_time(now) >= _parse_time(current.expires_at):

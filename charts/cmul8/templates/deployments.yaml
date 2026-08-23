@@ -56,6 +56,7 @@ spec:
             {{- include "cmul8.env" $ | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/cmul8}
           {{- if eq $process "worker" }}
           livenessProbe:
             exec: {command: ["/opt/cmul8/bin/cmul8-worker-health", "--live"]}
@@ -84,4 +85,7 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: {{ $.Values.temporaryStorage.sizeLimit }}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-state" (include "cmul8.fullname" $)) $.Values.persistence.existingClaim }}
 {{- end }}

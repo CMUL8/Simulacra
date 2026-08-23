@@ -32,6 +32,13 @@ cmul8.io/environment: {{ .Values.environment | quote }}
 - name: CMUL8_POSTGRES_URL
   valueFrom:
     secretKeyRef: {name: {{ .Values.external.secretName | quote }}, key: {{ .Values.external.postgresKey | quote }}}
+- name: SIMULACRA_DATABASE_URL
+  valueFrom:
+    secretKeyRef: {name: {{ .Values.external.secretName | quote }}, key: {{ .Values.external.postgresKey | quote }}}
+- name: SIMULACRA_DATA_DIR
+  value: /var/lib/cmul8/data
+- name: SIMULACRA_RUNS_DIR
+  value: /var/lib/cmul8/runs
 - name: CMUL8_REDIS_URL
   valueFrom:
     secretKeyRef: {name: {{ .Values.external.secretName | quote }}, key: {{ .Values.external.redisKey | quote }}}

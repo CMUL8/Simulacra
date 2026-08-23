@@ -639,6 +639,7 @@ export type Cmul8RoomPayload = {
   operation_graph_approvals: Array<{ approval_id: string; revision_hash: string; actor_id: string; decision: string; created_at: string; updated_at?: string }>;
   away: { since?: string | null; total: number; unread: number; counts: Record<string, number>; highlights: Array<{ position: number; category: string; unread: boolean; event: Cmul8DomainEventRecord; deep_link: Record<string, string | null> }> };
   permissions: { manage_tasks: boolean; review_tasks: boolean; review_graph: boolean; invite: boolean };
+  presence: Array<{ actor_id: string; status: "active" | "away"; location?: string | null; last_seen_at: string; expires_at: string }>;
 };
 
 export async function getCmul8Room(projectId: string): Promise<Cmul8RoomPayload> {
@@ -649,6 +650,10 @@ export async function createCmul8Room(projectId: string): Promise<Cmul8RoomPaylo
   return json(`/projects/${projectId}/cmul8/room`, { method: "POST", body: "{}" });
 }
 
+export async function heartbeatCmul8Presence(projectId: string, status: "active" | "away" = "active"): Promise<void> {
+  await json(`/projects/${projectId}/cmul8/presence`, { method: "POST", body: JSON.stringify({ status }) });
+}
+
 export async function createCmul8Task(projectId: string, task: { title: string; objective: string; acceptance_criteria: string[]; owner_id?: string; operation_graph_version?: string }): Promise<Cmul8TaskRecord> {
   return json(`/projects/${projectId}/cmul8/tasks`, { method: "POST", body: JSON.stringify(task) });
 }
@@ -657,6 +662,10 @@ export async function transitionCmul8Task(projectId: string, taskId: string, sta
   await json(`/projects/${projectId}/cmul8/tasks/${encodeURIComponent(taskId)}/transition`, {
     method: "POST", body: JSON.stringify({ state, expected_revision: expectedRevision }),
   });
+}
+
+export async function claimCmul8Task(projectId: string, taskId: string, expectedRevision: number): Promise<Cmul8TaskRecord> {
+  return json(`/projects/${projectId}/cmul8/tasks/${encodeURIComponent(taskId)}/claim?expected_revision=${expectedRevision}`, { method: "POST" });
 }
 
 export async function reviewCmul8Task(projectId: string, taskId: string, decision: string, body: string, expectedRevision: number): Promise<void> {
@@ -757,6 +766,14 @@ export async function runQuery(id: string, sql: string) {
 export async function listEvents(projectId: string): Promise<AgentEvent[]> {
   const data = await json<{ events: AgentEvent[] }>(`/projects/${projectId}/events`);
   return data.events;
+}
+
+export async function fetchCmul8Observability<T = unknown>(projectId: string): Promise<T> {
+  return json<T>(`/projects/${encodeURIComponent(projectId)}/cmul8/observability`);
+}
+
+export async function fetchCmul8ObservabilityDetail<T = unknown>(projectId: string, kind: string, entityId: string): Promise<T> {
+  return json<T>(`/projects/${encodeURIComponent(projectId)}/cmul8/observability/${encodeURIComponent(kind)}/${encodeURIComponent(entityId)}`);
 }
 
 /** Subscribe to live SSE events. Returns unsubscribe function. */

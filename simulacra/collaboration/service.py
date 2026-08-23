@@ -257,6 +257,8 @@ class CollaborationService:
 		choice = ReviewDecision(decision)
 		if task.owner_id == reviewer_id and not allow_self_review:
 			raise AuthorizationError("task owner cannot review their own work")
+		if ActorType(actor_type) == ActorType.HUMAN and member.role not in {"owner", "admin", "approver", "reviewer"}:
+			raise AuthorizationError("task review requires an owner, admin, approver, or reviewer role")
 		if choice == ReviewDecision.ROLLBACK:
 			if task.state != TaskState.DONE:
 				raise InvalidTransitionError("rollback requires a done task")

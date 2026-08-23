@@ -32,10 +32,15 @@ spec:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           env:
             {{- include "cmul8.env" . | nindent 12 }}
-          volumeMounts: [{name: tmp, mountPath: /tmp}]
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/cmul8}
           resources:
             {{- toYaml .Values.resources.migrations | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {sizeLimit: {{ .Values.temporaryStorage.sizeLimit }}}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-state" (include "cmul8.fullname" .)) .Values.persistence.existingClaim }}
 {{- end }}

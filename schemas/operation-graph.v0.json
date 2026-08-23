@@ -118,7 +118,8 @@
       "properties": {
         "required": { "type": "boolean" },
         "approvals_required": { "type": "integer", "minimum": 0 },
-        "actions": { "$ref": "#/$defs/stringList", "minItems": 1 }
+        "actions": { "$ref": "#/$defs/stringList", "minItems": 1 },
+        "approver_roles": { "$ref": "#/$defs/stringList", "minItems": 1 }
       },
       "additionalProperties": true
     },

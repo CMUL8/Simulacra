@@ -91,6 +91,8 @@ def test_approved_graph_requires_auditable_factory_and_is_deeply_immutable(tmp_p
 		{"nested": [{"token": "raw"}]},
 		{"headers": [{"value": "Bearer raw-token"}]},
 		{"credentials": {"client_secret": "raw"}},
+		{"nested": {"apiKey": "raw"}},
+		{"nested": {"clientSecret": "raw"}},
 	],
 )
 def test_nested_connector_credentials_are_rejected_after_graph_approval(tmp_path: Path, configuration: dict):
@@ -112,6 +114,7 @@ def test_nested_connector_credentials_are_rejected_after_graph_approval(tmp_path
 		{"message": "Bearer raw-token"},
 		{"callback": "https://user:password@example.invalid/path"},
 		{"nested": {"private_key": "-----BEGIN PRIVATE KEY-----"}},
+		{"nested": {"accessToken": "raw"}},
 	],
 )
 def test_nested_action_credentials_fail_before_durable_persistence(tmp_path: Path, payload: dict):
@@ -153,8 +156,10 @@ def test_consequential_actions_are_idempotent_and_cannot_bypass_approval(tmp_pat
 	duplicate = plane.actions.submit("connector_support", "write", {"message": "hi"}, requester_id="alice", idempotency_key="reply-1")
 	assert duplicate.id == action.id and calls == [] and action.status == "pending_approval"
 	with pytest.raises(ApprovalRequiredError): plane.actions.execute_approved(action.id)
-	with pytest.raises(RuntimeAuthorizationError): plane.approvals.decide(action.approval_id, actor_id="alice", decision="approved")
-	plane.approvals.decide(action.approval_id, actor_id="bob", decision="approved")
+	with pytest.raises(RuntimeAuthorizationError): plane.approvals.decide(action.approval_id, actor_id="alice", decision="approved", actor_roles={"admin"})
+	with pytest.raises(RuntimeAuthorizationError, match="requires one of roles"):
+		plane.approvals.decide(action.approval_id, actor_id="mallory", decision="approved")
+	plane.approvals.decide(action.approval_id, actor_id="bob", decision="approved", actor_roles={"admin"})
 	done = plane.actions.execute_approved(action.id)
 	assert done.status == "succeeded" and len(calls) == 1
 	assert plane.actions.execute_approved(action.id).id == done.id and len(calls) == 1
@@ -296,7 +301,7 @@ def test_human_tasks_approvals_audit_telemetry_and_duplicate_event(tmp_path: Pat
 	assert plane.human_tasks.queue(assignee_id="bob") == [task]
 	assert plane.human_tasks.complete(task.id, expected_revision=0).status == "completed"
 	approval = plane.approvals.request("custom.action", "alice")
-	assert plane.approvals.decide(approval.id, actor_id="bob", decision="approved").status == "approved"
+	assert plane.approvals.decide(approval.id, actor_id="bob", decision="approved", actor_roles={"admin"}).status == "approved"
 	event = plane.audit.record("case.created", "alice", "ok", event_id="evt_fixed")
 	assert plane.audit.record("case.created", "alice", "ok", event_id="evt_fixed") == event
 	assert len(plane.audit.list()) == 1
