@@ -1,0 +1,7 @@
+status=healthy password="hunter2"
+AUTHORIZATION: Bearer bearer-token-value.tail
+2026-08-23 proxy authorization = Bearer prefixed-bearer-token
+access_token = access-token-text-value
+Client-Secret: 'client-secret-text-value'
+x-api-key="api-key-text-value"
+"refresh_token": "refresh-token-quoted-value", "safe": "retained"

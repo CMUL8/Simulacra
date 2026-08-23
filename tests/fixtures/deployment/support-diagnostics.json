@@ -1,0 +1,10 @@
+{
+  "database": {"password": "hunter2"},
+  "oauth": {
+    "access_token": "access-token-value",
+    "client_secret": "client-secret-value"
+  },
+  "x_api_key": "api-key-value",
+  "safe_status": "healthy",
+  "nested_log": "proxy Authorization: Bearer nested-bearer-token"
+}

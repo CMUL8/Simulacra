@@ -58,18 +58,42 @@ def test_smoke_checks_are_injected_ordered_and_do_not_short_circuit():
 
 def test_support_bundle_is_deterministic_and_redacted(tmp_path: Path):
     environment = valid_environment() | {"CMUL8_ADMIN_TOKEN": "do-not-leak"}
-    diagnostics = {"health.log": "status=ok password=hunter2\nauthorization: Bearer-credential"}
+    fixture = ROOT / "tests" / "fixtures" / "deployment"
+    diagnostics = {
+        "health.log": (fixture / "support-diagnostics.log").read_bytes(),
+        "runtime.json": (fixture / "support-diagnostics.json").read_bytes(),
+    }
     first = create_support_bundle(tmp_path / "one", environment=environment, diagnostics=diagnostics)
     second = create_support_bundle(tmp_path / "two", environment=environment, diagnostics=diagnostics)
     assert first.read_bytes() == second.read_bytes()
     with tarfile.open(first) as archive:
         content = b"\n".join(archive.extractfile(member).read() for member in archive if member.isfile())
-    assert b"hunter2" not in content
-    assert b"do-not-leak" not in content
-    assert b"Bearer-credential" not in content
-    assert content.count(b"[REDACTED]") >= 3
+    for forbidden in (
+        b"hunter2",
+        b"do-not-leak",
+        b"bearer-token-value",
+        b"prefixed-bearer-token",
+        b"nested-bearer-token",
+        b"access-token-value",
+        b"access-token-text-value",
+        b"client-secret-value",
+        b"client-secret-text-value",
+        b"api-key-value",
+        b"api-key-text-value",
+        b"refresh-token-quoted-value",
+    ):
+        assert forbidden not in content
+    assert b"healthy" in content
+    assert b"retained" in content
+    assert content.count(b"[REDACTED]") >= 10
     with pytest.raises(BundleError, match="filename"):
         create_support_bundle(tmp_path, environment=environment, diagnostics={"private-key.pem": "key"})
+
+
+@pytest.mark.parametrize("binary", [b"text\x00tail", b"\xff\xfe"])
+def test_support_bundle_rejects_binary_diagnostics(tmp_path: Path, binary: bytes):
+    with pytest.raises(BundleError, match="binary|UTF-8"):
+        create_support_bundle(tmp_path, environment=valid_environment(), diagnostics={"health.log": binary})
 
 
 def test_upgrade_and_rollback_records_are_explicit_and_deterministic():
