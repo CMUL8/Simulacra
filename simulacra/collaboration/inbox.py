@@ -7,9 +7,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Iterable
 
-from .models import DomainEvent, iso_now
-from .repository import JsonCollaborationRepository
 from .errors import AuthorizationError
+from .models import DomainEvent, iso_now
+from .repository import CollaborationRepository
 
 
 class InboxCategory(StrEnum):
@@ -55,7 +55,7 @@ class AwaySummary:
 
 
 class ActivityInbox:
-	def __init__(self, repository: JsonCollaborationRepository):
+	def __init__(self, repository: CollaborationRepository):
 		self.repository = repository
 
 	def _assert_member(self, tenant_id: str, project_id: str, actor_id: str) -> None:

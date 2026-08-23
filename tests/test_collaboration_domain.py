@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,6 +16,7 @@ from simulacra.collaboration import (
 	CollaborationService,
 	CommentTargetType,
 	ConflictError,
+	DomainEvent,
 	InvalidTransitionError,
 	JsonCollaborationRepository,
 	PresenceRegistry,
@@ -23,6 +26,50 @@ from simulacra.collaboration import (
 	make_domain_event,
 	project_legacy_event,
 )
+
+
+class _BarrierRepository(JsonCollaborationRepository):
+	def __init__(self, root: str, ready, gate):
+		super().__init__(root)
+		self._ready = ready
+		self._gate = gate
+
+	def get_task(self, tenant_id: str, project_id: str, task_id: str):
+		task = super().get_task(tenant_id, project_id, task_id)
+		self._ready.put(task.revision)
+		if not self._gate.wait(timeout=10):
+			raise RuntimeError("claim race gate timed out")
+		return task
+
+	@staticmethod
+	def _atomic_json(path: Path, value) -> None:
+		if path.name == "tasks.json":
+			time.sleep(0.2)
+		JsonCollaborationRepository._atomic_json(path, value)
+
+
+def _claim_in_process(root: str, task_id: str, actor_id: str, ready, gate, results) -> None:
+	try:
+		service = CollaborationService(_BarrierRepository(root, ready, gate))
+		service.claim_task(
+			tenant_id="tenant_a", project_id="project_a", task_id=task_id,
+			actor_id=actor_id, expected_revision=1,
+		)
+		results.put("success")
+	except ConflictError:
+		results.put("conflict")
+	except Exception as exc:  # pragma: no cover - surfaced through the assertion in the parent
+		results.put(f"error:{type(exc).__name__}:{exc}")
+
+
+def _append_event_in_process(root: str, event_row: dict, gate, results) -> None:
+	try:
+		if not gate.wait(timeout=10):
+			raise RuntimeError("event race gate timed out")
+		JsonCollaborationRepository(root).append_event(DomainEvent.from_dict(event_row))
+		results.put("success")
+	except Exception as exc:  # pragma: no cover - surfaced through the assertion in the parent
+		results.put(f"error:{type(exc).__name__}:{exc}")
 
 
 @pytest.fixture()
@@ -81,6 +128,77 @@ def test_atomic_single_owner_claim_and_stale_commands(collaboration) -> None:
 			tenant_id="tenant_a", project_id="project_a", task_id=task.id,
 			actor_id=winners[0].owner_id, to_state="working", expected_revision=1,
 		)
+
+
+def test_atomic_claim_is_safe_across_processes(collaboration) -> None:
+	repository, service = collaboration
+	task = _task(service)
+	context = multiprocessing.get_context("spawn")
+	ready = context.Queue()
+	gate = context.Event()
+	results = context.Queue()
+	processes = [
+		context.Process(
+			target=_claim_in_process,
+			args=(str(repository.root), task.id, actor_id, ready, gate, results),
+		)
+		for actor_id in ("alice", "bob")
+	]
+	for process in processes:
+		process.start()
+	assert [ready.get(timeout=10), ready.get(timeout=10)] == [1, 1]
+	gate.set()
+	for process in processes:
+		process.join(timeout=10)
+		assert process.exitcode == 0
+	assert sorted([results.get(timeout=2), results.get(timeout=2)]) == ["conflict", "success"]
+	stored = repository.get_task("tenant_a", "project_a", task.id)
+	assert stored.revision == 2
+	assert stored.owner_id in {"alice", "bob"}
+
+
+def test_duplicate_event_is_idempotent_across_processes(collaboration) -> None:
+	repository, _ = collaboration
+	event = make_domain_event(
+		event_id="evt_process_duplicate", tenant_id="tenant_a", project_id="project_a",
+		actor_type="system", actor_id="system", action="task.process_test", result="succeeded",
+		timestamp="2026-08-23T12:00:00+00:00",
+	)
+	context = multiprocessing.get_context("spawn")
+	gate = context.Event()
+	results = context.Queue()
+	processes = [
+		context.Process(
+			target=_append_event_in_process,
+			args=(str(repository.root), event.to_dict(), gate, results),
+		)
+		for _ in range(2)
+	]
+	for process in processes:
+		process.start()
+	gate.set()
+	for process in processes:
+		process.join(timeout=10)
+		assert process.exitcode == 0
+	assert [results.get(timeout=2), results.get(timeout=2)] == ["success", "success"]
+	assert sum(
+		stored.id == event.id for stored in repository.list_events("tenant_a", "project_a")
+	) == 1
+	lock_path = repository._lock_path("tenant_a", "project_a")
+	assert lock_path.is_relative_to(repository.root)
+	with pytest.raises(ValidationError):
+		repository._lock_path("../tenant_b", "project_a")
+
+
+def test_project_lock_rejects_symlink_escape(tmp_path: Path) -> None:
+	root = tmp_path / "store"
+	outside = tmp_path / "outside"
+	root.mkdir()
+	outside.mkdir()
+	(root / ".collaboration-locks").symlink_to(outside, target_is_directory=True)
+	repository = JsonCollaborationRepository(root)
+	with pytest.raises(ScopeError, match="lock directory escapes"):
+		repository._lock_path("tenant_a", "project_a")
 
 
 def test_transition_rules_and_review_metadata(collaboration) -> None:

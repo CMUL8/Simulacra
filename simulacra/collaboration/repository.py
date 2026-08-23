@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -31,6 +33,10 @@ class CollaborationRepository(Protocol):
 	def list_reviews(self, tenant_id: str, project_id: str, task_id: str | None = None) -> list[Review]: ...
 	def append_event(self, event: DomainEvent) -> DomainEvent: ...
 	def list_events(self, tenant_id: str, project_id: str) -> list[DomainEvent]: ...
+	def get_inbox_state(self, tenant_id: str, project_id: str, actor_id: str) -> dict[str, Any]: ...
+	def save_inbox_state(
+		self, tenant_id: str, project_id: str, actor_id: str, *, last_read_position: int, updated_at: str
+	) -> dict[str, Any]: ...
 
 
 class JsonCollaborationRepository:
@@ -59,6 +65,48 @@ class JsonCollaborationRepository:
 		if create:
 			path.mkdir(parents=True, exist_ok=True)
 		return path
+
+	def _lock_path(self, tenant_id: str, project_id: str) -> Path:
+		validate_scope_id(tenant_id, "tenant_id")
+		validate_scope_id(project_id, "project_id")
+		lock_root = (self.root / ".collaboration-locks").resolve()
+		try:
+			lock_root.relative_to(self.root)
+		except ValueError as exc:
+			raise ScopeError("lock directory escapes repository root") from exc
+		lock_root.mkdir(parents=True, exist_ok=True)
+		lock_dir = (lock_root / tenant_id).resolve()
+		try:
+			lock_dir.relative_to(lock_root)
+		except ValueError as exc:
+			raise ScopeError("tenant lock directory escapes repository root") from exc
+		lock_dir.mkdir(parents=True, exist_ok=True)
+		path = (lock_dir / f"{project_id}.lock").resolve()
+		try:
+			path.relative_to(lock_dir)
+		except ValueError as exc:
+			raise ScopeError("project lock path escapes repository root") from exc
+		return path
+
+	@contextmanager
+	def _write_lock(self, tenant_id: str, project_id: str):
+		"""Serialize complete project writes across threads and POSIX processes."""
+
+		with self._lock:
+			path = self._lock_path(tenant_id, project_id)
+			flags = os.O_CREAT | os.O_RDWR
+			if hasattr(os, "O_NOFOLLOW"):
+				flags |= os.O_NOFOLLOW
+			try:
+				fd = os.open(path, flags, 0o600)
+			except OSError as exc:
+				raise ScopeError("unable to open project collaboration lock") from exc
+			try:
+				fcntl.flock(fd, fcntl.LOCK_EX)
+				yield
+			finally:
+				fcntl.flock(fd, fcntl.LOCK_UN)
+				os.close(fd)
 
 	def _assert_scope(self, record: Any, tenant_id: str, project_id: str) -> None:
 		if record.tenant_id != tenant_id or record.project_id != project_id:
@@ -99,7 +147,7 @@ class JsonCollaborationRepository:
 			pass
 
 	def create_room(self, room: ProjectRoom) -> ProjectRoom:
-		with self._lock:
+		with self._write_lock(room.tenant_id, room.project_id):
 			self._assert_record_id(room, "room")
 			path = self._project_dir(room.tenant_id, room.project_id, create=True) / "room.json"
 			if path.exists():
@@ -116,7 +164,7 @@ class JsonCollaborationRepository:
 		return room
 
 	def save_room(self, room: ProjectRoom, expected_revision: int) -> ProjectRoom:
-		with self._lock:
+		with self._write_lock(room.tenant_id, room.project_id):
 			current = self.get_room(room.tenant_id, room.project_id)
 			if current.id != room.id:
 				raise ConflictError("project room identity conflict")
@@ -137,7 +185,7 @@ class JsonCollaborationRepository:
 		return path, rows
 
 	def _create_record(self, name: str, record: Record) -> Record:
-		with self._lock:
+		with self._write_lock(record.tenant_id, record.project_id):
 			self._assert_record_id(record, {"tasks": "task", "comments": "comment", "reviews": "review"}[name])
 			path, rows = self._collection(record.tenant_id, record.project_id, name, create=True)
 			if record.id in rows:
@@ -165,10 +213,12 @@ class JsonCollaborationRepository:
 		return validated
 
 	def _save_record(self, name: str, record: Record, expected_revision: int) -> Record:
-		with self._lock:
+		with self._write_lock(record.tenant_id, record.project_id):
 			path, rows = self._collection(record.tenant_id, record.project_id, name)
 			if record.id not in rows:
 				raise NotFoundError(f"{name[:-1]} not found")
+			current = self._FILES[name].from_dict(rows[record.id])
+			self._assert_scope(current, record.tenant_id, record.project_id)
 			current_revision = int(rows[record.id].get("revision", 0))
 			if current_revision != expected_revision:
 				raise ConflictError(
@@ -235,7 +285,7 @@ class JsonCollaborationRepository:
 			raise ScopeError("event timestamp must be ISO-8601") from exc
 		if stamp.tzinfo is None:
 			raise ScopeError("event timestamp must be timezone-aware")
-		with self._lock:
+		with self._write_lock(event.tenant_id, event.project_id):
 			path = self._project_dir(event.tenant_id, event.project_id, create=True) / "events.jsonl"
 			for existing in self.list_events(event.tenant_id, event.project_id):
 				if existing.id == event.id:
@@ -280,7 +330,7 @@ class JsonCollaborationRepository:
 			raise AuthorizationError("actor is not a project room member")
 		if last_read_position < 0:
 			raise ConflictError("read position cannot be negative")
-		with self._lock:
+		with self._write_lock(tenant_id, project_id):
 			path = self._project_dir(tenant_id, project_id, create=True) / "inbox_state.json"
 			states = self._read_json(path, {})
 			current = int(states.get(actor_id, {}).get("last_read_position", 0))
