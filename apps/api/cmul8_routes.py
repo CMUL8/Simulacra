@@ -23,9 +23,15 @@ from simulacra.demo.runs import load_state, project_dir
 from simulacra.harnesses import HarnessConfig, create_harness
 from simulacra.operation_graph import OperationGraphStore
 from simulacra.operation_graph.errors import OperationGraphError
+from simulacra.runtime.security import assert_opaque_credentials
+from simulacra.observability import (
+	EntityKind, EventStatus, JsonlTelemetryRepository, ObservabilityQueries,
+	TelemetryEvent, TelemetryQuery,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/cmul8", tags=["cmul8-v0"])
 _collaboration_root = RUNS_DIR / ".cmul8-control"
+_telemetry_root = RUNS_DIR / ".cmul8-telemetry"
 
 
 def _collaboration() -> tuple[JsonCollaborationRepository, CollaborationService]:
@@ -85,6 +91,35 @@ class CommentCreateBody(BaseModel):
 class GraphRevisionBody(BaseModel):
 	graph: dict[str, Any]
 	expected_revision_hash: str | None = None
+
+
+class TelemetryEventBody(BaseModel):
+	id: str
+	entity_kind: EntityKind
+	entity_id: str
+	entity_name: str = Field(min_length=1, max_length=200)
+	signal: str = Field(min_length=1, max_length=200)
+	status: EventStatus
+	started_at: str
+	duration_ms: float = Field(default=0, ge=0)
+	trace_id: str | None = None
+	workflow_id: str | None = None
+	agent_id: str | None = None
+	environment: str = Field(default="production", min_length=1, max_length=120)
+	message: str = Field(default="", max_length=4000)
+	tags: list[str] = Field(default_factory=list, max_length=100)
+	attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class _ProjectTelemetryRepository:
+	"""Narrow a tenant repository to one application/project before aggregation."""
+
+	def __init__(self, repository: JsonlTelemetryRepository, project_id: str):
+		self.repository = repository
+		self.project_id = project_id
+
+	def query(self, query: TelemetryQuery) -> list[TelemetryEvent]:
+		return [event for event in self.repository.query(query) if event.application_id == self.project_id]
 
 
 def _room_payload(project_id: str, ctx: AuthContext) -> dict[str, Any]:
@@ -266,3 +301,50 @@ async def harness_status(
 	config = HarnessConfig.from_env()
 	harness = create_harness(config)
 	return {"config": config.metadata(), "health": dict(await harness.healthcheck())}
+
+
+@router.post("/observability/events")
+def ingest_telemetry(
+	project_id: str, body: TelemetryEventBody, request: Request,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict[str, Any]:
+	try:
+		assert_opaque_credentials(body.attributes, context="telemetry attributes")
+		event = TelemetryEvent(
+			id=body.id, tenant_id=ctx.tenant_id, entity_kind=body.entity_kind,
+			entity_id=body.entity_id, entity_name=body.entity_name, signal=body.signal,
+			status=body.status, started_at=body.started_at, duration_ms=body.duration_ms,
+			trace_id=body.trace_id, application_id=project_id, workflow_id=body.workflow_id,
+			agent_id=body.agent_id, environment=body.environment, message=body.message,
+			tags=tuple(body.tags), attributes=body.attributes,
+		)
+		JsonlTelemetryRepository(_telemetry_root).append(event)
+	except ValueError as exc:
+		raise HTTPException(400, str(exc)) from exc
+	audit_request(request, ctx, "cmul8.telemetry.ingest", project_id=project_id, event_id=event.id)
+	return event.to_dict()
+
+
+@router.get("/observability")
+def get_observability(
+	project_id: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+) -> dict[str, Any]:
+	from datetime import UTC, datetime
+	repository = _ProjectTelemetryRepository(JsonlTelemetryRepository(_telemetry_root), project_id)
+	payload = ObservabilityQueries(repository).api_payload(TelemetryQuery(tenant_id=ctx.tenant_id))
+	payload["generated_at"] = datetime.now(UTC).isoformat()
+	return payload
+
+
+@router.get("/observability/{kind}/{entity_id}")
+def get_observability_detail(
+	project_id: str, kind: EntityKind, entity_id: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+) -> dict[str, Any]:
+	kind = EntityKind(kind)
+	repository = _ProjectTelemetryRepository(JsonlTelemetryRepository(_telemetry_root), project_id)
+	detail = ObservabilityQueries(repository).detail(TelemetryQuery(tenant_id=ctx.tenant_id), kind, entity_id)
+	if detail is None:
+		raise HTTPException(404, "telemetry entity not found")
+	return asdict(detail)

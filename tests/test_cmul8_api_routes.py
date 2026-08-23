@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ def _prepare(monkeypatch, tmp_path: Path) -> Path:
 	project_root = tmp_path / "project_api"
 	project_root.mkdir()
 	monkeypatch.setattr(cmul8_routes, "_collaboration_root", tmp_path / "control")
+	monkeypatch.setattr(cmul8_routes, "_telemetry_root", tmp_path / "telemetry")
 	monkeypatch.setattr(cmul8_routes, "project_dir", lambda _project_id: project_root)
 	monkeypatch.setattr(
 		cmul8_routes, "load_state",
@@ -78,3 +80,28 @@ def test_room_payload_does_not_invent_deployment_health(monkeypatch, tmp_path):
 	payload = cmul8_routes.create_room("project_api", cmul8_routes.RoomCreateBody(), request, ctx)
 	assert "deployments" not in payload
 	assert payload["permissions"]["review_graph"] is True
+
+
+def test_observability_is_project_and_tenant_scoped(monkeypatch, tmp_path):
+	_prepare(monkeypatch, tmp_path)
+	ctx = _context()
+	request = SimpleNamespace(url=SimpleNamespace(path="/test"))
+	body = cmul8_routes.TelemetryEventBody(
+		id="evt_api_1", entity_kind="workflow", entity_id="wf_vendor", entity_name="Vendor review",
+		signal="workflow.completed", status="succeeded", started_at="2026-08-23T10:00:00+00:00",
+		duration_ms=125, trace_id="trace_api_1", workflow_id="wf_vendor",
+	)
+	cmul8_routes.ingest_telemetry("project_api", body, request, ctx)
+	other = body.model_copy(update={"id": "evt_api_2"})
+	cmul8_routes.ingest_telemetry("project_other", other, request, ctx)
+	payload = cmul8_routes.get_observability("project_api", ctx)
+	assert payload["overview"]["runs"] == 1
+	assert payload["inventories"]["workflow"][0]["id"] == "wf_vendor"
+	detail = cmul8_routes.get_observability_detail("project_api", "workflow", "wf_vendor", ctx)
+	assert detail["recent_events"][0]["trace_id"] == "trace_api_1"
+
+	with pytest.raises(Exception, match="raw credential-like field"):
+		cmul8_routes.ingest_telemetry(
+			"project_api", body.model_copy(update={"id": "evt_secret", "attributes": {"auth": {"token": "raw"}}}),
+			request, ctx,
+		)
