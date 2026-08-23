@@ -28,8 +28,13 @@ COPY fixtures ./fixtures
 COPY templates ./templates
 COPY schemas ./schemas
 COPY scripts ./scripts
+COPY deploy/bin/cmul8-entrypoint /opt/cmul8/bin/cmul8-entrypoint
 COPY --from=console-build /src/apps/console/dist ./apps/console/dist
-RUN pip install --no-cache-dir -e ".[demo]"
+RUN pip install --no-cache-dir -e ".[demo]" \
+	&& chmod 0555 /opt/cmul8/bin/cmul8-entrypoint \
+	&& for process in api web worker worker-health preflight migrate smoke; do \
+		ln -s /opt/cmul8/bin/cmul8-entrypoint "/opt/cmul8/bin/cmul8-${process}"; \
+	done
 ENV SIMULACRA_AUTH_REQUIRED=1
 ENV SIMULACRA_USE_PRIME=1
 # OpenRouter model id (auth via OPENROUTER_API_KEY)
@@ -39,4 +44,5 @@ ENV SIMULACRA_SANDBOX=worktree
 ENV PYTHONPATH=/app
 ENV PORT=8000
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+ENTRYPOINT ["/opt/cmul8/bin/cmul8-entrypoint"]
+CMD ["api"]

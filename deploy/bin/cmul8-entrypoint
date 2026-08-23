@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+program="${0##*/}"
+if [ "$program" = "cmul8-entrypoint" ]; then
+  [ "$#" -ge 1 ] || { echo "CMUL8 process argument required" >&2; exit 64; }
+  process="$1"
+  shift
+else
+  process="${program#cmul8-}"
+fi
+[ "$process" = "migrate" ] && process="migrations"
+exec python -m simulacra.deploy_process "$process" "$@"

@@ -228,6 +228,19 @@ def ready() -> dict[str, Any]:
 	return {"ready": True, "checks": checks, "sandbox": sandbox_status()}
 
 
+@app.get("/healthz")
+def liveness() -> dict[str, str]:
+	return {"status": "live", "service": "cmul8-api"}
+
+
+@app.get("/readyz")
+def readiness() -> dict[str, Any]:
+	identity = db_health()
+	if not identity.get("ok", identity.get("status") in {"ok", "healthy"}):
+		raise HTTPException(503, "database is not ready")
+	return {"status": "ready", "service": "cmul8-api", "identity": identity}
+
+
 # ── Auth ─────────────────────────────────────────────────────────────
 
 
