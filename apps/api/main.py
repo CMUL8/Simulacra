@@ -74,6 +74,7 @@ from simulacra.demo.tenants import (
 )
 from simulacra.env import load_dotenv
 from simulacra.resolve import resolve_prime_agent
+from apps.api.cmul8_routes import router as cmul8_router
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -92,6 +93,7 @@ def _job_conflict_http(exc: Exception) -> HTTPException:
 
 
 app = FastAPI(title="Simulacra API", version="0.8.0")
+app.include_router(cmul8_router)
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
