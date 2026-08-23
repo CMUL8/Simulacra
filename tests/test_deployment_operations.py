@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+import json
+import tarfile
+from pathlib import Path
+
+import pytest
+
+from deploy.bundle import BundleError
+from deploy.environment import REQUIRED, validate_environment
+from deploy.release import create_rollback_manifest, create_upgrade_manifest
+from deploy.smoke import REQUIRED_CHECKS, run_smoke_checks
+from deploy.support import create_support_bundle
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def valid_environment() -> dict[str, str]:
+    return {
+        "CMUL8_DEPLOYMENT_MODE": "private_cloud",
+        "CMUL8_TENANT_ID": "tenant-one",
+        "CMUL8_ENVIRONMENT": "production",
+        "CMUL8_POSTGRES_URL": "postgresql://db.internal/runtime",
+        "CMUL8_REDIS_URL": "rediss://queue.internal/0",
+        "CMUL8_OBJECT_STORAGE_URL": "s3://runtime-bucket/prefix",
+        "CMUL8_SECRET_PROVIDER": "vault",
+        "CMUL8_IMAGE_REGISTRY": "registry.internal/cmul8",
+    }
+
+
+def test_preflight_accepts_contract_and_reports_all_failures():
+    assert validate_environment(valid_environment()).ok
+    broken = valid_environment()
+    broken.pop("CMUL8_REDIS_URL")
+    broken["CMUL8_TENANT_ID"] = "../escape"
+    broken["CMUL8_OBJECT_STORAGE_URL"] = "https://user:password@objects.invalid/bucket"
+    result = validate_environment(broken)
+    assert not result.ok
+    assert len(result.errors) == 3
+    assert set(result.checked) == set(REQUIRED)
+
+
+def test_smoke_checks_are_injected_ordered_and_do_not_short_circuit():
+    observed: list[str] = []
+    checks = {}
+    for name in REQUIRED_CHECKS:
+        def check(name=name):
+            observed.append(name)
+            if name == "queue":
+                raise RuntimeError("unavailable")
+            return True, f"{name} reachable"
+        checks[name] = check
+    results = run_smoke_checks(checks)
+    assert observed == list(REQUIRED_CHECKS)
+    assert [item.name for item in results if not item.ok] == ["queue"]
+    assert "RuntimeError" in results[2].detail
+
+
+def test_support_bundle_is_deterministic_and_redacted(tmp_path: Path):
+    environment = valid_environment() | {"CMUL8_ADMIN_TOKEN": "do-not-leak"}
+    diagnostics = {"health.log": "status=ok password=hunter2\nauthorization: Bearer-credential"}
+    first = create_support_bundle(tmp_path / "one", environment=environment, diagnostics=diagnostics)
+    second = create_support_bundle(tmp_path / "two", environment=environment, diagnostics=diagnostics)
+    assert first.read_bytes() == second.read_bytes()
+    with tarfile.open(first) as archive:
+        content = b"\n".join(archive.extractfile(member).read() for member in archive if member.isfile())
+    assert b"hunter2" not in content
+    assert b"do-not-leak" not in content
+    assert b"Bearer-credential" not in content
+    assert content.count(b"[REDACTED]") >= 3
+    with pytest.raises(BundleError, match="filename"):
+        create_support_bundle(tmp_path, environment=environment, diagnostics={"private-key.pem": "key"})
+
+
+def test_upgrade_and_rollback_records_are_explicit_and_deterministic():
+    current, target = "a" * 64, "b" * 64
+    assert create_upgrade_manifest(current, target) == create_upgrade_manifest(current, target)
+    rollback = create_rollback_manifest(target, current, migration_compatible=False)
+    assert rollback == {
+        "format": "cmul8.rollback.v1",
+        "from_bundle": target,
+        "to_bundle": current,
+        "migration_compatible": False,
+        "requires_operator_approval": True,
+        "phases": ["verify-target", "scale-workers", "rollout", "smoke", "record"],
+    }
+
+
+def test_chart_has_processes_probes_security_external_state_and_hooks():
+    chart = ROOT / "charts" / "cmul8"
+    all_templates = "\n".join(path.read_text() for path in (chart / "templates").iterdir())
+    values = (chart / "values.yaml").read_text()
+    for process in ("web", "api", "worker"):
+        assert f'"{process}"' in all_templates
+    for probe in ("startupProbe", "livenessProbe", "readinessProbe"):
+        assert probe in all_templates
+    for security in ("runAsNonRoot", "readOnlyRootFilesystem", "allowPrivilegeEscalation", 'drop: ["ALL"]'):
+        assert security in values
+    assert "secretKeyRef" in all_templates
+    assert "pre-install,pre-upgrade" in all_templates
+    assert "post-install,post-upgrade,post-rollback" in all_templates
+    assert "kind: StatefulSet" not in all_templates
+    assert "kind: Secret" not in all_templates
+
+
+def test_terraform_modules_are_honest_customer_managed_contracts():
+    root = ROOT / "infra" / "terraform" / "modules"
+    for cloud in ("aws", "azure", "gcp"):
+        content = "\n".join(path.read_text() for path in (root / cloud).glob("*.tf"))
+        assert 'customer_managed       = true' in content
+        assert 'output "runtime_contract"' in content
+        assert "postgres_endpoint" in content and "redis_endpoint" in content
+        assert 'resource "' not in content

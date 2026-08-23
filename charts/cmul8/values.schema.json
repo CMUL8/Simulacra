@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["deploymentMode", "tenantId", "environment", "image", "external"],
+  "properties": {
+    "deploymentMode": {"enum": ["cmul8_cloud", "dedicated_cloud", "private_cloud"]},
+    "tenantId": {"type": "string", "minLength": 2},
+    "environment": {"type": "string", "minLength": 2},
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$"}
+      }
+    },
+    "external": {
+      "type": "object",
+      "required": ["secretName", "postgresKey", "redisKey", "objectStorageKey"],
+      "properties": {"secretName": {"type": "string", "minLength": 1}}
+    }
+  }
+}

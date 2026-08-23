@@ -1,0 +1,81 @@
+deploymentMode: private_cloud
+tenantId: example-tenant
+environment: production
+
+image:
+  repository: registry.example.invalid/cmul8/runtime
+  tag: ""
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+external:
+  secretName: cmul8-runtime
+  postgresKey: postgres-url
+  redisKey: redis-url
+  objectStorageKey: object-storage-url
+  secretProvider: external
+
+replicaCount:
+  web: 2
+  api: 2
+  worker: 2
+
+service:
+  webPort: 80
+  apiPort: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    enabled: true
+    secretName: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  web: {}
+  api: {}
+  worker: {}
+
+rollout:
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
+
+migrations:
+  enabled: true
+  backoffLimit: 1
+
+smoke:
+  enabled: false
+  backoffLimit: 0
+  paths:
+    api: /health
+    worker: /api/runtime/smoke/worker
+    queue: /api/runtime/smoke/queue
+    storage: /api/runtime/smoke/storage
+    connectors: /api/runtime/smoke/connectors
+
+networkPolicy:
+  enabled: true

@@ -1,0 +1,73 @@
+{{- range $process := list "web" "api" "worker" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cmul8.fullname" $ }}-{{ $process }}
+  labels:
+    {{- include "cmul8.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $process }}
+spec:
+  replicas: {{ index $.Values.replicaCount $process }}
+  revisionHistoryLimit: {{ $.Values.rollout.revisionHistoryLimit }}
+  progressDeadlineSeconds: {{ $.Values.rollout.progressDeadlineSeconds }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cmul8.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $process }}
+  template:
+    metadata:
+      labels:
+        {{- include "cmul8.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $process }}
+    spec:
+      serviceAccountName: {{ include "cmul8.serviceAccountName" $ }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      imagePullSecrets:
+        {{- toYaml $.Values.image.pullSecrets | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: {{ $process }}
+          image: {{ include "cmul8.image" $ | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: ["{{ $process }}"]
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          env:
+            {{- include "cmul8.env" $ | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          {{- if eq $process "worker" }}
+          livenessProbe:
+            exec: {command: ["/bin/sh", "-c", "test -f /tmp/worker.alive"]}
+            periodSeconds: 20
+          readinessProbe:
+            exec: {command: ["/bin/sh", "-c", "test -f /tmp/worker.ready"]}
+            periodSeconds: 10
+          {{- else }}
+          ports:
+            - name: http
+              containerPort: {{ if eq $process "web" }}8080{{ else }}8000{{ end }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+          {{- end }}
+          resources:
+            {{- toYaml (index $.Values.resources $process) | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

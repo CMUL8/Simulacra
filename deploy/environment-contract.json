@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cmul8.private-runtime.environment.v1",
+  "type": "object",
+  "required": [
+    "CMUL8_DEPLOYMENT_MODE",
+    "CMUL8_TENANT_ID",
+    "CMUL8_ENVIRONMENT",
+    "CMUL8_POSTGRES_URL",
+    "CMUL8_REDIS_URL",
+    "CMUL8_OBJECT_STORAGE_URL",
+    "CMUL8_SECRET_PROVIDER",
+    "CMUL8_IMAGE_REGISTRY"
+  ],
+  "properties": {
+    "CMUL8_DEPLOYMENT_MODE": {"enum": ["cmul8_cloud", "dedicated_cloud", "private_cloud"]},
+    "CMUL8_TENANT_ID": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,62}$"},
+    "CMUL8_ENVIRONMENT": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,62}$"},
+    "CMUL8_POSTGRES_URL": {"type": "string"},
+    "CMUL8_REDIS_URL": {"type": "string"},
+    "CMUL8_OBJECT_STORAGE_URL": {"type": "string"},
+    "CMUL8_SECRET_PROVIDER": {"type": "string"},
+    "CMUL8_IMAGE_REGISTRY": {"type": "string"},
+    "CMUL8_TLS_REQUIRED": {"type": "string", "default": "true"}
+  },
+  "additionalProperties": true
+}

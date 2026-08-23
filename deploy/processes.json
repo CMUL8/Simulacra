@@ -1,0 +1,45 @@
+{
+  "format": "cmul8.oci-process-contract.v1",
+  "image": {
+    "entrypoint": ["/opt/cmul8/bin/cmul8-entrypoint"],
+    "processArgument": "exactly one of web, api, worker, migrations, smoke",
+    "requiredLabels": [
+      "org.opencontainers.image.revision",
+      "org.opencontainers.image.source",
+      "org.opencontainers.image.version"
+    ],
+    "runAsNonRoot": true,
+    "readOnlyRootFilesystem": true,
+    "writableMounts": ["/tmp"]
+  },
+  "processes": {
+    "api": {
+      "command": ["/opt/cmul8/bin/cmul8-api"],
+      "port": 8000,
+      "health": "/healthz",
+      "readiness": "/readyz"
+    },
+    "web": {
+      "command": ["/opt/cmul8/bin/cmul8-web"],
+      "port": 8080,
+      "health": "/healthz",
+      "readiness": "/readyz"
+    },
+    "worker": {
+      "command": ["/opt/cmul8/bin/cmul8-worker"],
+      "health": "process"
+    },
+    "migrations": {
+      "command": ["/opt/cmul8/bin/cmul8-migrate"],
+      "lifecycle": "pre-upgrade-hook",
+      "restartPolicy": "Never"
+    },
+    "smoke": {
+      "command": ["/opt/cmul8/bin/cmul8-smoke"],
+      "checks": ["api", "worker", "queue", "storage", "connectors"],
+      "lifecycle": "post-install-post-upgrade-post-rollback-hook",
+      "restartPolicy": "Never"
+    }
+  },
+  "shutdown": {"signal": "SIGTERM", "gracePeriodSeconds": 30}
+}
