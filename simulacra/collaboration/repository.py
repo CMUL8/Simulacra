@@ -158,9 +158,11 @@ class JsonCollaborationRepository:
 	def _list_records(self, name: str, cls: type[Record], tenant_id: str, project_id: str) -> list[Record]:
 		_, rows = self._collection(tenant_id, project_id, name)
 		result = [cls.from_dict(rows[key]) for key in sorted(rows)]
+		validated: list[Record] = []
 		for record in result:
 			self._assert_scope(record, tenant_id, project_id)
-		return result
+			validated.append(record)
+		return validated
 
 	def _save_record(self, name: str, record: Record, expected_revision: int) -> Record:
 		with self._lock:

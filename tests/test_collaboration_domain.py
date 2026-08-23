@@ -137,6 +137,39 @@ def test_graph_comment_coordinates_and_normalized_mentions(collaboration) -> Non
 		)
 
 
+def test_lists_return_every_record_and_validate_every_scope(collaboration) -> None:
+	repository, service = collaboration
+	tasks = [
+		service.create_task(
+			tenant_id="tenant_a", project_id="project_a", actor_id="alice", title=f"Task {index}",
+			objective=f"Objective {index}", acceptance_criteria=["Complete"],
+		)
+		for index in (1, 2)
+	]
+	comments = [
+		service.add_comment(
+			tenant_id="tenant_a", project_id="project_a", author_id="alice", body=f"Comment {index}",
+			target_type="project",
+		)
+		for index in (1, 2)
+	]
+	assert [task.id for task in repository.list_tasks("tenant_a", "project_a")] == sorted(
+		task.id for task in tasks
+	)
+	assert [comment.id for comment in repository.list_comments("tenant_a", "project_a")] == sorted(
+		comment.id for comment in comments
+	)
+
+	# A corrupted later row must not be hidden by an early return after validating the first row.
+	tasks_path = repository.root / "tenant_a" / "project_a" / "collaboration" / "tasks.json"
+	rows = json.loads(tasks_path.read_text(encoding="utf-8"))
+	second_id = sorted(rows)[1]
+	rows[second_id]["tenant_id"] = "tenant_b"
+	repository._atomic_json(tasks_path, rows)
+	with pytest.raises(ScopeError, match="scope mismatch"):
+		repository.list_tasks("tenant_a", "project_a")
+
+
 def test_event_contract_idempotency_conflict_and_legacy_projection(collaboration) -> None:
 	repository, _ = collaboration
 	event = make_domain_event(
