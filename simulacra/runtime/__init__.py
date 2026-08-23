@@ -4,6 +4,7 @@ from .agents import ActionTool, ReadOnlyDataTool, RuntimeAgentGateway, RuntimeAg
 from .errors import (
 	ActionExecutionError,
 	ApprovalRequiredError,
+	CredentialPolicyError,
 	InvalidTransitionError,
 	RuntimeAuthorizationError,
 	RuntimeConflictError,
@@ -41,7 +42,7 @@ from .services import (
 
 __all__ = [
 	"ActionExecutionError", "ActionGateway", "ActionRecord", "ActionTool", "ApprovalDecision",
-	"ApprovalRequest", "ApprovalRequiredError", "ApprovalService", "ApprovedGraph",
+	"ApprovalRequest", "ApprovalRequiredError", "ApprovalService", "ApprovedGraph", "CredentialPolicyError",
 	"AuditEvent", "AuditService", "ConnectorExecutor", "ConnectorGateway", "EntityRecord",
 	"EntityService", "FileRuntimeRepository", "HealthService", "HumanTask", "HumanTaskService",
 	"InvalidTransitionError", "JsonRuntimeRepository", "ReadOnlyDataTool", "RuntimeAgentGateway",

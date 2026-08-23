@@ -21,6 +21,10 @@ class RuntimeAuthorizationError(RuntimePlaneError):
 	pass
 
 
+class CredentialPolicyError(RuntimeAuthorizationError, ValueError):
+	"""Raw or ambiguously encoded credential material crossed a runtime boundary."""
+
+
 class InvalidTransitionError(RuntimePlaneError):
 	pass
 

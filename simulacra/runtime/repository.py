@@ -24,6 +24,7 @@ from .models import (
 	WorkflowInstance,
 	validate_scope,
 )
+from .security import assert_opaque_credentials
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -295,6 +296,7 @@ class JsonRuntimeRepository:
 	def save_job(self, record: ScheduledJob, expected_revision: int) -> ScheduledJob: return self._save("jobs", record, expected_revision)
 
 	def create_action(self, record: ActionRecord) -> ActionRecord:
+		assert_opaque_credentials(record.input, context="action payload")
 		def change(state: dict[str, Any]) -> ActionRecord:
 			key = record.idempotency_key
 			existing_id = state["idempotency"].get(key)
@@ -310,6 +312,7 @@ class JsonRuntimeRepository:
 
 	def create_action_with_approval(self, record: ActionRecord, approval: ApprovalRequest) -> tuple[ActionRecord, ApprovalRequest]:
 		"""Atomically persist a pending action, its approval, and both links."""
+		assert_opaque_credentials(record.input, context="action payload")
 		if record.approval_id != approval.id or approval.payload.get("action_id") != record.id:
 			raise RuntimeConflictError("action and approval linkage is incomplete")
 		self._check_record_scope(approval, record.tenant_id, record.environment_id, record.project_id)
@@ -332,7 +335,9 @@ class JsonRuntimeRepository:
 
 	def get_action(self, tenant_id: str, environment_id: str, project_id: str, record_id: str) -> ActionRecord: return self._get("actions", tenant_id, environment_id, project_id, record_id)
 	def list_actions(self, tenant_id: str, environment_id: str, project_id: str) -> list[ActionRecord]: return self._list("actions", tenant_id, environment_id, project_id)
-	def save_action(self, record: ActionRecord, expected_revision: int) -> ActionRecord: return self._save("actions", record, expected_revision)
+	def save_action(self, record: ActionRecord, expected_revision: int) -> ActionRecord:
+		assert_opaque_credentials(record.input, context="action payload")
+		return self._save("actions", record, expected_revision)
 	def append_audit(self, record: AuditEvent) -> AuditEvent:
 		def change(state: dict[str, Any]) -> AuditEvent:
 			existing = state["audit"].get(record.id)

@@ -10,8 +10,11 @@ from simulacra.operation_graph import OperationGraphStore, UnapprovedRevisionErr
 from simulacra.runtime import (
 	AuditEvent,
 	ActionTool,
+	ApprovedGraph,
 	ApprovalRequiredError,
+	CredentialPolicyError,
 	InvalidTransitionError,
+	JsonRuntimeRepository,
 	RuntimeAuthorizationError,
 	RuntimeConflictError,
 	RuntimePlane,
@@ -51,6 +54,81 @@ def test_approved_gate_and_control_plane_absence(tmp_path: Path):
 	assert plane.entities.create("entity_case", {"status": "new"}).data["status"] == "new"
 	assert plane.health.liveness()["status"] == "live"
 	assert plane.health.readiness()["status"] == "ready"
+
+
+def test_approved_graph_requires_auditable_factory_and_is_deeply_immutable(tmp_path: Path):
+	with pytest.raises(RuntimeAuthorizationError, match="from_store"):
+		ApprovedGraph(graph(), "unverified")
+	assert not hasattr(ApprovedGraph, "from_revision")
+
+	project = tmp_path / "project"; project.mkdir()
+	store = OperationGraphStore(project, tenant_id="tenant_acme", project_id="project_support")
+	revision = store.create_revision(graph(), expected_revision_hash=None)
+	store.approve_revision(revision.revision_hash, actor_id="reviewer")
+	policy = ApprovedGraph.from_store(store, revision.revision_hash)
+	revision.graph["metadata"]["name"] = "mutated revision result"
+	with pytest.raises(TypeError):
+		policy.graph["metadata"]["name"] = "mutated"
+	with pytest.raises(TypeError):
+		policy.graph["connectors"][0]["configuration"] = {"token": "raw"}
+	with pytest.raises(AttributeError):
+		policy.graph["workflows"][0]["states"].append("escaped")
+	with pytest.raises(TypeError):
+		policy.require_connector_operation("connector_support", "read")["operations"] = ("write",)
+	assert policy.approval_proof[0]["revision_hash"] == revision.revision_hash
+	with pytest.raises(TypeError):
+		policy.approval_proof[0]["actor_id"] = "forged"
+	assert policy.graph["metadata"]["name"] == graph()["metadata"]["name"]
+	forged = object.__new__(ApprovedGraph)
+	with pytest.raises(RuntimeAuthorizationError, match="approval proof"):
+		RuntimePlane(JsonRuntimeRepository(tmp_path / "forged"), forged, "env_prod")
+
+
+@pytest.mark.parametrize(
+	"configuration",
+	[
+		{"nested": {"auth": {"value": "raw"}}},
+		{"nested": [{"token": "raw"}]},
+		{"headers": [{"value": "Bearer raw-token"}]},
+		{"credentials": {"client_secret": "raw"}},
+	],
+)
+def test_nested_connector_credentials_are_rejected_after_graph_approval(tmp_path: Path, configuration: dict):
+	project = tmp_path / "project"; project.mkdir()
+	store = OperationGraphStore(project, tenant_id="tenant_acme", project_id="project_support")
+	configured = graph()
+	configured["connectors"][0]["configuration"] = configuration
+	revision = store.create_revision(configured, expected_revision_hash=None)
+	store.approve_revision(revision.revision_hash, actor_id="reviewer")
+	with pytest.raises(CredentialPolicyError, match="connector.*configuration"):
+		RuntimePlane.from_approved_revision(tmp_path / "runtime", store, revision.revision_hash, environment_id="env_prod")
+
+
+@pytest.mark.parametrize(
+	"payload",
+	[
+		{"nested": {"authorization": "opaque-looking"}},
+		{"items": [{"access_token": "raw"}]},
+		{"message": "Bearer raw-token"},
+		{"callback": "https://user:password@example.invalid/path"},
+		{"nested": {"private_key": "-----BEGIN PRIVATE KEY-----"}},
+	],
+)
+def test_nested_action_credentials_fail_before_durable_persistence(tmp_path: Path, payload: dict):
+	plane = approved_plane(tmp_path)
+	with pytest.raises(CredentialPolicyError, match="action payload"):
+		plane.actions.submit("connector_support", "write", payload, requester_id="alice", idempotency_key="secret-action")
+	assert plane.repository.list_actions("tenant_acme", "env_prod", "project_support") == []
+	assert plane.repository.list_approvals("tenant_acme", "env_prod", "project_support") == []
+
+
+def test_opaque_credential_references_are_allowed_in_action_payloads(tmp_path: Path):
+	plane = approved_plane(tmp_path)
+	action = plane.actions.submit(
+		"connector_support", "write", {"auth_ref": "vault_support_writer_ref"},
+		requester_id="alice", idempotency_key="opaque-ref-action",
+	)
+	assert action.status == "pending_approval"
 
 
 def test_durable_entity_workflow_restart_and_conflicts(tmp_path: Path):
@@ -187,6 +265,31 @@ def test_scheduler_retry_backoff_dead_letter_and_restart(tmp_path: Path):
 	assert dead.status == "dead_letter" and plane.scheduler.dead_letters() == [dead]
 
 
+def test_scheduler_expired_lease_crash_loops_consume_attempts_and_dead_letter(tmp_path: Path):
+	plane = approved_plane(tmp_path)
+	current = datetime(2026, 8, 23, tzinfo=UTC)
+	plane.scheduler.clock = lambda: current.isoformat().replace("+00:00", "Z")
+	job = plane.scheduler.enqueue("crash", {}, max_attempts=2, idempotency_key="crash-loop")
+	first = plane.scheduler.claim("worker-1", lease_seconds=30)
+	assert first is not None and first.id == job.id and first.attempts == 0
+
+	current += timedelta(seconds=31)
+	assert plane.scheduler.claim("recovery-worker") is None
+	recovered = plane.repository.get_job("tenant_acme", "env_prod", "project_support", job.id)
+	assert recovered.status == "queued" and recovered.attempts == 1
+	assert recovered.last_error == "worker lease expired before completion"
+	assert plane.scheduler.enqueue("crash", {}, max_attempts=2, idempotency_key="crash-loop").id == job.id
+
+	current += timedelta(seconds=1)
+	second = plane.scheduler.claim("worker-2", lease_seconds=30)
+	assert second is not None and second.attempts == 1
+	current += timedelta(seconds=31)
+	assert plane.scheduler.claim("recovery-worker") is None
+	dead = plane.repository.get_job("tenant_acme", "env_prod", "project_support", job.id)
+	assert dead.status == "dead_letter" and dead.attempts == 2
+	assert plane.scheduler.dead_letters() == [dead]
+
+
 def test_human_tasks_approvals_audit_telemetry_and_duplicate_event(tmp_path: Path):
 	plane = approved_plane(tmp_path)
 	task = plane.human_tasks.create("Review reply", assignee_id="bob")
@@ -211,7 +314,6 @@ def test_tenant_environment_isolation_and_path_escape(tmp_path: Path):
 		plane.repository.read_project("../tenant", "env_prod", "project_support")
 	outside = tmp_path / "outside"; outside.mkdir()
 	root = tmp_path / "malicious"; root.mkdir(); (root / "tenant_acme").symlink_to(outside, target_is_directory=True)
-	from simulacra.runtime import JsonRuntimeRepository
 	with pytest.raises(RuntimeScopeError): JsonRuntimeRepository(root).read_project("tenant_acme", "env_prod", "project_support")
 
 

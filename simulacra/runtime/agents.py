@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping, Protocol, TYPE_CHECKING
 
 from .errors import RuntimeAuthorizationError
 from .policy import ApprovedGraph
+from .security import assert_opaque_credentials
 
 if TYPE_CHECKING:
 	from .models import ActionRecord
@@ -15,27 +16,8 @@ if TYPE_CHECKING:
 
 _FORBIDDEN_CLASSES = ("filesystem", "source", "process", "shell", "terminal", "exec", "code")
 _EFFECTFUL_TERMS = (".write", ".send", ".delete", ".create", ".update", ".publish", ".execute")
-_SECRET_KEYS = {
-	"access_token", "api_key", "auth", "authorization", "bearer", "client_secret",
-	"credential", "password", "private_key", "secret", "token",
-}
-
-
 def _normalized(value: str) -> str:
 	return value.strip().lower().replace("-", ".").replace("_", ".")
-
-
-def _contains_raw_secret(value: Any) -> bool:
-	if isinstance(value, Mapping):
-		for child_key, child in value.items():
-			normalized = str(child_key).strip().lower().replace("-", "_")
-			if normalized in _SECRET_KEYS and not normalized.endswith("_ref"):
-				return True
-			if _contains_raw_secret(child):
-				return True
-	elif isinstance(value, list):
-		return any(_contains_raw_secret(item) for item in value)
-	return False
 
 
 class RuntimeTool(Protocol):
@@ -99,8 +81,7 @@ class RuntimeAgentSupervisor:
 		resource: str | None = None,
 		idempotency_key: str | None = None,
 	) -> Any | ActionRecord:
-		if _contains_raw_secret(payload):
-			raise RuntimeAuthorizationError("runtime agents receive opaque secret references, never raw credentials")
+		assert_opaque_credentials(payload, context="runtime agent payload")
 		descriptor = self.tools.get(tool)
 		if descriptor is None:
 			raise RuntimeAuthorizationError(f"runtime tool is unavailable: {tool}")

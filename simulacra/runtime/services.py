@@ -29,6 +29,7 @@ from .models import (
 )
 from .policy import ApprovedGraph
 from .repository import JsonRuntimeRepository, RuntimeRepository
+from .security import assert_opaque_credentials, thaw_json
 
 
 def _parse_time(value: str) -> datetime:
@@ -179,7 +180,7 @@ class ConnectorGateway:
 	def _execute(self, connector: Mapping[str, Any], operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Any:
 		executor = self.executors.get(connector["id"]) or self.executors.get(connector["type"])
 		if executor is None: raise ActionExecutionError(f"no executor registered for connector {connector['id']}")
-		return executor(copy.deepcopy(dict(connector)), operation, copy.deepcopy(dict(payload)), idempotency_key)
+		return executor(thaw_json(connector), operation, copy.deepcopy(dict(payload)), idempotency_key)
 
 
 class ActionGateway:
@@ -194,6 +195,7 @@ class ActionGateway:
 	def submit(self, connector_id: str, operation: str, payload: Mapping[str, Any], *, requester_id: str, idempotency_key: str, consequential: bool | None = None, max_attempts: int = 3) -> ActionRecord:
 		if not idempotency_key: raise ValueError("idempotency_key is required")
 		if max_attempts < 1: raise ValueError("max_attempts must be positive")
+		assert_opaque_credentials(payload, context="action payload")
 		connector = self.policy.require_connector_operation(connector_id, operation)
 		action_name = f"{connector_id}.{operation}"
 		rule_required, _, _ = self.policy.approval_policy(action_name)

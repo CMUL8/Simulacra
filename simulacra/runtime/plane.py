@@ -32,6 +32,9 @@ class RuntimePlane:
 	"""
 
 	def __init__(self, repository: JsonRuntimeRepository, approved_graph: ApprovedGraph, environment_id: str, *, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, RuntimeTool] | None = None):
+		if not isinstance(approved_graph, ApprovedGraph):
+			raise TypeError("runtime plane requires an ApprovedGraph")
+		approved_graph.assert_verified()
 		self.repository = repository
 		self.policy = approved_graph
 		self.environment_id = environment_id

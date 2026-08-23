@@ -43,11 +43,32 @@ class Scheduler:
 	def claim(self, worker_id: str, *, lease_seconds: int = 30) -> ScheduledJob | None:
 		now_text = self.clock(); now = _dt(now_text)
 		def change(state: dict[str, Any]) -> ScheduledJob | None:
+			recovered_ids: set[str] = set()
+			for job_id in sorted(state["jobs"]):
+				job = ScheduledJob.from_dict(state["jobs"][job_id])
+				if job.status != "running": continue
+				if job.lease_until is not None and _dt(job.lease_until) > now: continue
+				attempts = job.attempts + 1
+				dead = attempts >= job.max_attempts
+				next_run = job.run_at if dead else _stamp(now + timedelta(seconds=self.base_backoff_seconds * (2 ** (attempts - 1))))
+				recovered = replace(
+					job,
+					status="dead_letter" if dead else "queued",
+					attempts=attempts,
+					run_at=next_run,
+					lease_owner=None,
+					lease_until=None,
+					last_error="worker lease expired before completion",
+					revision=job.revision + 1,
+					updated_at=now_text,
+				)
+				state["jobs"][job_id] = recovered.to_dict()
+				recovered_ids.add(job_id)
 			candidates: list[ScheduledJob] = []
-			for row in state["jobs"].values():
+			for job_id, row in state["jobs"].items():
+				if job_id in recovered_ids: continue
 				job = ScheduledJob.from_dict(row)
-				lease_expired = job.status == "running" and job.lease_until is not None and _dt(job.lease_until) <= now
-				if (job.status == "queued" and _dt(job.run_at) <= now) or lease_expired: candidates.append(job)
+				if job.status == "queued" and _dt(job.run_at) <= now: candidates.append(job)
 			if not candidates: return None
 			job = sorted(candidates, key=lambda item: (item.run_at, item.created_at, item.id))[0]
 			claimed = replace(job, status="running", lease_owner=worker_id, lease_until=_stamp(now + timedelta(seconds=lease_seconds)), revision=job.revision + 1, updated_at=now_text)
