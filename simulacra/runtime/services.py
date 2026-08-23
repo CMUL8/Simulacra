@@ -132,13 +132,15 @@ class ApprovalService:
 	def __init__(self, repository: Any, policy: ApprovedGraph, environment_id: str, *, clock: Callable[[], str] = utc_now):
 		self.repository, self.policy, self.environment_id, self.clock = repository, policy, environment_id, clock
 
-	def request(self, action: str, requester_id: str, *, payload: Mapping[str, Any] | None = None, expires_at: str | None = None, approvals_required: int | None = None, allow_self_approval: bool | None = None) -> ApprovalRequest:
+	def new_request(self, action: str, requester_id: str, *, payload: Mapping[str, Any] | None = None, expires_at: str | None = None, approvals_required: int | None = None, allow_self_approval: bool | None = None) -> ApprovalRequest:
 		required, count, self_allowed = self.policy.approval_policy(action)
 		count = approvals_required if approvals_required is not None else count
 		self_allowed = allow_self_approval if allow_self_approval is not None else self_allowed
 		now = self.clock()
-		record = ApprovalRequest(new_id("approval"), self.policy.tenant_id, self.environment_id, self.policy.project_id, action, requester_id, approvals_required=max(1, count), allow_self_approval=self_allowed, payload=copy.deepcopy(dict(payload or {})), expires_at=expires_at, created_at=now, updated_at=now)
-		return self.repository.create_approval(record)
+		return ApprovalRequest(new_id("approval"), self.policy.tenant_id, self.environment_id, self.policy.project_id, action, requester_id, approvals_required=max(1, count), allow_self_approval=self_allowed, payload=copy.deepcopy(dict(payload or {})), expires_at=expires_at, created_at=now, updated_at=now)
+
+	def request(self, action: str, requester_id: str, *, payload: Mapping[str, Any] | None = None, expires_at: str | None = None, approvals_required: int | None = None, allow_self_approval: bool | None = None) -> ApprovalRequest:
+		return self.repository.create_approval(self.new_request(action, requester_id, payload=payload, expires_at=expires_at, approvals_required=approvals_required, allow_self_approval=allow_self_approval))
 
 	def get(self, approval_id: str) -> ApprovalRequest:
 		return self.repository.get_approval(self.policy.tenant_id, self.environment_id, self.policy.project_id, approval_id)
@@ -168,25 +170,26 @@ class ApprovalService:
 
 
 class ConnectorExecutor(Protocol):
-	def __call__(self, connector: Mapping[str, Any], operation: str, payload: Mapping[str, Any]) -> Any: ...
+	def __call__(self, connector: Mapping[str, Any], operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Any: ...
 
 
 class ConnectorGateway:
 	"""Injected connector executors; no network clients or credentials live here."""
 	def __init__(self, executors: Mapping[str, ConnectorExecutor] | None = None): self.executors = dict(executors or {})
-	def _execute(self, connector: Mapping[str, Any], operation: str, payload: Mapping[str, Any]) -> Any:
+	def _execute(self, connector: Mapping[str, Any], operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Any:
 		executor = self.executors.get(connector["id"]) or self.executors.get(connector["type"])
 		if executor is None: raise ActionExecutionError(f"no executor registered for connector {connector['id']}")
-		return executor(copy.deepcopy(dict(connector)), operation, copy.deepcopy(dict(payload)))
+		return executor(copy.deepcopy(dict(connector)), operation, copy.deepcopy(dict(payload)), idempotency_key)
 
 
 class ActionGateway:
 	"""The sole external-write boundary, with approval and durable idempotency."""
 	_READ_OPERATIONS = {"read", "get", "list", "search", "query", "fetch"}
-	def __init__(self, repository: Any, policy: ApprovedGraph, environment_id: str, connector_gateway: ConnectorGateway, approval_service: ApprovalService, *, clock: Callable[[], str] = utc_now, base_backoff_seconds: float = 1.0):
+	def __init__(self, repository: Any, policy: ApprovedGraph, environment_id: str, connector_gateway: ConnectorGateway, approval_service: ApprovalService, *, clock: Callable[[], str] = utc_now, base_backoff_seconds: float = 1.0, lease_seconds: int = 30):
 		self.repository, self.policy, self.environment_id = repository, policy, environment_id
 		self.connectors, self.approvals, self.clock = connector_gateway, approval_service, clock
 		self.base_backoff_seconds = base_backoff_seconds
+		self.lease_seconds = lease_seconds
 
 	def submit(self, connector_id: str, operation: str, payload: Mapping[str, Any], *, requester_id: str, idempotency_key: str, consequential: bool | None = None, max_attempts: int = 3) -> ActionRecord:
 		if not idempotency_key: raise ValueError("idempotency_key is required")
@@ -200,12 +203,13 @@ class ActionGateway:
 		needs_approval = rule_required or is_consequential
 		now = self.clock()
 		record = ActionRecord(new_id("action"), self.policy.tenant_id, self.environment_id, self.policy.project_id, connector_id, operation, idempotency_key, requester_id, copy.deepcopy(dict(payload)), "pending_approval" if needs_approval else "queued", is_consequential, max_attempts=max_attempts, created_at=now, updated_at=now)
+		if needs_approval:
+			approval = self.approvals.new_request(action_name, requester_id, payload={"action_id": record.id})
+			record = replace(record, approval_id=approval.id)
+			created, _ = self.repository.create_action_with_approval(record, approval)
+			return created
 		created = self.repository.create_action(record)
 		if created.id != record.id: return created
-		if needs_approval:
-			approval = self.approvals.request(action_name, requester_id, payload={"action_id": record.id})
-			updated = replace(record, approval_id=approval.id, revision=1, updated_at=self.clock())
-			return self.repository.save_action(updated, 0)
 		return self._execute(record)
 
 	def _execute(self, record: ActionRecord) -> ActionRecord:
@@ -213,23 +217,25 @@ class ActionGateway:
 			current = ActionRecord.from_dict(state["actions"][record.id])
 			if current.status in {"succeeded", "running"}: return current, False
 			if current.status != "queued": raise RuntimeConflictError(f"action is not executable from {current.status}")
-			claimed = replace(current, status="running", revision=current.revision + 1, updated_at=self.clock())
+			now = self.clock()
+			lease_until = (datetime.fromisoformat(now.replace("Z", "+00:00")) + timedelta(seconds=self.lease_seconds)).astimezone(UTC).isoformat().replace("+00:00", "Z")
+			claimed = replace(current, status="running", attempts=current.attempts + 1, lease_owner=new_id("worker"), lease_until=lease_until, revision=current.revision + 1, updated_at=now)
 			state["actions"][record.id] = claimed.to_dict()
 			return claimed, True
 		record, acquired = self.repository.mutate_project(self.policy.tenant_id, self.environment_id, self.policy.project_id, claim)
 		if not acquired: return record
 		connector = self.policy.require_connector_operation(record.connector_id, record.operation)
 		try:
-			result = self.connectors._execute(connector, record.operation, record.input)
+			result = self.connectors._execute(connector, record.operation, record.input, record.idempotency_key)
 		except Exception as exc:
-			attempts = record.attempts + 1
+			attempts = record.attempts
 			now = self.clock()
 			dead = attempts >= record.max_attempts
 			next_attempt = None if dead else (datetime.fromisoformat(now.replace("Z", "+00:00")) + timedelta(seconds=self.base_backoff_seconds * (2 ** (attempts - 1)))).astimezone(UTC).isoformat().replace("+00:00", "Z")
-			failed = replace(record, status="dead_letter" if dead else "retry_wait", error=str(exc), attempts=attempts, next_attempt_at=next_attempt, revision=record.revision + 1, updated_at=now)
+			failed = replace(record, status="dead_letter" if dead else "retry_wait", error=str(exc), next_attempt_at=next_attempt, lease_owner=None, lease_until=None, revision=record.revision + 1, updated_at=now)
 			self.repository.save_action(failed, record.revision)
 			raise ActionExecutionError(str(exc)) from exc
-		completed = replace(record, status="succeeded", result=copy.deepcopy(result), error=None, attempts=record.attempts + 1, next_attempt_at=None, revision=record.revision + 1, updated_at=self.clock())
+		completed = replace(record, status="succeeded", result=copy.deepcopy(result), error=None, next_attempt_at=None, lease_owner=None, lease_until=None, revision=record.revision + 1, updated_at=self.clock())
 		return self.repository.save_action(completed, record.revision)
 
 	def execute_approved(self, action_id: str) -> ActionRecord:
@@ -252,6 +258,32 @@ class ActionGateway:
 		if record.next_attempt_at and _parse_time(now) < _parse_time(record.next_attempt_at): raise RuntimeConflictError("action retry backoff has not elapsed")
 		queued = replace(record, status="queued", revision=record.revision + 1, updated_at=now)
 		return self._execute(self.repository.save_action(queued, record.revision))
+
+	def recover_stale(self, action_id: str) -> ActionRecord:
+		"""Recover an expired claim without directly invoking the connector."""
+		now_text = self.clock()
+		now = _parse_time(now_text)
+		def change(state: dict[str, Any]) -> ActionRecord:
+			row = state["actions"].get(action_id)
+			if row is None: raise RuntimeNotFoundError("action record not found")
+			current = ActionRecord.from_dict(row)
+			if current.status != "running": raise RuntimeConflictError("action is not running")
+			if current.lease_until is None or _parse_time(current.lease_until) > now:
+				raise RuntimeConflictError("action lease has not expired")
+			dead = current.attempts >= current.max_attempts
+			recovered = replace(
+				current,
+				status="dead_letter" if dead else "retry_wait",
+				error="execution lease expired before durable completion",
+				next_attempt_at=None if dead else now_text,
+				lease_owner=None,
+				lease_until=None,
+				revision=current.revision + 1,
+				updated_at=now_text,
+			)
+			state["actions"][action_id] = recovered.to_dict()
+			return recovered
+		return self.repository.mutate_project(self.policy.tenant_id, self.environment_id, self.policy.project_id, change)
 
 	def dead_letters(self) -> list[ActionRecord]:
 		return [record for record in self.repository.list_actions(self.policy.tenant_id, self.environment_id, self.policy.project_id) if record.status == "dead_letter"]

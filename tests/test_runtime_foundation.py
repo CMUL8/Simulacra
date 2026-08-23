@@ -9,12 +9,14 @@ import pytest
 from simulacra.operation_graph import OperationGraphStore, UnapprovedRevisionError, load_operation_graph
 from simulacra.runtime import (
 	AuditEvent,
+	ActionTool,
 	ApprovalRequiredError,
 	InvalidTransitionError,
 	RuntimeAuthorizationError,
 	RuntimeConflictError,
 	RuntimePlane,
 	RuntimeScopeError,
+	ReadOnlyDataTool,
 	TelemetryEvent,
 )
 
@@ -30,7 +32,7 @@ def graph() -> dict:
 
 
 def approved_plane(tmp_path: Path, *, executors=None, tools=None) -> RuntimePlane:
-	project = tmp_path / "project"; project.mkdir()
+	project = tmp_path / "project"; project.mkdir(parents=True)
 	store = OperationGraphStore(project, tenant_id="tenant_acme", project_id="project_support")
 	revision = store.create_revision(graph(), expected_revision_hash=None)
 	store.approve_revision(revision.revision_hash, actor_id="reviewer")
@@ -67,7 +69,7 @@ def test_durable_entity_workflow_restart_and_conflicts(tmp_path: Path):
 
 def test_consequential_actions_are_idempotent_and_cannot_bypass_approval(tmp_path: Path):
 	calls: list[dict] = []
-	def execute(connector, operation, payload): calls.append(payload); return {"sent": True}
+	def execute(connector, operation, payload, idempotency_key): calls.append({"payload": payload, "key": idempotency_key}); return {"sent": True}
 	plane = approved_plane(tmp_path, executors={"connector_support": execute})
 	action = plane.actions.submit("connector_support", "write", {"message": "hi"}, requester_id="alice", idempotency_key="reply-1")
 	duplicate = plane.actions.submit("connector_support", "write", {"message": "hi"}, requester_id="alice", idempotency_key="reply-1")
@@ -81,7 +83,7 @@ def test_consequential_actions_are_idempotent_and_cannot_bypass_approval(tmp_pat
 
 
 def test_action_retry_backoff_and_dead_letter(tmp_path: Path):
-	def offline(connector, operation, payload): raise OSError("offline")
+	def offline(connector, operation, payload, idempotency_key): raise OSError("offline")
 	plane = approved_plane(tmp_path, executors={"connector_support": offline})
 	current = datetime(2026, 8, 23, tzinfo=UTC)
 	plane.actions.clock = lambda: current.isoformat().replace("+00:00", "Z")
@@ -94,12 +96,79 @@ def test_action_retry_backoff_and_dead_letter(tmp_path: Path):
 	assert plane.actions.dead_letters()[0].status == "dead_letter"
 
 
+def test_pending_action_and_approval_are_atomic_across_interruption(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+	plane = approved_plane(tmp_path)
+	real_atomic_state = plane.repository._atomic_state
+
+	def interrupt(*args, **kwargs):
+		raise OSError("injected persistence interruption")
+
+	monkeypatch.setattr(plane.repository, "_atomic_state", interrupt)
+	with pytest.raises(OSError, match="interruption"):
+		plane.actions.submit("connector_support", "write", {}, requester_id="alice", idempotency_key="atomic-1")
+	monkeypatch.setattr(plane.repository, "_atomic_state", real_atomic_state)
+	assert plane.repository.list_actions("tenant_acme", "env_prod", "project_support") == []
+	assert plane.repository.list_approvals("tenant_acme", "env_prod", "project_support") == []
+	action = plane.actions.submit("connector_support", "write", {}, requester_id="alice", idempotency_key="atomic-1")
+	approval = plane.approvals.get(action.approval_id)
+	assert approval.payload["action_id"] == action.id
+
+
+def test_running_action_lease_recovery_requires_expiry_and_preserves_connector_idempotency(tmp_path: Path):
+	current = datetime(2026, 8, 23, tzinfo=UTC)
+	seen_keys: list[str] = []
+	effects: set[str] = set()
+	def crash_after_connector_accepts(connector, operation, payload, idempotency_key):
+		seen_keys.append(idempotency_key)
+		if idempotency_key not in effects:
+			effects.add(idempotency_key)
+			raise KeyboardInterrupt("simulated worker crash")
+		return {"deduplicated": True}
+
+	plane = approved_plane(tmp_path, executors={"connector_support": crash_after_connector_accepts})
+	plane.actions.clock = lambda: current.isoformat().replace("+00:00", "Z")
+	with pytest.raises(KeyboardInterrupt):
+		plane.actions.submit("connector_support", "read", {}, requester_id="alice", idempotency_key="lease-1")
+	running = plane.repository.list_actions("tenant_acme", "env_prod", "project_support")[0]
+	assert running.status == "running" and running.lease_owner and running.lease_until
+	assert seen_keys == ["lease-1"]
+	with pytest.raises(RuntimeConflictError, match="not expired"):
+		plane.actions.recover_stale(running.id)
+	current += timedelta(seconds=31)
+	recovered = plane.actions.recover_stale(running.id)
+	assert recovered.status == "retry_wait" and recovered.lease_owner is None and recovered.lease_until is None
+	assert seen_keys == ["lease-1"], "recovery itself must never invoke the connector"
+	completed = plane.actions.retry(running.id)
+	assert completed.status == "succeeded"
+	assert seen_keys == ["lease-1", "lease-1"] and effects == {"lease-1"}
+
+
 def test_runtime_agent_graph_tool_source_and_secret_boundaries(tmp_path: Path):
-	plane = approved_plane(tmp_path, tools={"case.lookup": lambda payload: payload["id"]})
+	tool = ReadOnlyDataTool("case.lookup", "case.lookup", lambda payload: payload["id"])
+	plane = approved_plane(tmp_path, tools={"case.lookup": tool})
 	assert plane.agents.invoke("agent_triage", "case.lookup", {"id": "case_1"}) == "case_1"
 	with pytest.raises(RuntimeAuthorizationError): plane.agents.invoke("agent_triage", "source.write", {})
-	with pytest.raises(RuntimeAuthorizationError): plane.agents.invoke("agent_triage", "case.lookup", {"token": "raw"})
+	for key in ("token", "access_token", "bearer", "auth", "client_secret"):
+		with pytest.raises(RuntimeAuthorizationError): plane.agents.invoke("agent_triage", "case.lookup", {key: "raw"})
 	with pytest.raises(RuntimeAuthorizationError): plane.agents.invoke("agent_triage", "unknown.tool", {})
+
+
+def test_runtime_agent_tool_descriptors_block_friendly_name_bypasses_and_route_actions(tmp_path: Path):
+	with pytest.raises(RuntimeAuthorizationError, match="explicit"):
+		approved_plane(tmp_path / "raw", tools={"case.lookup": lambda payload: payload})
+	with pytest.raises(RuntimeAuthorizationError, match="filesystem"):
+		approved_plane(tmp_path / "filesystem", tools={"case.lookup": ReadOnlyDataTool("case.lookup", "filesystem.read", lambda payload: payload)})
+	with pytest.raises(RuntimeAuthorizationError, match="ActionTool"):
+		approved_plane(tmp_path / "email", tools={"case.lookup": ReadOnlyDataTool("case.lookup", "email.send", lambda payload: payload)})
+
+	calls: list[str] = []
+	def connector(connector, operation, payload, idempotency_key): calls.append(idempotency_key); return {"sent": True}
+	action_tool = ActionTool("case.lookup", "case.lookup", "connector_support", "write")
+	plane = approved_plane(tmp_path / "action", executors={"connector_support": connector}, tools={"case.lookup": action_tool})
+	with pytest.raises(RuntimeAuthorizationError, match="idempotency"):
+		plane.agents.invoke("agent_triage", "case.lookup", {"message": "hello"})
+	action = plane.agents.invoke("agent_triage", "case.lookup", {"message": "hello"}, idempotency_key="agent-reply-1")
+	assert action.status == "pending_approval" and calls == []
 
 
 def test_scheduler_retry_backoff_dead_letter_and_restart(tmp_path: Path):

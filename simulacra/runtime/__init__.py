@@ -1,6 +1,6 @@
 """CMUL8 V0 operational runtime foundation."""
 
-from .agents import RuntimeAgentGateway, RuntimeAgentSupervisor
+from .agents import ActionTool, ReadOnlyDataTool, RuntimeAgentGateway, RuntimeAgentSupervisor, RuntimeTool
 from .errors import (
 	ActionExecutionError,
 	ApprovalRequiredError,
@@ -40,13 +40,13 @@ from .services import (
 )
 
 __all__ = [
-	"ActionExecutionError", "ActionGateway", "ActionRecord", "ApprovalDecision",
+	"ActionExecutionError", "ActionGateway", "ActionRecord", "ActionTool", "ApprovalDecision",
 	"ApprovalRequest", "ApprovalRequiredError", "ApprovalService", "ApprovedGraph",
 	"AuditEvent", "AuditService", "ConnectorExecutor", "ConnectorGateway", "EntityRecord",
 	"EntityService", "FileRuntimeRepository", "HealthService", "HumanTask", "HumanTaskService",
-	"InvalidTransitionError", "JsonRuntimeRepository", "RuntimeAgentGateway",
+	"InvalidTransitionError", "JsonRuntimeRepository", "ReadOnlyDataTool", "RuntimeAgentGateway",
 	"RuntimeAgentSupervisor", "RuntimeAuthorizationError", "RuntimeConflictError",
-	"RuntimeNotFoundError", "RuntimePlane", "RuntimePlaneError", "RuntimeRepository",
+	"RuntimeNotFoundError", "RuntimePlane", "RuntimePlaneError", "RuntimeRepository", "RuntimeTool",
 	"RuntimeScopeError", "ScheduledJob", "Scheduler", "TelemetryEvent", "TelemetryService",
 	"WorkflowInstance", "WorkflowService", "new_id", "utc_now",
 ]

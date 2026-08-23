@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Mapping
 
 from simulacra.operation_graph import OperationGraphStore
 
-from .agents import RuntimeAgentSupervisor
+from .agents import RuntimeAgentSupervisor, RuntimeTool
 from .observability import AuditService, HealthService, TelemetryService
 from .policy import ApprovedGraph
 from .repository import JsonRuntimeRepository
@@ -31,7 +31,7 @@ class RuntimePlane:
 	outages, while every service stays bound to the approved revision hash.
 	"""
 
-	def __init__(self, repository: JsonRuntimeRepository, approved_graph: ApprovedGraph, environment_id: str, *, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, Callable[[Mapping[str, Any]], Any]] | None = None):
+	def __init__(self, repository: JsonRuntimeRepository, approved_graph: ApprovedGraph, environment_id: str, *, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, RuntimeTool] | None = None):
 		self.repository = repository
 		self.policy = approved_graph
 		self.environment_id = environment_id
@@ -42,13 +42,13 @@ class RuntimePlane:
 		self.connectors = ConnectorGateway(connector_executors)
 		self.actions = ActionGateway(repository, approved_graph, environment_id, self.connectors, self.approvals)
 		self.scheduler = Scheduler(repository, approved_graph, environment_id)
-		self.agents = RuntimeAgentSupervisor(approved_graph, agent_tools)
+		self.agents = RuntimeAgentSupervisor(approved_graph, agent_tools, action_gateway=self.actions)
 		self.audit = AuditService(repository, approved_graph, environment_id)
 		self.telemetry = TelemetryService(repository, approved_graph, environment_id)
 		self.health = HealthService(repository, approved_graph, environment_id)
 
 	@classmethod
-	def from_approved_revision(cls, repository_root: str | Path, graph_store: OperationGraphStore, revision_hash: str, *, environment_id: str, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, Callable[[Mapping[str, Any]], Any]] | None = None) -> "RuntimePlane":
+	def from_approved_revision(cls, repository_root: str | Path, graph_store: OperationGraphStore, revision_hash: str, *, environment_id: str, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, RuntimeTool] | None = None) -> "RuntimePlane":
 		approved = ApprovedGraph.from_store(graph_store, revision_hash)
 		return cls(JsonRuntimeRepository(repository_root), approved, environment_id, connector_executors=connector_executors, agent_tools=agent_tools)
 

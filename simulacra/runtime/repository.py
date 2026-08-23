@@ -54,6 +54,7 @@ class RuntimeRepository(Protocol):
 	def list_jobs(self, tenant_id: str, environment_id: str, project_id: str) -> list[ScheduledJob]: ...
 	def save_job(self, record: ScheduledJob, expected_revision: int) -> ScheduledJob: ...
 	def create_action(self, record: ActionRecord) -> ActionRecord: ...
+	def create_action_with_approval(self, record: ActionRecord, approval: ApprovalRequest) -> tuple[ActionRecord, ApprovalRequest]: ...
 	def get_action(self, tenant_id: str, environment_id: str, project_id: str, record_id: str) -> ActionRecord: ...
 	def list_actions(self, tenant_id: str, environment_id: str, project_id: str) -> list[ActionRecord]: ...
 	def save_action(self, record: ActionRecord, expected_revision: int) -> ActionRecord: ...
@@ -305,6 +306,28 @@ class JsonRuntimeRepository:
 			state["actions"][record.id] = record.to_dict()
 			state["idempotency"][key] = record.id
 			return record
+		return self.mutate_project(record.tenant_id, record.environment_id, record.project_id, change)
+
+	def create_action_with_approval(self, record: ActionRecord, approval: ApprovalRequest) -> tuple[ActionRecord, ApprovalRequest]:
+		"""Atomically persist a pending action, its approval, and both links."""
+		if record.approval_id != approval.id or approval.payload.get("action_id") != record.id:
+			raise RuntimeConflictError("action and approval linkage is incomplete")
+		self._check_record_scope(approval, record.tenant_id, record.environment_id, record.project_id)
+		def change(state: dict[str, Any]) -> tuple[ActionRecord, ApprovalRequest]:
+			existing_id = state["idempotency"].get(record.idempotency_key)
+			if existing_id:
+				existing = ActionRecord.from_dict(state["actions"][existing_id])
+				if (existing.connector_id, existing.operation, existing.input) != (record.connector_id, record.operation, record.input):
+					raise RuntimeConflictError("idempotency key reused for a different action")
+				if not existing.approval_id or existing.approval_id not in state["approvals"]:
+					raise RuntimeConflictError("persisted pending action has no linked approval")
+				return existing, ApprovalRequest.from_dict(state["approvals"][existing.approval_id])
+			if record.id in state["actions"] or approval.id in state["approvals"]:
+				raise RuntimeConflictError("action or approval record already exists")
+			state["actions"][record.id] = record.to_dict()
+			state["approvals"][approval.id] = approval.to_dict()
+			state["idempotency"][record.idempotency_key] = record.id
+			return record, approval
 		return self.mutate_project(record.tenant_id, record.environment_id, record.project_id, change)
 
 	def get_action(self, tenant_id: str, environment_id: str, project_id: str, record_id: str) -> ActionRecord: return self._get("actions", tenant_id, environment_id, project_id, record_id)
