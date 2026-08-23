@@ -158,6 +158,8 @@ class AgentHarness(ABC):
             str(uuid.uuid4()), request.project_id, request.role, self.name,
             request.config.provider.provider, request.config.model.model_id,
             request.environment_id, request.config.model_reasoning_effort, request.config.codex_profile,
+            configuration_fingerprint=request.config.execution_fingerprint(),
+            configuration_identity=request.config.persisted_identity(),
         )
 
     async def _session_for_run(self, request: AgentRunRequest) -> AgentSession:
@@ -181,6 +183,7 @@ class AgentHarness(ABC):
             request.environment_id,
             request.config.model_reasoning_effort,
             request.config.codex_profile,
+            request.config.execution_fingerprint(),
         )
         actual = (
             session.harness,
@@ -189,6 +192,7 @@ class AgentHarness(ABC):
             session.environment_id,
             session.model_reasoning_effort,
             session.codex_profile,
+            session.configuration_fingerprint,
         )
         if actual != expected:
             raise ValueError("Persisted session configuration identity does not match the requested run")

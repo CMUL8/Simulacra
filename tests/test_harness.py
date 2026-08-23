@@ -105,6 +105,9 @@ def test_provider_extra_rejects_credentials_and_metadata_cannot_leak_them() -> N
         {"extra": {"option": "token=do-not-serialize-me"}},
         {"endpoint": "https://user:do-not-serialize-me@example.test/v1"},
         {"extra": {"endpoint": "https://user:do-not-serialize-me@example.test/v1"}},
+        {"endpoint": "https://example.test/v1?api_key=do-not-serialize-me"},
+        {"extra": {"unknown": "opaque-value"}},
+        {"extra": {"region": object()}},
     ):
         with pytest.raises(ValueError):
             ProviderConfig("custom", **kwargs)
@@ -178,7 +181,16 @@ async def test_resume_rejects_environment_and_full_configuration_identity_mismat
     changed_controls = _request(tmp_path, config=HarnessConfig(
         "fake", ProviderConfig("custom"), ModelCapability("test"), model_reasoning_effort="high", codex_profile="strict",
     ))
-    for mismatch in (changed_environment, changed_model, changed_controls):
+    changed_endpoint = _request(tmp_path, config=HarnessConfig(
+        "fake", ProviderConfig("custom", endpoint="https://model.example/v1", credential_env_var="CMUL8_TEST_TOKEN"), ModelCapability("test"),
+    ))
+    changed_credential_name = _request(tmp_path, config=HarnessConfig(
+        "fake", ProviderConfig("custom", credential_env_var="CMUL8_OTHER_TOKEN"), ModelCapability("test"),
+    ))
+    changed_extra = _request(tmp_path, config=HarnessConfig(
+        "fake", ProviderConfig("custom", credential_env_var="CMUL8_TEST_TOKEN", extra={"region": "us-east"}), ModelCapability("test"),
+    ))
+    for mismatch in (changed_environment, changed_model, changed_controls, changed_endpoint, changed_credential_name, changed_extra):
         with pytest.raises(ValueError, match="configuration identity"):
             await harness.resume_session(mismatch)
 

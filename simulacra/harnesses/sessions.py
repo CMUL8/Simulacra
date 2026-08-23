@@ -119,6 +119,8 @@ class JsonSessionRepository(SessionRepository):
             codex_profile=item.get("codex_profile"),
             thread_id=item.get("thread_id"), resumed=True,
             created_at=datetime.fromisoformat(str(item["created_at"])),
+            configuration_fingerprint=str(item.get("configuration_fingerprint", "")),
+            configuration_identity=item.get("configuration_identity", {}),
         )
 
     def save(self, session: AgentSession) -> None:
@@ -128,6 +130,8 @@ class JsonSessionRepository(SessionRepository):
                 "session_id": session.session_id, "harness": session.harness, "provider": session.provider,
                 "model_id": session.model_id, "environment_id": session.environment_id,
                 "model_reasoning_effort": session.model_reasoning_effort, "codex_profile": session.codex_profile,
+                "configuration_fingerprint": session.configuration_fingerprint,
+                "configuration_identity": dict(session.configuration_identity),
                 "thread_id": session.thread_id, "created_at": session.created_at.isoformat(),
             }
             fd, tmp_name = tempfile.mkstemp(prefix="sessions.", suffix=".tmp", dir=self._harness)

@@ -19,6 +19,8 @@ class FakeHarness(AgentHarness):
         return AgentSession(existing.session_id if existing else str(uuid.uuid4()), request.project_id, request.role, self.name,
                             request.config.provider.provider, request.config.model.model_id,
                             request.environment_id, request.config.model_reasoning_effort, request.config.codex_profile,
+                            configuration_fingerprint=request.config.execution_fingerprint(),
+                            configuration_identity=request.config.persisted_identity(),
                             thread_id=existing.thread_id if existing else f"fake:{request.project_id}:{request.role}", resumed=existing is not None)
 
     async def _run_provider(self, request: AgentRunRequest, session: AgentSession) -> Mapping[str, Any]:

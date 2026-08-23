@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import re
+import hashlib
+import json
 from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -53,6 +55,8 @@ def _readonly(values: Mapping[str, Any] | None) -> Mapping[str, Any]:
 
 _CREDENTIAL_FRAGMENT = re.compile(r"(?:api[_-]?key|token|secret|password|credential|authorization|auth|bearer)", re.IGNORECASE)
 _CREDENTIAL_VALUE = re.compile(r"(?:api[_-]?key|token|secret|password|credential|authorization)\s*[:=]", re.IGNORECASE)
+_SAFE_EXTRA_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
+_EXTRA_KEYS = frozenset({"request_timeout", "max_retries", "region", "api_version", "organization", "project", "deployment"})
 
 
 def _contains_url_userinfo(value: str) -> bool:
@@ -60,13 +64,27 @@ def _contains_url_userinfo(value: str) -> bool:
     return bool(parsed.scheme and parsed.netloc and (parsed.username is not None or parsed.password is not None))
 
 
+def _validate_endpoint(value: str) -> None:
+    parsed = urlsplit(value)
+    if _contains_url_userinfo(value) or parsed.query or parsed.fragment:
+        raise ValueError("endpoint may not include credentials, query parameters, or fragments")
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("endpoint must be an http(s) URL without credentials")
+
+
 def _safe_extra(extra: Mapping[str, Any]) -> Mapping[str, Any]:
     safe: dict[str, Any] = {}
     for key, value in extra.items():
-        if not isinstance(key, str) or _CREDENTIAL_FRAGMENT.search(key):
-            raise ValueError("provider extra keys may not contain credentials")
-        if not isinstance(value, (str, int, float, bool, type(None))):
-            raise ValueError("provider extra values must be scalar, non-secret configuration")
+        if not isinstance(key, str) or key not in _EXTRA_KEYS or _CREDENTIAL_FRAGMENT.search(key):
+            raise ValueError("provider extra key is not an approved non-secret configuration key")
+        if key == "request_timeout":
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError("request_timeout must be a positive number")
+        elif key == "max_retries":
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("max_retries must be a non-negative integer")
+        elif not isinstance(value, str) or not _SAFE_EXTRA_TEXT.fullmatch(value):
+            raise ValueError(f"{key} must be a safe identifier string")
         if isinstance(value, str) and (_CREDENTIAL_FRAGMENT.search(value) or _CREDENTIAL_VALUE.search(value) or _contains_url_userinfo(value)):
             raise ValueError("provider extra values may not contain credentials or URL userinfo")
         safe[key] = value
@@ -126,8 +144,8 @@ class ProviderConfig:
             raise ValueError(f"Unsupported provider {self.provider!r}; expected one of {sorted(_PROVIDERS)}")
         if self.credential_env_var and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.credential_env_var):
             raise ValueError("credential_env_var must be an environment-variable name")
-        if self.endpoint and _contains_url_userinfo(self.endpoint):
-            raise ValueError("endpoint may not include URL userinfo")
+        if self.endpoint:
+            _validate_endpoint(self.endpoint)
         object.__setattr__(self, "extra", _safe_extra(self.extra))
 
     def metadata(self) -> dict[str, Any]:
@@ -189,6 +207,47 @@ class HarnessConfig:
             "codex_profile": self.codex_profile,
         }
 
+    def configuration_identity(self) -> dict[str, Any]:
+        """Canonical safe execution identity used to gate provider-thread reuse."""
+        return {
+            "harness": self.harness,
+            "provider": self.provider.metadata(),
+            "model": {
+                "model_id": self.model.model_id,
+                "chat": self.model.chat,
+                "tool_calling": self.model.tool_calling,
+                "structured_outputs": self.model.structured_outputs,
+                "file_editing": self.model.file_editing,
+                "patch_reliability": self.model.patch_reliability,
+                "streaming": self.model.streaming,
+                "context_window": self.model.context_window,
+                "reasoning_controls": self.model.reasoning_controls,
+                "image_input": self.model.image_input,
+                "responses_api_compatible": self.model.responses_api_compatible,
+                "approved_task_types": sorted(item.value for item in self.model.approved_task_types),
+                "architect": self.model.architect,
+                "source_edit": self.model.source_edit,
+                "network": self.model.network,
+                "structured_output": self.model.structured_output,
+            },
+            "model_reasoning_effort": self.model_reasoning_effort,
+            "codex_profile": self.codex_profile,
+        }
+
+    def execution_fingerprint(self) -> str:
+        payload = json.dumps(self.configuration_identity(), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def persisted_identity(self) -> dict[str, Any]:
+        """Safe audit identity; the credential-variable name exists only in the hash input."""
+        identity = self.configuration_identity()
+        identity["provider"] = {
+            "provider": self.provider.provider,
+            "endpoint": self.provider.endpoint,
+            "extra": dict(self.provider.extra),
+        }
+        return identity
+
 
 @dataclass(frozen=True, slots=True)
 class AgentSession:
@@ -204,6 +263,11 @@ class AgentSession:
     thread_id: str | None = None
     resumed: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    configuration_fingerprint: str = ""
+    configuration_identity: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "configuration_identity", _readonly(self.configuration_identity))
 
 
 @dataclass(frozen=True, slots=True)

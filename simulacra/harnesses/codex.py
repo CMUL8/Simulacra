@@ -40,11 +40,15 @@ class CodexHarness(AgentHarness):
             return AgentSession(existing.session_id if existing else str(uuid.uuid4()), request.project_id, request.role, self.name,
                                 request.config.provider.provider, request.config.model.model_id,
                                 request.environment_id, request.config.model_reasoning_effort, request.config.codex_profile,
+                                configuration_fingerprint=request.config.execution_fingerprint(),
+                                configuration_identity=request.config.persisted_identity(),
                                 thread_id=existing.thread_id if existing else None, resumed=existing is not None)
         thread_id = await self.transport.create_thread(request=request, thread_id=existing.thread_id if existing else None)
         session = AgentSession(existing.session_id if existing else str(uuid.uuid4()), request.project_id, request.role, self.name,
                                request.config.provider.provider, request.config.model.model_id,
                                request.environment_id, request.config.model_reasoning_effort, request.config.codex_profile,
+                               configuration_fingerprint=request.config.execution_fingerprint(),
+                               configuration_identity=request.config.persisted_identity(),
                                thread_id=thread_id, resumed=existing is not None)
         self._threads[session.session_id] = thread_id
         return session
