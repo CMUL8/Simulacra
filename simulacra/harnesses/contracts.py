@@ -11,13 +11,15 @@ import os
 import re
 import hashlib
 import json
+import math
 from urllib.parse import urlsplit
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 
 class TaskType(str, Enum):
@@ -57,6 +59,7 @@ _CREDENTIAL_FRAGMENT = re.compile(r"(?:api[_-]?key|token|secret|password|credent
 _CREDENTIAL_VALUE = re.compile(r"(?:api[_-]?key|token|secret|password|credential|authorization)\s*[:=]", re.IGNORECASE)
 _SAFE_EXTRA_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
 _EXTRA_KEYS = frozenset({"request_timeout", "max_retries", "region", "api_version", "organization", "project", "deployment"})
+_IDENTIFIER_EXTRA_KEYS = frozenset({"region", "api_version", "organization", "project", "deployment"})
 
 
 def _contains_url_userinfo(value: str) -> bool:
@@ -73,18 +76,29 @@ def _validate_endpoint(value: str) -> None:
 
 
 def _safe_extra(extra: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not isinstance(extra, Mapping):
+        raise ValueError("provider extra must be a mapping of approved non-secret configuration")
     safe: dict[str, Any] = {}
     for key, value in extra.items():
         if not isinstance(key, str) or key not in _EXTRA_KEYS or _CREDENTIAL_FRAGMENT.search(key):
             raise ValueError("provider extra key is not an approved non-secret configuration key")
         if key == "request_timeout":
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-                raise ValueError("request_timeout must be a positive number")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("request_timeout must be a finite positive number")
+            try:
+                valid_timeout = math.isfinite(value) and value > 0
+            except OverflowError:
+                valid_timeout = False
+            if not valid_timeout:
+                raise ValueError("request_timeout must be a finite positive number")
         elif key == "max_retries":
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError("max_retries must be a non-negative integer")
-        elif not isinstance(value, str) or not _SAFE_EXTRA_TEXT.fullmatch(value):
-            raise ValueError(f"{key} must be a safe identifier string")
+        elif key in _IDENTIFIER_EXTRA_KEYS:
+            if not isinstance(value, str) or not _SAFE_EXTRA_TEXT.fullmatch(value):
+                raise ValueError(f"{key} must be a safe identifier string")
+        else:  # _EXTRA_KEYS guards this, retained as a defense against future additions.
+            raise ValueError("provider extra key is not explicitly typed")
         if isinstance(value, str) and (_CREDENTIAL_FRAGMENT.search(value) or _CREDENTIAL_VALUE.search(value) or _contains_url_userinfo(value)):
             raise ValueError("provider extra values may not contain credentials or URL userinfo")
         safe[key] = value
@@ -142,9 +156,13 @@ class ProviderConfig:
     def __post_init__(self) -> None:
         if self.provider not in _PROVIDERS:
             raise ValueError(f"Unsupported provider {self.provider!r}; expected one of {sorted(_PROVIDERS)}")
-        if self.credential_env_var and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.credential_env_var):
+        if self.endpoint is not None and not isinstance(self.endpoint, str):
+            raise ValueError("endpoint must be a string or None")
+        if self.credential_env_var is not None and not isinstance(self.credential_env_var, str):
+            raise ValueError("credential_env_var must be a string or None")
+        if self.credential_env_var is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.credential_env_var):
             raise ValueError("credential_env_var must be an environment-variable name")
-        if self.endpoint:
+        if self.endpoint is not None:
             _validate_endpoint(self.endpoint)
         object.__setattr__(self, "extra", _safe_extra(self.extra))
 

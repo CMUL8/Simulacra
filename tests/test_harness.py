@@ -108,6 +108,13 @@ def test_provider_extra_rejects_credentials_and_metadata_cannot_leak_them() -> N
         {"endpoint": "https://example.test/v1?api_key=do-not-serialize-me"},
         {"extra": {"unknown": "opaque-value"}},
         {"extra": {"region": object()}},
+        {"endpoint": 0},
+        {"credential_env_var": 0},
+        {"extra": ("request_timeout", 30)},
+        {"extra": {"request_timeout": float("nan")}},
+        {"extra": {"request_timeout": float("inf")}},
+        {"extra": {"request_timeout": float("-inf")}},
+        {"extra": {"request_timeout": True}},
     ):
         with pytest.raises(ValueError):
             ProviderConfig("custom", **kwargs)
