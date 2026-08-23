@@ -9,5 +9,5 @@ values plus common password, token, authorization, secret, and API-key
 assignments in diagnostics. It refuses suspicious filenames. This is defense in
 depth, not a guarantee: inspect the archive locally before transfer and use the
 customer-approved support channel. Do not include database dumps, object data,
-raw connector payloads, Kubernetes Secret objects, private keys, `.env` files,
+raw connector payloads, Docker secret files, private keys, `.env` files,
 or credential-provider caches.

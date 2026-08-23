@@ -1,7 +1,7 @@
 # CMUL8 V0 demo path
 
 This path exercises durable CMUL8 contracts without requiring external model,
-connector, Kubernetes, or cloud credentials.
+connector, cluster, or cloud credentials.
 
 ## Local console
 
@@ -26,11 +26,10 @@ uv run pytest -q
 cd apps/console && npx tsc --noEmit && npm run build
 ```
 
-The two deployment tests skipped on machines without Helm are intentional.
-Run the following in release CI with Helm and Terraform installed:
+Validate the lightweight single-VM runtime before release:
 
 ```bash
-helm template cmul8 charts/cmul8 -f charts/cmul8/ci/private-runtime-values.yaml
+CMUL8_POSTGRES_PASSWORD=test-only SIMULACRA_BOOTSTRAP_PASSWORD=test-only docker compose config -q
 terraform -chdir=infra/terraform/modules/aws validate
 terraform -chdir=infra/terraform/modules/azure validate
 terraform -chdir=infra/terraform/modules/gcp validate
@@ -41,8 +40,8 @@ terraform -chdir=infra/terraform/modules/gcp validate
 The image uses `/opt/cmul8/bin/cmul8-entrypoint` for `web`, `api`, `worker`,
 `preflight`, `migrations`, and `smoke`. Worker probes contact the running worker
 over a Unix socket; readiness additionally verifies queue reachability. The
-chart requires a digest-pinned image and externally supplied PostgreSQL, Redis,
-object-storage, and secret-provider settings.
+Compose runtime requires operator-supplied passwords, durable PostgreSQL and Redis
+volumes, and a digest-pinned image for staging or production.
 
 Air-gap readiness is documented in `docs/private-runtime/air-gap-readiness.md`;
 end-to-end air-gap support is not certified in V0.

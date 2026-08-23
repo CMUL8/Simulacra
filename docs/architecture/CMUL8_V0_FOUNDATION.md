@@ -36,7 +36,7 @@ control plane. Generated operational bundles contain an independent runtime plan
 | Preview/checkpoints | Present | Preserve last healthy preview and make version gates explicit |
 | Tenancy/RBAC/audit | Present | Apply to collaboration, review and consequential actions |
 | Runtime workflow/action plane | Missing | Wave 2 consumer of approved Operation Graph |
-| Cloud/private packaging | Docker/Fly baseline | Wave 2/3 immutable bundle, Helm and Terraform |
+| Cloud/private packaging | Docker/Fly baseline | Wave 2/3 immutable bundle and hardened Compose runtime |
 | Multiplayer UI | Missing | Feature modules in Wave 2; no global redesign |
 
 ## Gap and risk analysis

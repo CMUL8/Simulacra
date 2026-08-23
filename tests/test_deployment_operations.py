@@ -110,31 +110,14 @@ def test_upgrade_and_rollback_records_are_explicit_and_deterministic():
     }
 
 
-def test_chart_has_processes_probes_security_external_state_and_hooks():
-    chart = ROOT / "charts" / "cmul8"
-    all_templates = "\n".join(path.read_text() for path in (chart / "templates").iterdir())
-    values = (chart / "values.yaml").read_text()
-    for process in ("web", "api", "worker"):
-        assert f'"{process}"' in all_templates
-    for probe in ("startupProbe", "livenessProbe", "readinessProbe"):
-        assert probe in all_templates
-    for security in ("runAsNonRoot", "readOnlyRootFilesystem", "allowPrivilegeEscalation", 'drop: ["ALL"]'):
-        assert security in values
-    assert "secretKeyRef" in all_templates
-    assert "CMUL8_IMAGE_REGISTRY" in all_templates
-    assert "CMUL8_TLS_REQUIRED" in all_templates
-    assert "pre-install,pre-upgrade" in all_templates
-    assert "post-install,post-upgrade,post-rollback" in all_templates
-    assert 'helm.sh/hook-weight: "-20"' in all_templates
-    assert 'helm.sh/hook-weight: "-10"' in all_templates
-    assert "kind: PodDisruptionBudget" in all_templates
-    assert "topologySpreadConstraints" in all_templates
-    assert "enableServiceLinks: false" in all_templates
-    assert "cmul8-worker-health" in all_templates
-    assert "worker.alive" not in all_templates and "worker.ready" not in all_templates
-    assert "namespaceSelector: {}" not in all_templates
-    assert "kind: StatefulSet" not in all_templates
-    assert "kind: Secret" not in all_templates
+def test_runtime_process_contract_matches_compose_entrypoints():
+	processes = json.loads((ROOT / "deploy" / "processes.json").read_text())
+	compose = (ROOT / "docker-compose.yml").read_text()
+	for process in ("api", "worker", "migrations"):
+		assert f'command: ["{process}"]' in compose
+	assert processes["image"]["writableMounts"] == ["/tmp", "/app/data", "/app/runs"]
+	assert "cmul8-worker-health" in compose
+	assert "no-new-privileges:true" in compose
 
 
 def test_terraform_modules_are_honest_customer_managed_contracts():

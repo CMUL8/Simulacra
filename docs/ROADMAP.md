@@ -131,7 +131,7 @@ One **read-only** warehouse path with secrets outside the model.
 ### Deliverables
 - [ ] Single template: **Streamlit** (default proposal)
 - [ ] `simulacra_app_scaffold` skill: app reads manifest + parquet/DuckDB/WH views
-- [ ] `simulacra deploy` (start: local process or single VM/k8s service)
+- [ ] `simulacra deploy` (start: local process or single-VM Compose service)
 - [ ] Human approval step (CLI flag or console later)
 - [ ] Release record: `run_id`, image/commit, approver, timestamp
 - [ ] Gate: `app_boots` smoke
@@ -198,7 +198,7 @@ Avoid building a large web IDE before A/B work.
 | --- | --- |
 | Agent runtime | **Reuse Prime** (binary or source launcher) |
 | Orchestration RPC | Optional thin Simulacra CLI; avoid rewriting RpcClient unless Python ops require it |
-| App host | Start process supervisor / simple k8s Deploy |
+| App host | Start process supervisor / single-VM Compose service |
 | Auth | Sessions + API keys + RBAC (SSO later) |
 
 ---

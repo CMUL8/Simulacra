@@ -18,9 +18,6 @@ REQUIRED = (
     "CMUL8_ENVIRONMENT",
     "CMUL8_POSTGRES_URL",
     "CMUL8_REDIS_URL",
-    "CMUL8_OBJECT_STORAGE_URL",
-    "CMUL8_SECRET_PROVIDER",
-    "CMUL8_IMAGE_REGISTRY",
 )
 SECRET_KEYS = {"CMUL8_POSTGRES_URL", "CMUL8_REDIS_URL"}
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
@@ -50,8 +47,9 @@ def validate_environment(environment: Mapping[str, str], *, resolve_hosts: bool 
     schemes = {
         "CMUL8_POSTGRES_URL": {"postgres", "postgresql"},
         "CMUL8_REDIS_URL": {"redis", "rediss"},
-        "CMUL8_OBJECT_STORAGE_URL": {"s3", "gs", "az", "https"},
     }
+    if environment.get("CMUL8_OBJECT_STORAGE_URL"):
+        schemes["CMUL8_OBJECT_STORAGE_URL"] = {"s3", "gs", "az", "https"}
     for key, allowed in schemes.items():
         value = environment.get(key)
         if not value:
@@ -66,8 +64,11 @@ def validate_environment(environment: Mapping[str, str], *, resolve_hosts: bool 
                 socket.getaddrinfo(parsed.hostname, parsed.port)
             except OSError:
                 errors.append(f"{key} host does not resolve")
-    if environment.get("CMUL8_SECRET_PROVIDER") == "env":
-        warnings.append("environment-backed secrets are for development only; use an external secret provider")
+    if environment.get("CMUL8_SECRET_PROVIDER") in {"env", "compose_env"}:
+        warnings.append(
+            "Compose environment secrets are acceptable for V0; "
+            "use Docker secrets or an external provider for production"
+        )
     if environment.get("CMUL8_TLS_REQUIRED", "true").lower() not in {"true", "1", "yes"}:
         warnings.append("TLS is not marked required")
     return PreflightResult(not errors, tuple(errors), tuple(warnings), tuple(REQUIRED))

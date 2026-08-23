@@ -1,37 +1,22 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
-import pytest
+import yaml
 
-from deploy.chart import ChartValidationError, render_chart, validate_rendered_manifest
 from deploy.release import assess_upgrade
 
 ROOT = Path(__file__).resolve().parents[1]
-CHART = ROOT / "charts" / "cmul8"
-CI_VALUES = CHART / "ci" / "private-runtime-values.yaml"
-
-RENDERED_CONTRACT = """
-kind: Deployment
-app.kubernetes.io/component: web
-app.kubernetes.io/component: api
-app.kubernetes.io/component: worker
-kind: Service
-kind: PodDisruptionBudget
-readOnlyRootFilesystem: true
-allowPrivilegeEscalation: false
-runAsNonRoot: true
-livenessProbe:
-readinessProbe:
-"""
+COMPOSE = ROOT / "docker-compose.yml"
 
 
-def release_state(*, bundle: str, image: str = "1", schema: int = 1, compatible: bool = True, evidence: bool = False) -> dict:
+def release_state(
+    *, bundle: str, image: str = "1", schema: int = 1, compatible: bool = True, evidence: bool = False
+) -> dict:
     state = {
         "bundle_hash": bundle * 64,
         "image_digest": "sha256:" + image * 64,
-        "chart_version": "0.1.0",
+        "runtime_version": "0.1.0",
         "schema_version": schema,
         "migration_backward_compatible": compatible,
     }
@@ -72,48 +57,30 @@ def test_upgrade_assessment_rejects_tags_downgrades_and_same_bundle():
     assert "schema downgrade is unsupported" in result.errors
 
 
-def test_install_and_upgrade_render_commands_are_distinct_and_validated():
-    commands: list[list[str]] = []
-
-    def runner(command: list[str]) -> str:
-        commands.append(command)
-        return RENDERED_CONTRACT if command[1] == "template" else "lint ok"
-
-    install = render_chart(CHART, release="cmul8", namespace="runtime", values_files=[CI_VALUES], runner=runner)
-    upgrade = render_chart(CHART, release="cmul8", namespace="runtime", values_files=[CI_VALUES], upgrade=True, runner=runner)
-    assert install == upgrade == RENDERED_CONTRACT
-    template_commands = [command for command in commands if command[1] == "template"]
-    assert "--is-upgrade" not in template_commands[0]
-    assert template_commands[1][-1] == "--is-upgrade"
-    assert all("--values" in command for command in commands)
-
-
-def test_render_validator_rejects_unresolved_templates_and_secrets():
-    with pytest.raises(ChartValidationError, match="unresolved"):
-        validate_rendered_manifest(RENDERED_CONTRACT + "{{ unresolved }}")
-    with pytest.raises(ChartValidationError, match="credentials"):
-        validate_rendered_manifest(RENDERED_CONTRACT + "\nkind: Secret\n")
+def test_compose_runtime_is_small_durable_and_health_checked():
+    document = yaml.safe_load(COMPOSE.read_text())
+    services = document["services"]
+    assert set(services) == {"postgres", "redis", "migrate", "api", "worker"}
+    assert services["api"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
+    assert services["worker"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
+    for service in ("postgres", "redis", "api", "worker"):
+        assert "healthcheck" in services[service]
+    for service in ("migrate", "api", "worker"):
+        assert services[service]["read_only"] is True
+        assert "ALL" in services[service]["cap_drop"]
+        assert "no-new-privileges:true" in services[service]["security_opt"]
+        mounts = services[service]["volumes"]
+        assert "cmul8-data:/app/data" in mounts
+        assert "cmul8-runs:/app/runs" in mounts
+    assert services["api"]["ports"] == [
+        "${CMUL8_BIND_ADDRESS:-127.0.0.1}:${CMUL8_PORT:-8000}:8000"
+    ]
 
 
-def test_private_runtime_maps_database_and_durable_state_contracts():
-    helpers = (CHART / "templates" / "_helpers.tpl").read_text()
-    deployments = (CHART / "templates" / "deployments.yaml").read_text()
-    pvc = (CHART / "templates" / "pvc.yaml").read_text()
-    assert "SIMULACRA_DATABASE_URL" in helpers
-    assert "SIMULACRA_DATA_DIR" in helpers and "SIMULACRA_RUNS_DIR" in helpers
-    assert "mountPath: /var/lib/cmul8" in deployments
-    assert "persistentVolumeClaim" in deployments
-    assert "kind: PersistentVolumeClaim" in pvc
-
-
-@pytest.mark.skipif(shutil.which("helm") is None, reason="helm binary unavailable; CI must run this real render")
-@pytest.mark.parametrize("upgrade", [False, True], ids=["install", "upgrade"])
-def test_real_helm_install_and_upgrade_render(upgrade: bool):
-    rendered = render_chart(
-        CHART,
-        release="cmul8-ci",
-        namespace="cmul8-ci",
-        values_files=[CI_VALUES],
-        upgrade=upgrade,
-    )
-    assert "kind: Deployment" in rendered
+def test_compose_requires_operator_supplied_passwords_and_has_no_kubernetes_contract():
+    text = COMPOSE.read_text()
+    assert "${CMUL8_POSTGRES_PASSWORD:?set CMUL8_POSTGRES_PASSWORD}" in text
+    assert "${SIMULACRA_BOOTSTRAP_PASSWORD:?set SIMULACRA_BOOTSTRAP_PASSWORD}" in text
+    assert "kubernetes" not in text.lower()
+    assert "helm" not in text.lower()
+    assert "simulacra-admin-change-me" not in text

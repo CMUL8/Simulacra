@@ -1,4 +1,4 @@
-"""Executable OCI process contract for CMUL8 Cloud and private Kubernetes."""
+"""Executable OCI process contract for CMUL8 Cloud and private Docker Compose."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ WORKER_SOCKET = Path(os.environ.get("CMUL8_WORKER_SOCKET", "/tmp/cmul8-worker.so
 
 
 def preflight() -> int:
-	required = ("CMUL8_TENANT_ID", "CMUL8_ENVIRONMENT", "CMUL8_SECRET_PROVIDER", "CMUL8_POSTGRES_URL", "CMUL8_REDIS_URL", "CMUL8_OBJECT_STORAGE_URL")
+	required = ("CMUL8_TENANT_ID", "CMUL8_ENVIRONMENT", "CMUL8_POSTGRES_URL", "CMUL8_REDIS_URL")
 	missing = [key for key in required if not os.environ.get(key, "").strip()]
 	if missing:
 		print(f"missing required environment: {', '.join(missing)}", file=sys.stderr)

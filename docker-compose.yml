@@ -1,51 +1,111 @@
+name: cmul8
+
+x-cmul8-environment: &cmul8-environment
+  CMUL8_DEPLOYMENT_MODE: private_cloud
+  CMUL8_TENANT_ID: ${CMUL8_TENANT_ID:-default}
+  CMUL8_ENVIRONMENT: ${CMUL8_ENVIRONMENT:-production}
+  CMUL8_POSTGRES_URL: postgresql://cmul8:${CMUL8_POSTGRES_PASSWORD:?set CMUL8_POSTGRES_PASSWORD}@postgres:5432/cmul8
+  CMUL8_REDIS_URL: redis://redis:6379/0
+  CMUL8_SECRET_PROVIDER: compose_env
+  CMUL8_TLS_REQUIRED: ${CMUL8_TLS_REQUIRED:-true}
+  SIMULACRA_DATABASE_URL: postgresql://cmul8:${CMUL8_POSTGRES_PASSWORD}@postgres:5432/cmul8
+  SIMULACRA_AUTH_REQUIRED: "1"
+  SIMULACRA_USE_PRIME: ${SIMULACRA_USE_PRIME:-0}
+  SIMULACRA_SANDBOX: worktree
+  SIMULACRA_DATA_DIR: /app/data
+  SIMULACRA_RUNS_DIR: /app/runs
+  SIMULACRA_BOOTSTRAP_EMAIL: ${SIMULACRA_BOOTSTRAP_EMAIL:-admin@localhost}
+  SIMULACRA_BOOTSTRAP_PASSWORD: ${SIMULACRA_BOOTSTRAP_PASSWORD:?set SIMULACRA_BOOTSTRAP_PASSWORD}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+
+x-cmul8-service: &cmul8-service
+  image: ${CMUL8_IMAGE:-cmul8:local}
+  build: .
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  environment: *cmul8-environment
+  volumes:
+    - cmul8-data:/app/data
+    - cmul8-runs:/app/runs
+
 services:
-  db:
+  postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: simulacra
-      POSTGRES_PASSWORD: simulacra
-      POSTGRES_DB: simulacra
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: cmul8
+      POSTGRES_PASSWORD: ${CMUL8_POSTGRES_PASSWORD}
+      POSTGRES_DB: cmul8
     volumes:
-      - simulacra-pg:/var/lib/postgresql/data
+      - cmul8-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U simulacra -d simulacra"]
+      test: ["CMD-SHELL", "pg_isready -U cmul8 -d cmul8"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - cmul8-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    <<: *cmul8-service
+    restart: "no"
+    command: ["migrations"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   api:
-    build: .
+    <<: *cmul8-service
+    command: ["api"]
     ports:
-      - "8000:8000"
-    environment:
-      SIMULACRA_AUTH_REQUIRED: "1"
-      SIMULACRA_USE_PRIME: "0"
-      SIMULACRA_SANDBOX: "machine"
-      SIMULACRA_MACHINE_PROVIDER: "local"
-      SIMULACRA_MACHINE_GVISOR: "1"
-      SIMULACRA_BOOTSTRAP_EMAIL: "admin@localhost"
-      SIMULACRA_BOOTSTRAP_PASSWORD: "simulacra-admin-change-me"
-      SIMULACRA_DATABASE_URL: "postgresql://simulacra:simulacra@db:5432/simulacra"
-      # Optional SIEM webhook (NDJSON / CEF / Splunk HEC)
-      # SIMULACRA_SIEM_WEBHOOK: "https://siem.example/ingest"
-      # SIMULACRA_SIEM_FORMAT: "json"
-      # SIMULACRA_SIEM_TOKEN: ""
-    volumes:
-      - simulacra-data:/app/data
-      - simulacra-runs:/app/runs
-      - /var/run/docker.sock:/var/run/docker.sock
+      - "${CMUL8_BIND_ADDRESS:-127.0.0.1}:${CMUL8_PORT:-8000}:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/readyz"]
       interval: 10s
       timeout: 3s
-      retries: 5
+      retries: 12
+      start_period: 15s
+
+  worker:
+    <<: *cmul8-service
+    command: ["worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/opt/cmul8/bin/cmul8-worker-health", "--ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
 
 volumes:
-  simulacra-data:
-  simulacra-runs:
-  simulacra-pg:
+  cmul8-data:
+  cmul8-runs:
+  cmul8-postgres:
+  cmul8-redis:

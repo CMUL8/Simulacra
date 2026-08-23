@@ -7,10 +7,7 @@
     "CMUL8_TENANT_ID",
     "CMUL8_ENVIRONMENT",
     "CMUL8_POSTGRES_URL",
-    "CMUL8_REDIS_URL",
-    "CMUL8_OBJECT_STORAGE_URL",
-    "CMUL8_SECRET_PROVIDER",
-    "CMUL8_IMAGE_REGISTRY"
+	"CMUL8_REDIS_URL"
   ],
   "properties": {
     "CMUL8_DEPLOYMENT_MODE": {"enum": ["cmul8_cloud", "dedicated_cloud", "private_cloud"]},

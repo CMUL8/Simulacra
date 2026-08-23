@@ -1,4 +1,0 @@
-The chart does not create Postgres, Redis, object storage, or credentials.
-Confirm the external secret {{ .Values.external.secretName }} exists, then run
-the CMUL8 smoke checks. Helm release history is the rollback source of truth;
-database rollback is allowed only when the release migration declares backward compatibility.

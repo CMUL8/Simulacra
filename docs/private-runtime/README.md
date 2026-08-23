@@ -1,49 +1,36 @@
 # CMUL8 private runtime
 
-CMUL8 ships one immutable Operational Bundle for `cmul8_cloud`,
-`dedicated_cloud`, and `private_cloud`. A release is never regenerated for a
-target. Target-specific endpoints, tenant identity, credentials, ingress, and
-capacity enter only through the runtime environment and Helm values.
+CMUL8 V0 uses Docker Compose on a single Linux VM. This is the smallest honest
+production shape for the current product: PostgreSQL, Redis, a one-shot migration
+process, the API/web process, and one worker. It avoids operating a cluster before
+CMUL8 needs multi-node scheduling.
 
-## Customer/platform responsibilities
+## Host responsibilities
 
-Before installation, provide a Kubernetes 1.26+ cluster, external PostgreSQL,
-Redis, object storage, a secret provider synchronized to a Kubernetes Secret,
-an OCI registry, DNS/TLS, backups, monitoring, and egress policy. The Terraform
-modules under `infra/terraform/modules` validate references to these services;
-they provision nothing.
+Provide Docker Engine with Compose v2, at least 4 CPU cores and 8 GB RAM, durable
+disk, DNS/TLS through a host reverse proxy or load balancer, backups, monitoring,
+and outbound access for enabled model providers and connectors. The application
+port binds to `127.0.0.1` by default.
 
 ## Install
 
-1. Obtain the `.tar`, its SHA-256 digest through an independent channel, and—if
-   your release policy requires one—a signature plus verifier implementation.
-2. Run `python -m deploy.bundle verify BUNDLE --expected-hash SHA256`. A signed
-   bundle cannot be accepted without an injected verifier through the Python
-   API. Key distribution and trust policy are intentionally outside this code.
-3. Populate the environment contract in `deploy/environment-contract.json` and
-   run `python -m deploy.environment environment.json`. Host resolution is
-   optional and must be run from the target network with `--resolve-hosts`.
-4. Mirror the OCI image by digest. Create the external runtime Secret; do not
-   put credentials in values files or the Operational Bundle.
-5. Run `helm upgrade --install --atomic --wait --timeout 15m` with
-   tenant/environment, immutable image digest, external secret, ingress, TLS,
-   service-account annotations, resources, and replicas. Preflight runs before
-   the migration Job; either failure stops the rollout.
-6. Inject checks for API, worker, queue, storage, and connectors into
-   `deploy.run_smoke_checks`. Promote only if all five pass. The optional Helm
-   smoke hook is disabled until the image implements the configured internal
-   health endpoints; enabling it runs after install, upgrade, and rollback.
+1. Copy `.env.example` to `.env` and set long random values for
+   `CMUL8_POSTGRES_PASSWORD` and `SIMULACRA_BOOTSTRAP_PASSWORD`.
+2. For a release, set `CMUL8_IMAGE` to a digest-pinned image. A local evaluation
+   may omit it and build `cmul8:local` from the repository.
+3. Validate configuration with `docker compose config -q`.
+4. Start with `docker compose up -d --build`.
+5. Confirm PostgreSQL, Redis, API, and worker are healthy and migration exited zero.
+6. Run the full smoke suite before promotion.
 
-The image must implement `deploy/processes.json`: its entrypoint dispatches one
-explicit process argument to the web, API, worker, preflight, migration, or smoke binary.
-The chart does not retrofit this contract onto the repository's development
-image. Validate labels, non-root execution, read-only-root compatibility,
-shutdown behavior, ports, and probes in release CI before promotion.
+The API and worker use a read-only root, drop Linux capabilities, set
+`no-new-privileges`, and write only to `/tmp`, `/app/data`, and `/app/runs`.
+PostgreSQL and Redis are not published on host ports.
 
-Installation verification rejects tampering, target-specific manifests,
-undeclared files, duplicate members, absolute/traversal paths, links, special
-files, suspected credential material, and a mismatched content-addressed name.
+Kubernetes is deliberately not a V0 dependency. Reconsider it only after CMUL8
+needs multi-host failover, independent autoscaling, or a customer explicitly
+requires cluster-native installation.
 
-See [upgrade and rollback](upgrade-rollback.md), [release promotion](release-promotion.md),
-[installation hardening](installation-hardening.md), [backup and restore](backup-restore.md),
-[air-gap readiness boundary](air-gap-readiness.md), and [support bundles](support.md).
+See [environment](environment.md), [installation hardening](installation-hardening.md),
+[upgrade and rollback](upgrade-rollback.md), [backup and restore](backup-restore.md),
+[air-gap readiness](air-gap-readiness.md), and [support bundles](support.md).

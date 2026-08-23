@@ -32,8 +32,8 @@ def assess_upgrade(current: Mapping[str, object], target: Mapping[str, object]) 
             errors.append(f"{label}.bundle_hash must be a lowercase SHA-256 digest")
         if not _IMAGE_DIGEST.fullmatch(str(state.get("image_digest", ""))):
             errors.append(f"{label}.image_digest must be an immutable sha256 digest")
-        if not str(state.get("chart_version", "")).strip():
-            errors.append(f"{label}.chart_version is required")
+        if not str(state.get("runtime_version", "")).strip():
+            errors.append(f"{label}.runtime_version is required")
     if current.get("bundle_hash") == target.get("bundle_hash"):
         errors.append("target bundle must differ from current bundle")
     try:

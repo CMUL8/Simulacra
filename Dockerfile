@@ -34,7 +34,11 @@ RUN pip install --no-cache-dir -e ".[demo]" \
 	&& chmod 0555 /opt/cmul8/bin/cmul8-entrypoint \
 	&& for process in api web worker worker-health preflight migrate smoke; do \
 		ln -s /opt/cmul8/bin/cmul8-entrypoint "/opt/cmul8/bin/cmul8-${process}"; \
-	done
+	done \
+	&& groupadd --gid 65532 cmul8 \
+	&& useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin cmul8 \
+	&& mkdir -p /app/data /app/runs \
+	&& chown -R 65532:65532 /app/data /app/runs
 ENV SIMULACRA_AUTH_REQUIRED=1
 ENV SIMULACRA_USE_PRIME=1
 # OpenRouter model id (auth via OPENROUTER_API_KEY)
@@ -44,5 +48,6 @@ ENV SIMULACRA_SANDBOX=worktree
 ENV PYTHONPATH=/app
 ENV PORT=8000
 EXPOSE 8000
+USER 65532:65532
 ENTRYPOINT ["/opt/cmul8/bin/cmul8-entrypoint"]
 CMD ["api"]

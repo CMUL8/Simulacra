@@ -10,7 +10,7 @@
     ],
     "runAsNonRoot": true,
     "readOnlyRootFilesystem": true,
-    "writableMounts": ["/tmp"]
+	"writableMounts": ["/tmp", "/app/data", "/app/runs"]
   },
   "processes": {
     "api": {
@@ -36,18 +36,18 @@
     "preflight": {
       "command": ["/opt/cmul8/bin/cmul8-preflight"],
       "checks": ["environment-contract", "postgres", "redis", "object-storage", "secret-provider"],
-      "lifecycle": "pre-install-pre-upgrade-hook-before-migrations",
+	  "lifecycle": "compose one-shot dependency before migrations",
       "restartPolicy": "Never"
     },
     "migrations": {
       "command": ["/opt/cmul8/bin/cmul8-migrate"],
-      "lifecycle": "pre-upgrade-hook",
+	  "lifecycle": "compose one-shot dependency before application start",
       "restartPolicy": "Never"
     },
     "smoke": {
       "command": ["/opt/cmul8/bin/cmul8-smoke"],
       "checks": ["api", "worker", "queue", "storage", "connectors"],
-      "lifecycle": "post-install-post-upgrade-post-rollback-hook",
+	  "lifecycle": "operator-run check after install, upgrade, or rollback",
       "restartPolicy": "Never"
     }
   },

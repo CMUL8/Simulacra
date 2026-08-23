@@ -9,7 +9,7 @@ from apps.api.main import liveness, readiness
 
 
 def test_preflight_rejects_missing_contract(monkeypatch):
-	for key in ("CMUL8_TENANT_ID", "CMUL8_ENVIRONMENT", "CMUL8_SECRET_PROVIDER", "CMUL8_POSTGRES_URL", "CMUL8_REDIS_URL", "CMUL8_OBJECT_STORAGE_URL"):
+	for key in ("CMUL8_TENANT_ID", "CMUL8_ENVIRONMENT", "CMUL8_POSTGRES_URL", "CMUL8_REDIS_URL"):
 		monkeypatch.delenv(key, raising=False)
 	assert deploy_process.preflight() == 78
 
@@ -17,8 +17,7 @@ def test_preflight_rejects_missing_contract(monkeypatch):
 def test_preflight_accepts_explicit_external_services(monkeypatch):
 	values = {
 		"CMUL8_TENANT_ID": "tenant", "CMUL8_ENVIRONMENT": "production",
-		"CMUL8_SECRET_PROVIDER": "external", "CMUL8_POSTGRES_URL": "postgres://db/app",
-		"CMUL8_REDIS_URL": "redis://queue/0", "CMUL8_OBJECT_STORAGE_URL": "s3://bucket",
+		"CMUL8_POSTGRES_URL": "postgres://db/app", "CMUL8_REDIS_URL": "redis://queue/0",
 		"CMUL8_TLS_REQUIRED": "true",
 	}
 	for key, value in values.items():
@@ -56,6 +55,6 @@ def test_image_defines_the_process_entrypoint():
 	assert "worker-health" in dockerfile
 
 
-def test_api_exposes_chart_health_contract():
+def test_api_exposes_container_health_contract():
 	assert liveness()["status"] == "live"
 	assert readiness()["status"] == "ready"

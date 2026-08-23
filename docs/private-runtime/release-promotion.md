@@ -2,7 +2,7 @@
 
 A candidate may advance between environments only when all of these identities
 remain unchanged: Operational Bundle SHA-256, bundle manifest source/artifact
-hashes, SBOM reference, provenance statement, OCI image digest, and chart
+hashes, SBOM reference, provenance statement, OCI image digest, and runtime
 version. Environment configuration and credentials may change; artifacts may
 not.
 
