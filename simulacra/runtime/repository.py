@@ -234,9 +234,11 @@ class JsonRuntimeRepository:
 
 	def _list(self, collection: str, tenant_id: str, environment_id: str, project_id: str) -> list[Any]:
 		rows = self.read_project(tenant_id, environment_id, project_id)[collection]
-		result = [self._COLLECTIONS[collection].from_dict(rows[key]) for key in sorted(rows)]
-		for record in result:
+		result: list[Any] = []
+		for key in sorted(rows):
+			record = self._COLLECTIONS[collection].from_dict(rows[key])
 			self._check_record_scope(record, tenant_id, environment_id, project_id)
+			result.append(record)
 		return result
 
 	def _save(self, collection: str, record: T, expected_revision: int) -> T:

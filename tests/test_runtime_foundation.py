@@ -8,12 +8,14 @@ import pytest
 
 from simulacra.operation_graph import OperationGraphStore, UnapprovedRevisionError, load_operation_graph
 from simulacra.runtime import (
+	AuditEvent,
 	ApprovalRequiredError,
 	InvalidTransitionError,
 	RuntimeAuthorizationError,
 	RuntimeConflictError,
 	RuntimePlane,
 	RuntimeScopeError,
+	TelemetryEvent,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -142,3 +144,25 @@ def test_tenant_environment_isolation_and_path_escape(tmp_path: Path):
 	root = tmp_path / "malicious"; root.mkdir(); (root / "tenant_acme").symlink_to(outside, target_is_directory=True)
 	from simulacra.runtime import JsonRuntimeRepository
 	with pytest.raises(RuntimeScopeError): JsonRuntimeRepository(root).read_project("tenant_acme", "env_prod", "project_support")
+
+
+def test_repository_lists_all_records_in_order_and_scope_checks_every_row(tmp_path: Path):
+	plane = approved_plane(tmp_path)
+	repository = plane.repository
+	first = plane.entities.create("entity_case", {"status": "new"}, record_id="entity_a")
+	second = plane.entities.create("entity_case", {"status": "triaged"}, record_id="entity_z")
+	repository.append_audit(AuditEvent("evt_z", "tenant_acme", "env_prod", "project_support", "case.updated", "alice", "ok"))
+	repository.append_audit(AuditEvent("evt_a", "tenant_acme", "env_prod", "project_support", "case.created", "alice", "ok"))
+	repository.append_telemetry(TelemetryEvent("metric_z", "tenant_acme", "env_prod", "project_support", "runtime.z"))
+	repository.append_telemetry(TelemetryEvent("metric_a", "tenant_acme", "env_prod", "project_support", "runtime.a"))
+
+	assert repository.query_entities("tenant_acme", "env_prod", "project_support") == [first, second]
+	assert [event.id for event in repository.list_audit("tenant_acme", "env_prod", "project_support")] == ["evt_a", "evt_z"]
+	assert [event.id for event in repository.list_telemetry("tenant_acme", "env_prod", "project_support")] == ["metric_a", "metric_z"]
+
+	def corrupt_second_entity(state: dict) -> None:
+		state["entities"]["entity_z"]["tenant_id"] = "tenant_other"
+
+	repository.mutate_project("tenant_acme", "env_prod", "project_support", corrupt_second_entity)
+	with pytest.raises(RuntimeScopeError, match="scope mismatch"):
+		repository.query_entities("tenant_acme", "env_prod", "project_support")
