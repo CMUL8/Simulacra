@@ -1,0 +1,25 @@
+{
+  "simulacra_version": "0.1.0",
+  "run_id": "run_legacy_001",
+  "created_at": "2026-08-23T00:00:00Z",
+  "task": "Build a support queue",
+  "sources": [
+    {
+      "type": "uri",
+      "uri": "https://example.invalid/cases",
+      "content_hash": "sha256:source"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "artifacts/cases.json",
+      "kind": "table",
+      "schema": [
+        {"name": "status", "type": "string"}
+      ],
+      "row_count": 12
+    }
+  ],
+  "gates": {"status": "pass", "results": []},
+  "prime": {"source": "prime", "status": "completed", "steps": 2}
+}
