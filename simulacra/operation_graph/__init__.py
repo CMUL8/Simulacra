@@ -12,7 +12,7 @@ from .errors import (
 from .migration import migrate_manifest_v0
 from .store import ApprovalRecord, GraphRevision, OperationGraphStore, RollbackRecord
 from .summary import business_summary
-from .validation import AREAS, SCHEMA_ID, validate_operation_graph
+from .validation import AREAS, METADATA_FIELDS, SCHEMA_ID, validate_operation_graph
 
 __all__ = [
 	"AREAS",
@@ -21,6 +21,7 @@ __all__ = [
 	"GraphParseError",
 	"GraphRevision",
 	"GraphValidationError",
+	"METADATA_FIELDS",
 	"OperationGraphError",
 	"OperationGraphStore",
 	"RevisionConflictError",

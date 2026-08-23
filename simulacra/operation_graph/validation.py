@@ -8,6 +8,9 @@ from typing import Any, Mapping
 from .errors import GraphValidationError, ValidationIssue
 
 SCHEMA_ID = "cmul8.operation-graph.v0"
+METADATA_FIELDS = frozenset(
+	{"schema_id", "graph_id", "tenant_id", "project_id", "name", "version", "description", "migrated_from"}
+)
 AREAS = (
 	"entities",
 	"views",
@@ -120,8 +123,18 @@ def validate_operation_graph(graph: Mapping[str, Any]) -> dict[str, Any]:
 		metadata = {}
 	for key in ("schema_id", "graph_id", "tenant_id", "project_id", "name"):
 		_required_string(metadata, key, "$.metadata", issues)
+	for key in metadata:
+		if key not in METADATA_FIELDS:
+			issues.append(ValidationIssue(f"$.metadata.{key}", "is not a supported metadata field"))
 	if metadata.get("schema_id") not in (None, SCHEMA_ID):
 		issues.append(ValidationIssue("$.metadata.schema_id", f"must equal {SCHEMA_ID!r}"))
+	for key in ("graph_id", "tenant_id", "project_id"):
+		value = metadata.get(key)
+		if isinstance(value, str) and value.strip() and not _ID_RE.fullmatch(value):
+			issues.append(ValidationIssue(f"$.metadata.{key}", "contains unsafe characters"))
+	for key in ("description", "migrated_from"):
+		if key in metadata and not isinstance(metadata[key], str):
+			issues.append(ValidationIssue(f"$.metadata.{key}", "must be a string"))
 	version = metadata.get("version")
 	if version is None:
 		issues.append(ValidationIssue("$.metadata.version", "is required"))

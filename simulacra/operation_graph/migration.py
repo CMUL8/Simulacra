@@ -10,7 +10,12 @@ from .validation import SCHEMA_ID, validate_operation_graph
 
 def _id(prefix: str, value: str, index: int) -> str:
 	clean = re.sub(r"[^A-Za-z0-9._:-]+", "-", value).strip("-._:").lower()
-	return f"{prefix}_{clean or index}"
+	return f"{prefix}_{clean or 'legacy'}_{index + 1}"
+
+
+def _legacy_text(value: Any, fallback: str) -> str:
+	text = "" if value is None else str(value).strip()
+	return text or fallback
 
 
 def migrate_manifest_v0(
@@ -35,12 +40,12 @@ def migrate_manifest_v0(
 	for index, source in enumerate(sources):
 		if not isinstance(source, Mapping):
 			continue
-		uri = str(source.get("uri", ""))
+		uri = _legacy_text(source.get("uri"), "")
 		connectors.append(
 			{
 				"id": _id("connector", uri, index),
 				"name": uri or f"Legacy source {index + 1}",
-				"type": str(source.get("type", "uri")),
+				"type": _legacy_text(source.get("type"), "uri"),
 				"configuration": {
 					"uri": uri,
 					**({"content_hash": source["content_hash"]} if source.get("content_hash") else {}),
@@ -54,25 +59,28 @@ def migrate_manifest_v0(
 	for index, artifact in enumerate(artifacts):
 		if not isinstance(artifact, Mapping):
 			continue
-		path = str(artifact.get("path", ""))
+		path = _legacy_text(artifact.get("path"), "")
 		entity_id = _id("entity", path, index)
 		fields = [
-			{"name": str(field.get("name", "field")), "type": str(field.get("type", "unknown"))}
-			for field in artifact.get("schema", [])
+			{
+				"name": _legacy_text(field.get("name"), f"field_{field_index + 1}"),
+				"type": _legacy_text(field.get("type"), "unknown"),
+			}
+			for field_index, field in enumerate(artifact.get("schema", []))
 			if isinstance(field, Mapping)
 		]
 		entities.append(
 			{
 				"id": entity_id,
 				"name": path or f"Legacy artifact {index + 1}",
-				"kind": str(artifact.get("kind", "other")),
+				"kind": _legacy_text(artifact.get("kind"), "other"),
 				"fields": fields,
 				**({"row_count": artifact["row_count"]} if "row_count" in artifact else {}),
 			}
 		)
 		views.append({"id": _id("view", path, index), "name": path or f"Legacy view {index + 1}", "entity_id": entity_id})
 
-	run_id = str(manifest["run_id"])
+	run_id = _legacy_text(manifest["run_id"], "legacy-run")
 	graph: dict[str, Any] = {
 		"metadata": {
 			"schema_id": SCHEMA_ID,

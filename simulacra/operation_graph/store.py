@@ -146,18 +146,35 @@ class OperationGraphStore:
 			if os.path.exists(temp_name):
 				os.unlink(temp_name)
 
+	def _fsync_directory(self, directory: Path) -> None:
+		try:
+			directory_fd = os.open(directory, os.O_RDONLY)
+			try:
+				os.fsync(directory_fd)
+			finally:
+				os.close(directory_fd)
+		except OSError:
+			pass
+
 	def _write_immutable(self, path: Path, value: Mapping[str, Any]) -> None:
 		payload = deterministic_json(value, indent=2)
+		fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
 		try:
-			fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-		except FileExistsError:
-			if path.read_text(encoding="utf-8") != payload:
-				raise ValueError(f"Immutable record collision: {path.name}")
-			return
-		with os.fdopen(fd, "w", encoding="utf-8") as handle:
-			handle.write(payload)
-			handle.flush()
-			os.fsync(handle.fileno())
+			with os.fdopen(fd, "w", encoding="utf-8") as handle:
+				handle.write(payload)
+				handle.flush()
+				os.fsync(handle.fileno())
+			try:
+				os.link(temp_name, path)
+			except FileExistsError:
+				if path.read_text(encoding="utf-8") != payload:
+					raise ValueError(f"Immutable record collision: {path.name}")
+				return
+			self._fsync_directory(path.parent)
+		finally:
+			if os.path.exists(temp_name):
+				os.unlink(temp_name)
+				self._fsync_directory(path.parent)
 
 	def _head(self) -> dict[str, Any] | None:
 		path = self._root / "head.json"
@@ -187,10 +204,15 @@ class OperationGraphStore:
 			raise ValueError("graph tenant_id/project_id does not match store scope")
 		revision_hash = hashlib.sha256(canonical_json_bytes(validated)).hexdigest()
 		with self._locked():
-			self._assert_expected(expected_revision_hash)
+			head = self._assert_expected(expected_revision_hash)
 			existing_path = self._revisions / f"{revision_hash}.json"
 			if existing_path.exists():
 				record = self.load_revision(revision_hash)
+				if head is None or head["revision_hash"] != revision_hash:
+					raise RevisionConflictError(
+						"historical Operation Graph revisions must be activated with rollback_to so the change is audited"
+					)
+				return record
 			else:
 				now = self._clock()
 				record = GraphRevision(

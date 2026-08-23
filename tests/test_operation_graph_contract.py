@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
+import threading
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ import pytest
 from simulacra.operation_graph import (
 	GraphParseError,
 	GraphValidationError,
+	METADATA_FIELDS,
 	OperationGraphStore,
 	RevisionConflictError,
 	UnapprovedRevisionError,
@@ -39,6 +42,47 @@ def test_schema_and_yaml_example_are_canonical_and_valid():
 	assert schema["required"] == ["metadata", "entities", "views", "workflows", "agents", "automations", "connectors", "permissions", "approval_rules", "schedules"]
 	assert graph["metadata"]["schema_id"] == schema["$id"]
 	assert parse_operation_graph(deterministic_json(graph), syntax="json") == graph
+
+
+def test_schema_and_runtime_metadata_contract_accept_the_same_representative_values():
+	schema = json.loads((ROOT / "schemas" / "operation-graph.v0.json").read_text())
+	metadata_schema = schema["properties"]["metadata"]
+	assert set(metadata_schema["properties"]) == METADATA_FIELDS
+
+	def schema_accepts(metadata: dict) -> bool:
+		if any(key not in metadata_schema["properties"] for key in metadata):
+			return False
+		if any(key not in metadata for key in metadata_schema["required"]):
+			return False
+		for key, value in metadata.items():
+			rule = metadata_schema["properties"][key]
+			if "const" in rule and value != rule["const"]:
+				return False
+			if rule.get("type") == "string" and not isinstance(value, str):
+				return False
+			if rule.get("type") == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
+				return False
+			if "minimum" in rule and value < rule["minimum"]:
+				return False
+			if "pattern" in rule and (not isinstance(value, str) or re.search(rule["pattern"], value) is None):
+				return False
+		return True
+
+	valid = example_graph()
+	assert schema_accepts(valid["metadata"])
+	assert validate_operation_graph(valid) == valid
+	for replacement in (
+		{"unknown": "field"},
+		{"description": 7},
+		{"graph_id": "bad/id"},
+		{"name": "   "},
+		{"version": True},
+	):
+		invalid = copy.deepcopy(valid)
+		invalid["metadata"].update(replacement)
+		assert not schema_accepts(invalid["metadata"])
+		with pytest.raises(GraphValidationError):
+			validate_operation_graph(invalid)
 
 
 def test_parse_failures_are_clear():
@@ -72,6 +116,23 @@ def test_legacy_manifest_migration_is_explicit_deterministic_and_valid():
 	assert validate_operation_graph(one) == one
 
 
+def test_legacy_migration_deduplicates_ids_and_normalizes_empty_fields():
+	manifest = json.loads(LEGACY.read_text())
+	manifest["sources"].append(copy.deepcopy(manifest["sources"][0]))
+	duplicate_artifact = copy.deepcopy(manifest["artifacts"][0])
+	duplicate_artifact["schema"] = [{"name": "", "type": ""}, {"name": None, "type": None}]
+	manifest["artifacts"].append(duplicate_artifact)
+	graph = migrate_manifest_v0(manifest, tenant_id="tenant_acme", project_id="project_support")
+	assert len({item["id"] for item in graph["connectors"]}) == 2
+	assert len({item["id"] for item in graph["entities"]}) == 2
+	assert len({item["id"] for item in graph["views"]}) == 2
+	assert graph["entities"][1]["fields"] == [
+		{"name": "field_1", "type": "unknown"},
+		{"name": "field_2", "type": "unknown"},
+	]
+	assert validate_operation_graph(graph) == graph
+
+
 def test_content_addressed_revisions_are_deterministic_and_stale_writes_conflict(tmp_path: Path):
 	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support", clock=lambda: "2026-08-23T00:00:00Z")
 	graph = example_graph()
@@ -98,6 +159,56 @@ def test_revision_hash_verification_detects_tampering(tmp_path: Path):
 	path.write_text(deterministic_json(record, indent=2))
 	with pytest.raises(ValueError, match="content hash verification"):
 		store.load_revision(revision.revision_hash)
+
+
+def test_historical_content_requires_audited_rollback_instead_of_create(tmp_path: Path):
+	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support")
+	first_graph = example_graph()
+	first = store.create_revision(first_graph, expected_revision_hash=None)
+	second_graph = copy.deepcopy(first_graph)
+	second_graph["metadata"]["version"] = 1
+	second = store.create_revision(second_graph, expected_revision_hash=first.revision_hash)
+	with pytest.raises(RevisionConflictError, match="rollback_to"):
+		store.create_revision(first_graph, expected_revision_hash=second.revision_hash)
+	assert store.current_revision() == second
+	assert store.list_rollbacks() == []
+	assert store.create_revision(second_graph, expected_revision_hash=second.revision_hash) == second
+	assert store.list_revisions() == [first, second]
+
+
+def test_immutable_record_is_published_only_after_complete_fsync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+	import simulacra.operation_graph.store as store_module
+
+	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support")
+	destination = tmp_path / ".simulacra" / "operation-graph" / "revisions" / "publication-probe.json"
+	entered_fsync = threading.Event()
+	release_fsync = threading.Event()
+	real_fsync = store_module.os.fsync
+
+	def blocked_first_fsync(fd: int) -> None:
+		if not entered_fsync.is_set():
+			entered_fsync.set()
+			assert release_fsync.wait(5)
+		real_fsync(fd)
+
+	monkeypatch.setattr(store_module.os, "fsync", blocked_first_fsync)
+	errors: list[BaseException] = []
+
+	def publish() -> None:
+		try:
+			store._write_immutable(destination, {"payload": "complete"})
+		except BaseException as exc:
+			errors.append(exc)
+
+	writer = threading.Thread(target=publish)
+	writer.start()
+	assert entered_fsync.wait(5)
+	assert not destination.exists(), "readers must not observe the destination while its temp file is incomplete"
+	release_fsync.set()
+	writer.join(5)
+	assert not writer.is_alive()
+	assert errors == []
+	assert json.loads(destination.read_text()) == {"payload": "complete"}
 
 
 def test_scope_and_storage_traversal_are_rejected(tmp_path: Path):

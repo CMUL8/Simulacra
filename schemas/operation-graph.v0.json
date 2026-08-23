@@ -23,10 +23,10 @@
       "required": ["schema_id", "graph_id", "tenant_id", "project_id", "name", "version"],
       "properties": {
         "schema_id": { "const": "cmul8.operation-graph.v0" },
-        "graph_id": { "type": "string", "minLength": 1 },
-        "tenant_id": { "type": "string", "minLength": 1 },
-        "project_id": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
+        "graph_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+        "tenant_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+        "project_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+        "name": { "type": "string", "pattern": "\\S" },
         "version": { "type": "integer", "minimum": 0 },
         "description": { "type": "string" },
         "migrated_from": { "type": "string" }
@@ -47,11 +47,11 @@
       "type": "object",
       "required": ["id", "name"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 }
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+        "name": { "type": "string", "pattern": "\\S" }
       }
     },
-    "stringList": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "stringList": { "type": "array", "items": { "type": "string", "pattern": "\\S" }, "uniqueItems": true },
     "entity": {
       "allOf": [{ "$ref": "#/$defs/named" }],
       "required": ["id", "name", "fields"],
@@ -61,7 +61,7 @@
           "items": {
             "type": "object",
             "required": ["name", "type"],
-            "properties": { "name": { "type": "string", "minLength": 1 }, "type": { "type": "string", "minLength": 1 } },
+            "properties": { "name": { "type": "string", "pattern": "\\S" }, "type": { "type": "string", "pattern": "\\S" } },
             "additionalProperties": true
           }
         }
@@ -71,13 +71,13 @@
     "view": {
       "allOf": [{ "$ref": "#/$defs/named" }],
       "required": ["id", "name", "entity_id"],
-      "properties": { "entity_id": { "type": "string", "minLength": 1 } },
+      "properties": { "entity_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" } },
       "additionalProperties": true
     },
     "workflow": {
       "allOf": [{ "$ref": "#/$defs/named" }],
       "required": ["id", "name", "states", "initial_state"],
-      "properties": { "states": { "$ref": "#/$defs/stringList" }, "initial_state": { "type": "string", "minLength": 1 } },
+      "properties": { "states": { "$ref": "#/$defs/stringList", "minItems": 1 }, "initial_state": { "type": "string", "pattern": "\\S" } },
       "additionalProperties": true
     },
     "agent": {
@@ -93,22 +93,22 @@
     "automation": {
       "allOf": [{ "$ref": "#/$defs/named" }],
       "required": ["id", "name", "workflow_id", "trigger"],
-      "properties": { "workflow_id": { "type": "string", "minLength": 1 }, "trigger": { "type": "string", "minLength": 1 } },
+      "properties": { "workflow_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" }, "trigger": { "type": "string", "pattern": "\\S" } },
       "additionalProperties": true
     },
     "connector": {
       "allOf": [{ "$ref": "#/$defs/named" }],
       "required": ["id", "name", "type", "operations"],
-      "properties": { "type": { "type": "string", "minLength": 1 }, "operations": { "$ref": "#/$defs/stringList" } },
+      "properties": { "type": { "type": "string", "pattern": "\\S" }, "operations": { "$ref": "#/$defs/stringList", "minItems": 1 } },
       "additionalProperties": true
     },
     "permission": {
       "allOf": [{ "$ref": "#/$defs/named" }],
       "required": ["id", "name", "principals", "actions", "resources"],
       "properties": {
-        "principals": { "$ref": "#/$defs/stringList" },
-        "actions": { "$ref": "#/$defs/stringList" },
-        "resources": { "$ref": "#/$defs/stringList" }
+        "principals": { "$ref": "#/$defs/stringList", "minItems": 1 },
+        "actions": { "$ref": "#/$defs/stringList", "minItems": 1 },
+        "resources": { "$ref": "#/$defs/stringList", "minItems": 1 }
       },
       "additionalProperties": true
     },
@@ -118,7 +118,7 @@
       "properties": {
         "required": { "type": "boolean" },
         "approvals_required": { "type": "integer", "minimum": 0 },
-        "actions": { "$ref": "#/$defs/stringList" }
+        "actions": { "$ref": "#/$defs/stringList", "minItems": 1 }
       },
       "additionalProperties": true
     },
@@ -126,9 +126,9 @@
       "allOf": [{ "$ref": "#/$defs/named" }],
       "required": ["id", "name", "automation_id", "cron", "timezone", "enabled"],
       "properties": {
-        "automation_id": { "type": "string", "minLength": 1 },
-        "cron": { "type": "string", "minLength": 1 },
-        "timezone": { "type": "string", "minLength": 1 },
+        "automation_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+        "cron": { "type": "string", "pattern": "\\S" },
+        "timezone": { "type": "string", "pattern": "\\S" },
         "enabled": { "type": "boolean" }
       },
       "additionalProperties": true
