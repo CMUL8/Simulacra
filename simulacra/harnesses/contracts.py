@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -48,6 +49,28 @@ _HARNESSES = frozenset({"codex", "prime", "fake"})
 
 def _readonly(values: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return MappingProxyType(dict(values or {}))
+
+
+_CREDENTIAL_FRAGMENT = re.compile(r"(?:api[_-]?key|token|secret|password|credential|authorization|auth|bearer)", re.IGNORECASE)
+_CREDENTIAL_VALUE = re.compile(r"(?:api[_-]?key|token|secret|password|credential|authorization)\s*[:=]", re.IGNORECASE)
+
+
+def _contains_url_userinfo(value: str) -> bool:
+    parsed = urlsplit(value)
+    return bool(parsed.scheme and parsed.netloc and (parsed.username is not None or parsed.password is not None))
+
+
+def _safe_extra(extra: Mapping[str, Any]) -> Mapping[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in extra.items():
+        if not isinstance(key, str) or _CREDENTIAL_FRAGMENT.search(key):
+            raise ValueError("provider extra keys may not contain credentials")
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            raise ValueError("provider extra values must be scalar, non-secret configuration")
+        if isinstance(value, str) and (_CREDENTIAL_FRAGMENT.search(value) or _CREDENTIAL_VALUE.search(value) or _contains_url_userinfo(value)):
+            raise ValueError("provider extra values may not contain credentials or URL userinfo")
+        safe[key] = value
+    return _readonly(safe)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,11 +126,18 @@ class ProviderConfig:
             raise ValueError(f"Unsupported provider {self.provider!r}; expected one of {sorted(_PROVIDERS)}")
         if self.credential_env_var and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.credential_env_var):
             raise ValueError("credential_env_var must be an environment-variable name")
-        object.__setattr__(self, "extra", _readonly(self.extra))
+        if self.endpoint and _contains_url_userinfo(self.endpoint):
+            raise ValueError("endpoint may not include URL userinfo")
+        object.__setattr__(self, "extra", _safe_extra(self.extra))
 
     def metadata(self) -> dict[str, Any]:
         """Safe diagnostic representation; does not dereference credentials."""
-        return {"provider": self.provider, "endpoint": self.endpoint, "credential_env_var": self.credential_env_var}
+        return {
+            "provider": self.provider,
+            "endpoint": self.endpoint,
+            "credential_env_var": self.credential_env_var,
+            "extra": dict(self.extra),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +198,9 @@ class AgentSession:
     harness: str
     provider: str
     model_id: str
+    environment_id: str = ""
+    model_reasoning_effort: str | None = None
+    codex_profile: str | None = None
     thread_id: str | None = None
     resumed: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

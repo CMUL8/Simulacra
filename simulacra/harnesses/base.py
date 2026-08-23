@@ -52,6 +52,7 @@ class AgentHarness(ABC):
             raise LookupError(f"No session exists for project={request.project_id!r}, role={request.role!r}")
         if persisted.harness != self.name:
             raise ValueError(f"Session belongs to {persisted.harness!r}, not selected harness {self.name!r}")
+        self._verify_session_identity(request, persisted)
         session = await self._create_session(request, persisted)
         self._repository(request).save(session)
         return session
@@ -153,16 +154,44 @@ class AgentHarness(ABC):
         return self._session_repository or JsonSessionRepository(request.workspace)
 
     def _ephemeral_session(self, request: AgentRunRequest) -> AgentSession:
-        return AgentSession(str(uuid.uuid4()), request.project_id, request.role, self.name, request.config.provider.provider, request.config.model.model_id)
+        return AgentSession(
+            str(uuid.uuid4()), request.project_id, request.role, self.name,
+            request.config.provider.provider, request.config.model.model_id,
+            request.environment_id, request.config.model_reasoning_effort, request.config.codex_profile,
+        )
 
     async def _session_for_run(self, request: AgentRunRequest) -> AgentSession:
         if request.session_id:
             stored = self._repository(request).get(request.project_id, request.role)
             if stored and stored.session_id == request.session_id:
+                self._verify_session_identity(request, stored)
                 return await self._create_session(request, stored)
             raise LookupError("Requested session_id is not the persisted project/role session")
         stored = self._repository(request).get(request.project_id, request.role)
-        return await self._create_session(request, stored) if stored else await self.create_session(request)
+        if stored:
+            self._verify_session_identity(request, stored)
+            return await self._create_session(request, stored)
+        return await self.create_session(request)
+
+    def _verify_session_identity(self, request: AgentRunRequest, session: AgentSession) -> None:
+        expected = (
+            self.name,
+            request.config.provider.provider,
+            request.config.model.model_id,
+            request.environment_id,
+            request.config.model_reasoning_effort,
+            request.config.codex_profile,
+        )
+        actual = (
+            session.harness,
+            session.provider,
+            session.model_id,
+            session.environment_id,
+            session.model_reasoning_effort,
+            session.codex_profile,
+        )
+        if actual != expected:
+            raise ValueError("Persisted session configuration identity does not match the requested run")
 
     def _validate_request(self, request: AgentRunRequest) -> None:
         if request.config.harness != self.name:

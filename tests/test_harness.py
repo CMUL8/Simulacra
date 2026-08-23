@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
+import os
 from pathlib import Path
 
 import pytest
 
 from simulacra.harnesses import (
     AgentRunRequest,
+    AgentSession,
     CodexHarness,
     FakeHarness,
     HarnessConfig,
+    JsonSessionRepository,
     ModelCapability,
     NetworkPolicy,
     PrimeHarness,
@@ -21,6 +25,14 @@ from simulacra.harnesses import (
     TerminalStatus,
     create_harness,
 )
+
+
+def _concurrent_session_save(workspace: str, role: str) -> None:
+    repository = JsonSessionRepository(Path(workspace))
+    repository.save(AgentSession(
+        session_id=f"session-{role}", project_id="proj", role=role, harness="fake", provider="custom",
+        model_id="test", environment_id="env", thread_id=f"thread-{role}",
+    ))
 
 
 def _config(name: str = "fake") -> HarnessConfig:
@@ -85,6 +97,48 @@ def test_capability_registry_fields_are_typed_and_aliases_remain_coherent() -> N
     assert capability.approved_task_types == frozenset({TaskType.CHAT, TaskType.BUILD_APP})
 
 
+def test_provider_extra_rejects_credentials_and_metadata_cannot_leak_them() -> None:
+    safe = ProviderConfig("custom", extra={"request_timeout": 30, "region": "us-east"})
+    assert safe.metadata()["extra"] == {"request_timeout": 30, "region": "us-east"}
+    for kwargs in (
+        {"extra": {"api_key": "do-not-serialize-me"}},
+        {"extra": {"option": "token=do-not-serialize-me"}},
+        {"endpoint": "https://user:do-not-serialize-me@example.test/v1"},
+        {"extra": {"endpoint": "https://user:do-not-serialize-me@example.test/v1"}},
+    ):
+        with pytest.raises(ValueError):
+            ProviderConfig("custom", **kwargs)
+
+
+def test_session_repository_rejects_symlink_components_and_serializes_process_saves(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, workspace / ".cmul8")
+    with pytest.raises(PermissionError):
+        JsonSessionRepository(workspace).save(AgentSession(
+            session_id="bad", project_id="proj", role="builder", harness="fake", provider="custom", model_id="test",
+        ))
+    assert not (outside / "harness/sessions.json").exists()
+    (workspace / ".cmul8").unlink()
+    (workspace / ".cmul8").mkdir()
+    os.symlink(outside, workspace / ".cmul8" / "harness")
+    with pytest.raises(PermissionError):
+        JsonSessionRepository(workspace).get("proj", "builder")
+    (workspace / ".cmul8" / "harness").unlink()
+
+    context = multiprocessing.get_context("spawn")
+    processes = [context.Process(target=_concurrent_session_save, args=(str(workspace), f"role-{index}")) for index in range(8)]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    data = json.loads((workspace / ".cmul8/harness/sessions.json").read_text())
+    assert set(data["sessions"]) == {f"proj:role-{index}" for index in range(8)}
+
+
 @pytest.mark.asyncio
 async def test_codex_unavailable_is_honest_not_a_fake_live_sdk(tmp_path: Path) -> None:
     config = HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("codex"))
@@ -112,6 +166,38 @@ async def test_fake_session_resume_events_and_durable_artifact(tmp_path: Path) -
     assert result.events[-1].action == "run_finished"
     persisted = json.loads((tmp_path / ".cmul8/harness/sessions.json").read_text())
     assert "CMUL8_TEST_TOKEN" not in json.dumps(persisted)
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_environment_and_full_configuration_identity_mismatch(tmp_path: Path) -> None:
+    harness = FakeHarness()
+    request = _request(tmp_path)
+    await harness.create_session(request)
+    changed_environment = _request(tmp_path, environment_id="env_other")
+    changed_model = _request(tmp_path, config=HarnessConfig("fake", ProviderConfig("custom"), ModelCapability("other")))
+    changed_controls = _request(tmp_path, config=HarnessConfig(
+        "fake", ProviderConfig("custom"), ModelCapability("test"), model_reasoning_effort="high", codex_profile="strict",
+    ))
+    for mismatch in (changed_environment, changed_model, changed_controls):
+        with pytest.raises(ValueError, match="configuration identity"):
+            await harness.resume_session(mismatch)
+
+
+@pytest.mark.asyncio
+async def test_prime_internal_type_error_is_not_retried(tmp_path: Path) -> None:
+    calls = 0
+
+    def runner(*, request, session):
+        nonlocal calls
+        calls += 1
+        raise TypeError("internal adapter failure")
+
+    config = HarnessConfig("prime", ProviderConfig("custom"), ModelCapability("test"))
+    request = _request(tmp_path, task_type=TaskType.CHAT, write_paths=(), config=config)
+    result = await PrimeHarness(runner).run(request)
+    assert calls == 1
+    assert result.status is TerminalStatus.FAILED
+    assert result.error and result.error["code"] == "provider_error"
 
 
 @pytest.mark.asyncio

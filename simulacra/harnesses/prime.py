@@ -24,6 +24,7 @@ class PrimeHarness(AgentHarness):
         # compatibility key persisted by project and specialist role.
         return AgentSession(existing.session_id if existing else str(uuid.uuid4()), request.project_id, request.role, self.name,
                             request.config.provider.provider, request.config.model.model_id,
+                            request.environment_id, request.config.model_reasoning_effort, request.config.codex_profile,
                             thread_id=existing.thread_id if existing else f"prime:{request.project_id}:{request.role}", resumed=existing is not None)
 
     async def _run_provider(self, request: AgentRunRequest, session: AgentSession) -> Mapping[str, Any]:
@@ -31,11 +32,21 @@ class PrimeHarness(AgentHarness):
             return {"status": TerminalStatus.FAILED, "error": {"code": "prime_adapter_unavailable", "message": "No legacy Prime callable was injected"}}
         fn = getattr(self.runner, "run", self.runner)
         try:
+            signature = inspect.signature(fn)
+        except (TypeError, ValueError):
+            # Some C-extension callables do not expose a signature. Invoke once,
+            # without a fallback retry that could duplicate side effects.
             value = fn(request=request, session=session)
-        except TypeError:
-            # Common existing wrapper shape is (prompt, ...); no implementation is
-            # moved or rewritten, and this remains a narrow compatibility adapter.
-            value = fn(request.prompt)
+        else:
+            try:
+                signature.bind(request=request, session=session)
+            except TypeError:
+                # Common existing wrapper shape is (prompt, ...). Binding chooses
+                # this before executing the callable, not after an internal error.
+                signature.bind(request.prompt)
+                value = fn(request.prompt)
+            else:
+                value = fn(request=request, session=session)
         if inspect.isawaitable(value):
             value = await value
         if isinstance(value, Mapping):
