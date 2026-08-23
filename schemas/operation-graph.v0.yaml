@@ -1,0 +1,57 @@
+metadata:
+  schema_id: cmul8.operation-graph.v0
+  graph_id: ogr_support_ops
+  tenant_id: tenant_acme
+  project_id: project_support
+  name: Support operations
+  version: 0
+  description: Routes priority cases through governed resolution.
+entities:
+  - id: entity_case
+    name: Case
+    fields:
+      - name: status
+        type: string
+views:
+  - id: view_case_queue
+    name: Case queue
+    entity_id: entity_case
+workflows:
+  - id: workflow_resolve_case
+    name: Resolve case
+    states: [new, triaged, resolved]
+    initial_state: new
+agents:
+  - id: agent_triage
+    name: Triage assistant
+    actor_type: runtime_agent
+    capabilities: [entity.read, workflow.transition]
+automations:
+  - id: automation_triage
+    name: Triage new cases
+    workflow_id: workflow_resolve_case
+    trigger: entity.created
+connectors:
+  - id: connector_support
+    name: Support inbox
+    type: http
+    operations: [read]
+permissions:
+  - id: permission_triage
+    name: Triage access
+    principals: [agent_triage]
+    actions: [entity.read, workflow.transition]
+    resources: [entity_case]
+approval_rules:
+  - id: approval_external_reply
+    name: Approve external replies
+    required: true
+    approvals_required: 1
+    actions: [connector_support.write]
+schedules:
+  - id: schedule_triage
+    name: Queue sweep
+    automation_id: automation_triage
+    cron: "*/15 * * * *"
+    timezone: UTC
+    enabled: true

@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cmul8.operation-graph.v0",
+  "title": "CMUL8 Operation Graph V0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "metadata",
+    "entities",
+    "views",
+    "workflows",
+    "agents",
+    "automations",
+    "connectors",
+    "permissions",
+    "approval_rules",
+    "schedules"
+  ],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_id", "graph_id", "tenant_id", "project_id", "name", "version"],
+      "properties": {
+        "schema_id": { "const": "cmul8.operation-graph.v0" },
+        "graph_id": { "type": "string", "minLength": 1 },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "project_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "integer", "minimum": 0 },
+        "description": { "type": "string" },
+        "migrated_from": { "type": "string" }
+      }
+    },
+    "entities": { "type": "array", "items": { "$ref": "#/$defs/entity" } },
+    "views": { "type": "array", "items": { "$ref": "#/$defs/view" } },
+    "workflows": { "type": "array", "items": { "$ref": "#/$defs/workflow" } },
+    "agents": { "type": "array", "items": { "$ref": "#/$defs/agent" } },
+    "automations": { "type": "array", "items": { "$ref": "#/$defs/automation" } },
+    "connectors": { "type": "array", "items": { "$ref": "#/$defs/connector" } },
+    "permissions": { "type": "array", "items": { "$ref": "#/$defs/permission" } },
+    "approval_rules": { "type": "array", "items": { "$ref": "#/$defs/approvalRule" } },
+    "schedules": { "type": "array", "items": { "$ref": "#/$defs/schedule" } }
+  },
+  "$defs": {
+    "named": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "stringList": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "entity": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "fields"],
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": { "name": { "type": "string", "minLength": 1 }, "type": { "type": "string", "minLength": 1 } },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "view": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "entity_id"],
+      "properties": { "entity_id": { "type": "string", "minLength": 1 } },
+      "additionalProperties": true
+    },
+    "workflow": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "states", "initial_state"],
+      "properties": { "states": { "$ref": "#/$defs/stringList" }, "initial_state": { "type": "string", "minLength": 1 } },
+      "additionalProperties": true
+    },
+    "agent": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "actor_type", "capabilities"],
+      "properties": {
+        "actor_type": { "enum": ["builder_agent", "runtime_agent"] },
+        "capabilities": { "$ref": "#/$defs/stringList" },
+        "tools": { "$ref": "#/$defs/stringList" }
+      },
+      "additionalProperties": true
+    },
+    "automation": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "workflow_id", "trigger"],
+      "properties": { "workflow_id": { "type": "string", "minLength": 1 }, "trigger": { "type": "string", "minLength": 1 } },
+      "additionalProperties": true
+    },
+    "connector": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "type", "operations"],
+      "properties": { "type": { "type": "string", "minLength": 1 }, "operations": { "$ref": "#/$defs/stringList" } },
+      "additionalProperties": true
+    },
+    "permission": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "principals", "actions", "resources"],
+      "properties": {
+        "principals": { "$ref": "#/$defs/stringList" },
+        "actions": { "$ref": "#/$defs/stringList" },
+        "resources": { "$ref": "#/$defs/stringList" }
+      },
+      "additionalProperties": true
+    },
+    "approvalRule": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "required", "approvals_required", "actions"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "approvals_required": { "type": "integer", "minimum": 0 },
+        "actions": { "$ref": "#/$defs/stringList" }
+      },
+      "additionalProperties": true
+    },
+    "schedule": {
+      "allOf": [{ "$ref": "#/$defs/named" }],
+      "required": ["id", "name", "automation_id", "cron", "timezone", "enabled"],
+      "properties": {
+        "automation_id": { "type": "string", "minLength": 1 },
+        "cron": { "type": "string", "minLength": 1 },
+        "timezone": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
