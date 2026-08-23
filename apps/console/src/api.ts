@@ -280,6 +280,16 @@ export function clearAuth() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -295,8 +305,9 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new ApiError(res.status, text || res.statusText);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -536,6 +547,134 @@ export async function getProjectSources(id: string): Promise<{
 
 export async function getProject(id: string): Promise<Snapshot> {
   return json(`/projects/${id}`);
+}
+
+export type Cmul8MemberRecord = {
+  actor_id: string;
+  role: string;
+  display_name?: string;
+  actor_type?: "human" | "builder_agent" | "runtime_agent" | "system" | string;
+  presence?: "active" | "away" | "offline" | string;
+  current_task?: string;
+  last_seen_at?: string;
+  joined_at?: string;
+};
+
+export type Cmul8TaskRecord = {
+  id: string;
+  title: string;
+  objective?: string;
+  state: "proposed" | "ready" | "working" | "in_review" | "done" | "blocked" | "failed" | "cancelled" | string;
+  owner_id?: string | null;
+  collaborator_ids?: string[];
+  acceptance_criteria?: string[];
+  operation_graph_version?: string | null;
+  application_version?: string | null;
+  revision: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type Cmul8ReviewRecord = {
+  id: string;
+  task_id: string;
+  reviewer_id: string;
+  reviewer_role?: string;
+  decision: "approve" | "request_changes" | "question" | "reject" | "rollback" | string;
+  body?: string;
+  task_revision?: number;
+  created_at: string;
+  updated_at?: string;
+};
+
+export type Cmul8CommentRecord = {
+  id: string;
+  author_id: string;
+  body: string;
+  target_type: "project" | "task" | "graph_element" | string;
+  target_id: string;
+  task_id?: string | null;
+  graph_path?: string | null;
+  graph_revision?: string | null;
+  mentions?: Array<{ ref_type: string; ref_id: string }>;
+  created_at: string;
+  updated_at?: string;
+};
+
+export type Cmul8DomainEventRecord = {
+  id: string;
+  actor_type: string;
+  actor_id: string;
+  task_id?: string | null;
+  operation_graph_version?: string | null;
+  application_version?: string | null;
+  environment_id?: string | null;
+  action: string;
+  result: string;
+  timestamp: string;
+  correlation_id?: string | null;
+  trace_id?: string | null;
+  payload?: Record<string, unknown>;
+};
+
+export type Cmul8GraphRecord = {
+  schema_version: string;
+  tenant_id: string;
+  project_id: string;
+  revision: number;
+  revision_hash: string;
+  created_at: string;
+  updated_at: string;
+  graph: Record<string, unknown>;
+};
+
+export type Cmul8RoomPayload = {
+  room: { id: string; project_id: string; members: Cmul8MemberRecord[]; revision: number; created_at?: string; updated_at?: string };
+  project: { id: string; name: string; objective: string };
+  tasks: Cmul8TaskRecord[];
+  comments: Cmul8CommentRecord[];
+  reviews: Cmul8ReviewRecord[];
+  events: Cmul8DomainEventRecord[];
+  operation_graph?: Cmul8GraphRecord | null;
+  operation_graph_approvals: Array<{ approval_id: string; revision_hash: string; actor_id: string; decision: string; created_at: string; updated_at?: string }>;
+  away: { since?: string | null; total: number; unread: number; counts: Record<string, number>; highlights: Array<{ position: number; category: string; unread: boolean; event: Cmul8DomainEventRecord; deep_link: Record<string, string | null> }> };
+  permissions: { manage_tasks: boolean; review_tasks: boolean; review_graph: boolean; invite: boolean };
+};
+
+export async function getCmul8Room(projectId: string): Promise<Cmul8RoomPayload> {
+  return json(`/projects/${projectId}/cmul8/room`);
+}
+
+export async function createCmul8Room(projectId: string): Promise<Cmul8RoomPayload> {
+  return json(`/projects/${projectId}/cmul8/room`, { method: "POST", body: "{}" });
+}
+
+export async function createCmul8Task(projectId: string, task: { title: string; objective: string; acceptance_criteria: string[]; owner_id?: string; operation_graph_version?: string }): Promise<Cmul8TaskRecord> {
+  return json(`/projects/${projectId}/cmul8/tasks`, { method: "POST", body: JSON.stringify(task) });
+}
+
+export async function transitionCmul8Task(projectId: string, taskId: string, state: string, expectedRevision: number): Promise<void> {
+  await json(`/projects/${projectId}/cmul8/tasks/${encodeURIComponent(taskId)}/transition`, {
+    method: "POST", body: JSON.stringify({ state, expected_revision: expectedRevision }),
+  });
+}
+
+export async function reviewCmul8Task(projectId: string, taskId: string, decision: string, body: string, expectedRevision: number): Promise<void> {
+  await json(`/projects/${projectId}/cmul8/tasks/${encodeURIComponent(taskId)}/reviews`, {
+    method: "POST", body: JSON.stringify({ decision, note: body, expected_revision: expectedRevision }),
+  });
+}
+
+export async function addCmul8Comment(projectId: string, body: { body: string; target_type: "project" | "task" | "graph_element"; target_id?: string; task_id?: string; graph_path?: string; graph_revision?: string; mentions?: Array<{ ref_type: string; ref_id: string }> }): Promise<Cmul8CommentRecord> {
+  return json(`/projects/${projectId}/cmul8/comments`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function createCmul8GraphRevision(projectId: string, graph: Record<string, unknown>, expectedRevisionHash?: string): Promise<Cmul8GraphRecord> {
+  return json(`/projects/${projectId}/cmul8/operation-graph/revisions`, { method: "POST", body: JSON.stringify({ graph, expected_revision_hash: expectedRevisionHash }) });
+}
+
+export async function approveCmul8Graph(projectId: string, revisionHash: string): Promise<void> {
+  await json(`/projects/${projectId}/cmul8/operation-graph/revisions/${encodeURIComponent(revisionHash)}/approve`, { method: "POST", body: "{}" });
 }
 
 export async function approveProject(id: string): Promise<Snapshot> {

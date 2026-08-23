@@ -28,7 +28,7 @@ import {
 import { PromptComposer } from "./PromptComposer";
 import { VersionsMenu } from "./VersionsMenu";
 import { WaitStage } from "./WaitStage";
-import { ProjectRoom, type ProjectRoomModel } from "../features/project-room";
+import { ProjectRoomContainer } from "../features/project-room";
 
 type Props = {
   variant: "plan" | "workspace";
@@ -928,41 +928,6 @@ export function AgentShell({
   })();
   const chatWait =
     jobKind === "agent_chat" || jobKind === "plan_ask" || (isPlan && waitingForOpen && !jobKind);
-  const roomModel: ProjectRoomModel = {
-    id: project.id,
-    name: project.app_config.title || "Untitled application",
-    context: {
-      objective: project.goal || project.prompt,
-      decisions: project.plan_approved ? ["Operation plan approved for the current build"] : [],
-      constraints: ["Consequential actions require explicit approval", "Runtime agents cannot edit source code"],
-      lastHandoff: busy ? `${thinkingLabel.replace(/…$/, "")} is in progress` : project.status,
-    },
-    members: [
-      { id: "architect", name: "Architect", role: "Operation Graph", kind: "agent", presence: busy && isPlan ? "active" : "away", currentTask: isPlan && busy ? "Reviewing requirements" : undefined },
-      { id: "app-builder", name: "App Builder", role: "Application", kind: "agent", presence: busy && !isPlan ? "active" : "away", currentTask: !isPlan && busy ? `Building ${noun}` : undefined },
-      { id: "workflow-builder", name: "Workflow Builder", role: "Workflow", kind: "agent", presence: "away" },
-      { id: "qa", name: "QA & Governance", role: "Release gate", kind: "agent", presence: project.gates_status === "pass" ? "active" : "away" },
-    ],
-    tasks: [
-      { id: "task-plan", title: "Approve the operation plan", status: project.plan_approved ? "done" : "in_review", ownerId: "architect", review: { state: project.plan_approved ? "approved" : "requested" } },
-      { id: "task-build", title: `Build ${noun}`, status: project.phase === "ready" ? "done" : busy && !isPlan ? "in_progress" : "todo", ownerId: "app-builder", review: { state: project.gates_status === "pass" ? "approved" : "unrequested" } },
-      { id: "task-release", title: "Verify and deploy release", status: project.deployed ? "done" : project.gates_status === "pass" ? "in_review" : "todo", ownerId: "qa", review: { state: project.deployed ? "approved" : "unrequested" } },
-    ],
-    workEvents: traces.map((trace) => ({
-      id: trace.id,
-      kind: trace.status === "fail" ? "failed" : trace.type === "done" ? "completed" : trace.type === "phase" ? "phase_started" : "heartbeat",
-      at: trace.ts,
-      phase: trace.label,
-      message: trace.detail,
-    })),
-    connected: true,
-    // A deploy receipt is not a health signal. Runtime health appears only when a
-    // telemetry-backed adapter supplies it; the legacy snapshot does not.
-    deployments: [],
-    versions: (project.checkpoints || []).map((checkpoint) => ({ id: checkpoint.id, label: checkpoint.label, createdAt: checkpoint.created_at, createdBy: "CMUL8", summary: checkpoint.raw_label || checkpoint.label, previewUrl: snapshot.preview_url || undefined, state: checkpoint.current ? "candidate" : "superseded" })),
-    selectedVersionId: project.checkpoints?.find((checkpoint) => checkpoint.current)?.id,
-  };
-
   // Snapshot the thinking trail when a chat turn finishes (Cursor: collapse after answer).
   useEffect(() => {
     const wasBusy = prevBusy.current;
@@ -1024,7 +989,7 @@ export function AgentShell({
 
       <div className="agent-center">
         {roomOpen ? (
-          <ProjectRoom room={roomModel} permissions={{ manageTasks: false, reviewTasks: false, reviewGraph: false, handoff: false, invite: false }} />
+          <ProjectRoomContainer projectId={project.id} />
         ) : (
           <>
         <div
