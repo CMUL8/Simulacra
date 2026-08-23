@@ -19,17 +19,6 @@ from the people icon. The room is created through the tenant-authorized CMUL8
 API; tasks, comments, reviews, graph revisions, approvals, and inbox positions
 are durable records rather than browser fixtures.
 
-## Vendor-onboarding reference
-
-```bash
-PYTHONPATH=. python examples/vendor-onboarding/run.py
-PYTHONPATH=. python examples/vendor-onboarding/run.py --fail-first-notification
-```
-
-The second command demonstrates durable retry and exactly one idempotent
-external delivery. Both paths enforce independent runtime and collaboration
-self-approval denial.
-
 ## Verification
 
 ```bash

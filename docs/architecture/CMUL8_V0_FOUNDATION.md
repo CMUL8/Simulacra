@@ -159,8 +159,8 @@ Wave 1 starts from this document and the integration branch baseline:
    does not rewrite `pipeline.py`, job routing or API entry points.
 
 Merge/integration order is Operation Graph -> Collaboration -> Harness. Wave 2 runtime,
-UI and deployment depend on Wave 1. Wave 3 observability and vendor reference depend on
-the approved runtime and UI contracts.
+UI and deployment depend on Wave 1. Wave 3 observability depends on the approved runtime
+and UI contracts.
 
 ## Test and visual baseline
 

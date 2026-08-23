@@ -8,17 +8,14 @@ type Props = {
   busy?: boolean;
   files: DataRoomFile[];
   pendingFiles?: File[];
-  fixtureAttached?: boolean;
   profile?: DataProfile | null;
   extractErrors?: string[];
   extractSkipped?: string[];
   mode: "landing" | "project";
   onClose: () => void;
-  onToggleFixture?: () => void;
   onPickFiles?: (files: File[]) => void;
   onClearPending?: (name: string) => void;
   onRemoveSource?: (name: string) => void;
-  onSeedFixtures?: () => void;
   onReingest?: () => void;
 };
 
@@ -33,17 +30,14 @@ export function SourcesPanel({
   busy,
   files,
   pendingFiles = [],
-  fixtureAttached,
   profile,
   extractErrors = [],
   extractSkipped = [],
   mode,
   onClose,
-  onToggleFixture,
   onPickFiles,
   onClearPending,
   onRemoveSource,
-  onSeedFixtures,
   onReingest,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -67,21 +61,6 @@ export function SourcesPanel({
         </header>
 
         <div className="sources-body">
-          {mode === "landing" && (
-            <label className="sources-fixture">
-              <input
-                type="checkbox"
-                checked={!!fixtureAttached}
-                disabled={busy}
-                onChange={() => onToggleFixture?.()}
-              />
-              <span>
-                Include sample pack
-                <em>vendor-risk demo only — not for unrelated topics</em>
-              </span>
-            </label>
-          )}
-
           <div className="sources-actions">
             <button
               type="button"
@@ -105,15 +84,10 @@ export function SourcesPanel({
               }}
             />
             {mode === "project" && (
-              <>
-                <button type="button" className="sources-btn" disabled={busy} onClick={() => onSeedFixtures?.()}>
-                  Add sample pack
-                </button>
-                <button type="button" className="sources-btn" disabled={busy} onClick={() => onReingest?.()}>
-                  <RefreshCw size={14} />
-                  Re-ingest
-                </button>
-              </>
+              <button type="button" className="sources-btn" disabled={busy} onClick={() => onReingest?.()}>
+                <RefreshCw size={14} />
+                Re-ingest
+              </button>
             )}
           </div>
 
@@ -149,11 +123,11 @@ export function SourcesPanel({
 
           <section>
             <h3>
-              {mode === "landing" ? "Sample pack" : "In data room"}{" "}
+              {mode === "landing" ? "Uploaded" : "In data room"}{" "}
               <span>{files.length}</span>
             </h3>
             {files.length === 0 ? (
-              <p className="sources-empty">No files yet — upload or attach the sample pack.</p>
+              <p className="sources-empty">No files yet — upload the sources this build should use.</p>
             ) : (
               <ul className="sources-list">
                 {files.map((f) => (
@@ -192,9 +166,6 @@ export function SourcesPanel({
               <h3>Data profile</h3>
               <p>
                 {profile.row_count ?? 0} rows
-                {profile.vendors?.length && profile.high_risk != null
-                  ? ` · ${profile.high_risk} high · ${profile.vendors.length} vendors`
-                  : ""}
               </p>
               {nuances.length > 0 && (
                 <ul>

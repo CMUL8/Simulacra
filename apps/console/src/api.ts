@@ -366,11 +366,6 @@ export async function listProjects(): Promise<Project[]> {
   return data.projects;
 }
 
-export async function listFixtureFiles(): Promise<DataRoomFile[]> {
-  const data = await json<{ files: DataRoomFile[] }>("/fixtures/data-room");
-  return data.files;
-}
-
 export async function listProjectFiles(id: string): Promise<DataRoomFile[]> {
   const data = await json<{ files: DataRoomFile[] }>(`/projects/${id}/files`);
   return data.files;
@@ -484,14 +479,13 @@ export async function createProject(
   prompt: string,
   goal = "",
   designBrief?: DesignBrief,
-  opts?: { useFixture?: boolean; artifactKind?: ArtifactKind | string },
+  opts?: { artifactKind?: ArtifactKind | string },
 ): Promise<Snapshot> {
   return json("/projects", {
     method: "POST",
     body: JSON.stringify({
       prompt,
       goal,
-      use_fixture: opts?.useFixture ?? false,
       design_brief: designBrief ?? null,
       artifact_kind: opts?.artifactKind ?? null,
     }),
@@ -525,10 +519,6 @@ export async function uploadProjectFiles(
 
 export async function removeProjectSource(id: string, fileName: string): Promise<Snapshot> {
   return json(`/projects/${id}/sources/${encodeURIComponent(fileName)}`, { method: "DELETE" });
-}
-
-export async function seedProjectFixtures(id: string): Promise<Snapshot> {
-  return json(`/projects/${id}/sources/seed`, { method: "POST" });
 }
 
 export async function reingestProjectSources(id: string): Promise<Snapshot> {

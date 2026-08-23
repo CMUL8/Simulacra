@@ -39,7 +39,7 @@ from simulacra.demo.identity import (
 	user_tenants,
 )
 from simulacra.demo.jobs import get_job, job_snapshot
-from simulacra.demo.paths import FIXTURES, RUNS_DIR
+from simulacra.demo.paths import RUNS_DIR
 from simulacra.demo.pipeline import (
 	approve_deploy,
 	build_project,
@@ -113,7 +113,6 @@ def _startup() -> None:
 class CreateProjectBody(BaseModel):
 	prompt: str = Field(min_length=3)
 	goal: str = ""
-	use_fixture: bool = False
 	design_brief: dict[str, Any] | None = None
 	tenant_id: str | None = None
 	artifact_kind: str | None = None
@@ -548,18 +547,6 @@ def get_governance(ctx: Annotated[AuthContext, Depends(require_perm("tenant:read
 	return governance_overview()
 
 
-@app.get("/fixtures/data-room")
-def fixture_files(ctx: Annotated[AuthContext, Depends(require_perm("project:read"))]) -> dict:
-	if not FIXTURES.exists():
-		return {"files": []}
-	files = [
-		{"name": p.name, "size": p.stat().st_size, "type": p.suffix.lstrip(".")}
-		for p in sorted(FIXTURES.iterdir())
-		if p.is_file()
-	]
-	return {"files": files, "path": str(FIXTURES)}
-
-
 # ── Projects (tenant-scoped) ─────────────────────────────────────────
 
 
@@ -601,27 +588,6 @@ def get_sources(
 		"extract": preview.get("extract"),
 		"row_count": preview.get("row_count") or state.row_count,
 	}
-
-
-@app.post("/projects/{project_id}/sources/seed")
-def post_sources_seed(
-	project_id: str,
-	request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
-) -> dict:
-	from simulacra.demo.pipeline import start_reingest
-	from simulacra.demo.sources import SourceError, seed_fixtures
-
-	try:
-		seed_fixtures(project_id, clear=False)
-	except SourceError as exc:
-		raise HTTPException(400, str(exc)) from exc
-	audit_request(request, ctx, "sources.seed", project_id=project_id)
-	try:
-		start_reingest(project_id)
-	except ValueError as exc:
-		raise HTTPException(409, str(exc)) from exc
-	return project_snapshot(project_id)
 
 
 @app.delete("/projects/{project_id}/sources/{file_name:path}")
@@ -765,7 +731,6 @@ def post_project(
 			raise HTTPException(403, "Cannot create project in another tenant")
 		state = create_project(
 			body.prompt,
-			use_fixture=body.use_fixture,
 			goal=body.goal,
 			design_brief=brief,
 			tenant_id=tid,
@@ -1088,7 +1053,6 @@ if _CONSOLE_DIST.is_dir():
 			"tenants/",
 			"formats",
 			"governance",
-			"fixtures/",
 			"health",
 			"ready",
 			"docs",

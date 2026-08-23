@@ -14,7 +14,6 @@ import {
   getProjectJob,
   getTenantId,
   getToken,
-  listFixtureFiles,
   listProjectFiles,
   listProjects,
   rollbackProject,
@@ -67,7 +66,6 @@ function writeSidebarOpen(open: boolean) {
 type LandingDraft = {
   prompt: string;
   artifactKind: ArtifactKind;
-  dataAttached: boolean;
   resumeBuild: boolean;
 };
 
@@ -97,7 +95,6 @@ function readLandingDraft(): LandingDraft | null {
         parsed.artifactKind === "data_app"
           ? parsed.artifactKind
           : "data_app",
-      dataAttached: parsed.dataAttached === true,
       resumeBuild: Boolean(parsed.resumeBuild),
     };
   } catch {
@@ -142,13 +139,11 @@ export default function App({
   const [previewRefresh, setPreviewRefresh] = useState(0);
   const [projects, setProjects] = useState<Project[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [fixtureFiles, setFixtureFiles] = useState<DataRoomFile[]>([]);
   const [projectFiles, setProjectFiles] = useState<DataRoomFile[]>([]);
   const [goal, setGoal] = useState("");
   const [prompt, setPrompt] = useState("");
   const [artifactKind, setArtifactKind] = useState<ArtifactKind>("data_app");
   const [designBrief, setDesignBrief] = useState<DesignBrief>(DEFAULT_DESIGN_BRIEF);
-  const [dataAttached, setDataAttached] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -222,7 +217,6 @@ export default function App({
     if (!draft) return;
     setPrompt(draft.prompt);
     setArtifactKind(draft.artifactKind);
-    setDataAttached(draft.dataAttached);
     if (draft.resumeBuild) {
       setResumeBuild(true);
       setGuestGateOpen(true);
@@ -365,7 +359,6 @@ export default function App({
   useEffect(() => {
     if (!authed) return;
     refreshProjects();
-    listFixtureFiles().then(setFixtureFiles).catch(() => setFixtureFiles([]));
   }, [refreshProjects, authed]);
 
   // Keep sidebar activity markers in sync with list payloads
@@ -391,11 +384,11 @@ export default function App({
   useEffect(() => {
     const id = snapshot?.project.id;
     if (!id) {
-      setProjectFiles(fixtureFiles);
+      setProjectFiles([]);
       return;
     }
-    listProjectFiles(id).then(setProjectFiles).catch(() => setProjectFiles(fixtureFiles));
-  }, [snapshot?.project.id, fixtureFiles]);
+    listProjectFiles(id).then(setProjectFiles).catch(() => setProjectFiles([]));
+  }, [snapshot?.project.id]);
 
   // When SSE says done (or sources promoted), refresh snapshot + data room
   useEffect(() => {
@@ -461,7 +454,6 @@ export default function App({
     writeLandingDraft({
       prompt,
       artifactKind,
-      dataAttached,
       resumeBuild: resume,
     });
   }
@@ -485,7 +477,6 @@ export default function App({
         one_liner: designBrief.one_liner || prompt.slice(0, 120),
       };
       let snap = await createProject(text, goal || prompt.slice(0, 80), brief, {
-        useFixture: dataAttached,
         artifactKind,
       });
       if (pendingFiles.length > 0) {
@@ -511,7 +502,6 @@ export default function App({
     }
   }, [
     artifactKind,
-    dataAttached,
     designBrief,
     goal,
     pendingFiles,
@@ -552,9 +542,7 @@ export default function App({
           prompt={prompt}
           artifactKind={artifactKind}
           busy={false}
-          files={fixtureFiles}
           pendingFiles={pendingFiles}
-          dataAttached={dataAttached}
           error={null}
           authed={false}
           projects={[]}
@@ -562,7 +550,6 @@ export default function App({
           clerkEnabled={clerkEnabled}
           onPrompt={setPrompt}
           onArtifactKind={setArtifactKind}
-          onToggleData={() => setDataAttached((v) => !v)}
           onPickPending={(files) =>
             setPendingFiles((prev) => {
               const names = new Set(prev.map((f) => f.name));
@@ -881,7 +868,6 @@ export default function App({
     setPrompt("");
     setArtifactKind("data_app");
     setDesignBrief(DEFAULT_DESIGN_BRIEF);
-    setDataAttached(true);
     setInput("");
     setError(null);
     setPreviewOpen(false);
@@ -951,15 +937,12 @@ export default function App({
           artifactKind={artifactKind}
           busy={busy}
           busyProjectIds={busyProjects}
-          files={fixtureFiles}
           pendingFiles={pendingFiles}
-          dataAttached={dataAttached}
           error={error}
           authed
           projects={projects}
           onPrompt={setPrompt}
           onArtifactKind={setArtifactKind}
-          onToggleData={() => setDataAttached((v) => !v)}
           onPickPending={(files) =>
             setPendingFiles((prev) => {
               const names = new Set(prev.map((f) => f.name));

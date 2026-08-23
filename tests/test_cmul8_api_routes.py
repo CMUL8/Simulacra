@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
-import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 
 from apps.api import cmul8_routes
 from simulacra.demo.identity import AuthContext, User
+from simulacra.operation_graph import load_operation_graph
 
 
 def _context() -> AuthContext:
@@ -26,7 +26,11 @@ def _prepare(monkeypatch, tmp_path: Path) -> Path:
 	monkeypatch.setattr(cmul8_routes, "project_dir", lambda _project_id: project_root)
 	monkeypatch.setattr(
 		cmul8_routes, "load_state",
-		lambda _project_id: SimpleNamespace(app_config=SimpleNamespace(title="Vendor onboarding"), goal="Review vendors", prompt=""),
+		lambda _project_id: SimpleNamespace(
+			app_config=SimpleNamespace(title="Support operations"),
+			goal="Coordinate case resolution",
+			prompt="",
+		),
 	)
 	monkeypatch.setattr(cmul8_routes, "audit_request", lambda *args, **kwargs: None)
 	return project_root
@@ -53,7 +57,7 @@ def test_room_task_and_graph_are_durable_not_synthesized(monkeypatch, tmp_path):
 	task = cmul8_routes.create_task(
 		"project_api",
 		cmul8_routes.TaskCreateBody(
-			title="Review risk", objective="Independently review the vendor",
+			title="Review case", objective="Independently review the case",
 			acceptance_criteria=["Decision recorded"], owner_id="user_owner",
 		),
 		request, ctx,
@@ -69,7 +73,7 @@ def test_room_task_and_graph_are_durable_not_synthesized(monkeypatch, tmp_path):
 	claimed = cmul8_routes.claim_task("project_api", proposed["id"], proposed["revision"], request, ctx)
 	assert claimed["owner_id"] == "user_owner" and claimed["state"] == "ready"
 
-	graph = json.loads((Path(__file__).parents[1] / "examples/vendor-onboarding/operation-graph.json").read_text())
+	graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
 	graph["metadata"]["tenant_id"] = "tenant_api"
 	graph["metadata"]["project_id"] = "project_api"
 	revision = cmul8_routes.create_graph_revision(
@@ -96,17 +100,17 @@ def test_observability_is_project_and_tenant_scoped(monkeypatch, tmp_path):
 	ctx = _context()
 	request = SimpleNamespace(url=SimpleNamespace(path="/test"))
 	body = cmul8_routes.TelemetryEventBody(
-		id="evt_api_1", entity_kind="workflow", entity_id="wf_vendor", entity_name="Vendor review",
+		id="evt_api_1", entity_kind="workflow", entity_id="wf_case", entity_name="Case resolution",
 		signal="workflow.completed", status="succeeded", started_at="2026-08-23T10:00:00+00:00",
-		duration_ms=125, trace_id="trace_api_1", workflow_id="wf_vendor",
+		duration_ms=125, trace_id="trace_api_1", workflow_id="wf_case",
 	)
 	cmul8_routes.ingest_telemetry("project_api", body, request, ctx)
 	other = body.model_copy(update={"id": "evt_api_2"})
 	cmul8_routes.ingest_telemetry("project_other", other, request, ctx)
 	payload = cmul8_routes.get_observability("project_api", ctx)
 	assert payload["overview"]["runs"] == 1
-	assert payload["inventories"]["workflow"][0]["id"] == "wf_vendor"
-	detail = cmul8_routes.get_observability_detail("project_api", "workflow", "wf_vendor", ctx)
+	assert payload["inventories"]["workflow"][0]["id"] == "wf_case"
+	detail = cmul8_routes.get_observability_detail("project_api", "workflow", "wf_case", ctx)
 	assert detail["recent_events"][0]["trace_id"] == "trace_api_1"
 
 	with pytest.raises(Exception, match="raw credential-like field"):

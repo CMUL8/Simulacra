@@ -1,6 +1,6 @@
 import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ArtifactKind, DataRoomFile, Project } from "../api";
+import type { ArtifactKind, Project } from "../api";
 import { GuestAuthGate } from "./GuestAuthGate";
 import { SourcesPanel } from "./SourcesPanel";
 
@@ -153,9 +153,7 @@ type Props = {
   artifactKind: ArtifactKind;
   busy: boolean;
   busyProjectIds?: Record<string, boolean>;
-  files: DataRoomFile[];
   pendingFiles?: File[];
-  dataAttached: boolean;
   error: string | null;
   authed?: boolean;
   projects?: Project[];
@@ -163,7 +161,6 @@ type Props = {
   clerkEnabled?: boolean;
   onPrompt: (v: string) => void;
   onArtifactKind: (k: ArtifactKind) => void;
-  onToggleData: () => void;
   onPickPending?: (files: File[]) => void;
   onClearPending?: (name: string) => void;
   onBuild: () => void;
@@ -180,9 +177,7 @@ export function Landing({
   artifactKind,
   busy,
   busyProjectIds = {},
-  files,
   pendingFiles = [],
-  dataAttached,
   error,
   authed = true,
   projects = [],
@@ -190,7 +185,6 @@ export function Landing({
   clerkEnabled = false,
   onPrompt,
   onArtifactKind,
-  onToggleData,
   onPickPending,
   onClearPending,
   onBuild,
@@ -206,7 +200,7 @@ export function Landing({
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const landingRef = useRef<HTMLDivElement>(null);
   const projectsRef = useRef<HTMLElement>(null);
-  const sourceCount = (dataAttached ? files.length : 0) + pendingFiles.length;
+  const sourceCount = pendingFiles.length;
   // Prompt alone is enough — empty/mismatched sources open plan chat to ask for data.
   const canBuild = prompt.trim().length >= 3 && !busy && !guestGateOpen;
   const recent = projects.slice(0, 12);
@@ -316,18 +310,14 @@ export function Landing({
           <div className="prompt-footer">
             <button
               type="button"
-              className={`data-chip ${sourceCount > 0 || (!authed && dataAttached) ? "on" : ""}`}
+              className={`data-chip ${sourceCount > 0 ? "on" : ""}`}
               onClick={() => setSourcesOpen(true)}
               disabled={busy || gated}
               title="Manage sources"
             >
               <Database size={15} strokeWidth={1.75} />
               <span>
-                {sourceCount > 0
-                  ? `Sources · ${sourceCount}`
-                  : !authed && dataAttached
-                    ? "Sources · sample"
-                    : "Add sources"}
+                {sourceCount > 0 ? `Sources · ${sourceCount}` : "Add sources"}
               </span>
             </button>
             <button
@@ -420,11 +410,9 @@ export function Landing({
         open={sourcesOpen}
         busy={busy}
         mode="landing"
-        files={dataAttached ? files : []}
+        files={[]}
         pendingFiles={pendingFiles}
-        fixtureAttached={dataAttached}
         onClose={() => setSourcesOpen(false)}
-        onToggleFixture={onToggleData}
         onPickFiles={onPickPending}
         onClearPending={onClearPending}
       />
