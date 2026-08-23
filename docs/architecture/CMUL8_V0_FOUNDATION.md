@@ -167,8 +167,11 @@ the approved runtime and UI contracts.
 - Python: `.venv/bin/pytest -q` -> 84 passed.
 - Console: `npm run build` in `apps/console` -> Vite production build succeeded.
 - Desktop baseline: `artifacts/ui-baseline/landing-1440x900.png`.
-- Laptop baseline: `artifacts/ui-baseline/landing-1280x800.png`; existing horizontal
-  clipping is visible and must be fixed before UI acceptance.
+- Laptop baseline: `artifacts/ui-baseline/landing-1280x800.png`. The initial full-page
+  browser capture appeared horizontally offset because fixed layers were composited
+  incorrectly by that capture mode. A viewport capture plus DOM measurements confirmed
+  a 1280px document with centered 680px content and no horizontal overflow; the verified
+  Wave 2 capture is `artifacts/ui-baseline/wave2-landing-viewport-1280x800.jpg`.
 
 No baseline product test failure was observed. Untracked user files present before this
 work are out of scope and must be preserved.

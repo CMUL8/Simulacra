@@ -9,6 +9,7 @@ import {
   Square,
   ThumbsDown,
   ThumbsUp,
+  Users,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
@@ -27,6 +28,7 @@ import {
 import { PromptComposer } from "./PromptComposer";
 import { VersionsMenu } from "./VersionsMenu";
 import { WaitStage } from "./WaitStage";
+import { ProjectRoom, type ProjectRoomModel } from "../features/project-room";
 
 type Props = {
   variant: "plan" | "workspace";
@@ -890,6 +892,7 @@ export function AgentShell({
   const stickToBottom = useRef(true);
   const prevBusy = useRef(busy);
   const [lastThought, setLastThought] = useState<ThoughtSnapshot | null>(null);
+  const [roomOpen, setRoomOpen] = useState(false);
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
@@ -925,6 +928,38 @@ export function AgentShell({
   })();
   const chatWait =
     jobKind === "agent_chat" || jobKind === "plan_ask" || (isPlan && waitingForOpen && !jobKind);
+  const roomModel: ProjectRoomModel = {
+    id: project.id,
+    name: project.app_config.title || "Untitled application",
+    context: {
+      objective: project.goal || project.prompt,
+      decisions: project.plan_approved ? ["Operation plan approved for the current build"] : [],
+      constraints: ["Consequential actions require explicit approval", "Runtime agents cannot edit source code"],
+      lastHandoff: busy ? `${thinkingLabel.replace(/…$/, "")} is in progress` : project.status,
+    },
+    members: [
+      { id: "architect", name: "Architect", role: "Operation Graph", kind: "agent", presence: busy && isPlan ? "active" : "away", currentTask: isPlan && busy ? "Reviewing requirements" : undefined },
+      { id: "app-builder", name: "App Builder", role: "Application", kind: "agent", presence: busy && !isPlan ? "active" : "away", currentTask: !isPlan && busy ? `Building ${noun}` : undefined },
+      { id: "workflow-builder", name: "Workflow Builder", role: "Workflow", kind: "agent", presence: "away" },
+      { id: "qa", name: "QA & Governance", role: "Release gate", kind: "agent", presence: project.gates_status === "pass" ? "active" : "away" },
+    ],
+    tasks: [
+      { id: "task-plan", title: "Approve the operation plan", status: project.plan_approved ? "done" : "in_review", ownerId: "architect", review: { state: project.plan_approved ? "approved" : "requested" } },
+      { id: "task-build", title: `Build ${noun}`, status: project.phase === "ready" ? "done" : busy && !isPlan ? "in_progress" : "todo", ownerId: "app-builder", review: { state: project.gates_status === "pass" ? "approved" : "unrequested" } },
+      { id: "task-release", title: "Verify and deploy release", status: project.deployed ? "done" : project.gates_status === "pass" ? "in_review" : "todo", ownerId: "qa", review: { state: project.deployed ? "approved" : "unrequested" } },
+    ],
+    workEvents: traces.map((trace) => ({
+      id: trace.id,
+      kind: trace.status === "fail" ? "failed" : trace.type === "done" ? "completed" : trace.type === "phase" ? "phase_started" : "heartbeat",
+      at: trace.ts,
+      phase: trace.label,
+      message: trace.detail,
+    })),
+    connected: true,
+    deployments: project.deployed ? [{ environment: "Production", state: "healthy", version: project.checkpoints?.at(-1)?.label || "current", checkedAt: new Date().toISOString(), url: project.deploy_url || undefined }] : [],
+    versions: (project.checkpoints || []).map((checkpoint) => ({ id: checkpoint.id, label: checkpoint.label, createdAt: checkpoint.created_at, createdBy: "CMUL8", summary: checkpoint.raw_label || checkpoint.label, previewUrl: snapshot.preview_url || undefined, state: checkpoint.current ? "candidate" : "superseded" })),
+    selectedVersionId: project.checkpoints?.find((checkpoint) => checkpoint.current)?.id,
+  };
 
   // Snapshot the thinking trail when a chat turn finishes (Cursor: collapse after answer).
   useEffect(() => {
@@ -971,6 +1006,9 @@ export function AgentShell({
           </button>
           <span className="project-name">{project.app_config.title}</span>
         </div>
+        <button type="button" className="icon-btn" onClick={() => setRoomOpen((value) => !value)} title={roomOpen ? "Return to conversation" : "Open Project Room"} aria-pressed={roomOpen}>
+          <Users size={16} strokeWidth={1.5} />
+        </button>
       </header>
 
       {error && (
@@ -983,6 +1021,10 @@ export function AgentShell({
       )}
 
       <div className="agent-center">
+        {roomOpen ? (
+          <ProjectRoom room={roomModel} permissions={{ manageTasks: false, reviewTasks: false, reviewGraph: false, handoff: false, invite: false }} onOpenActivity={() => undefined} onOpenGraph={() => undefined} />
+        ) : (
+          <>
         <div
           className="agent-thread cursor-thread"
           ref={threadRef}
@@ -1168,6 +1210,8 @@ export function AgentShell({
             modeTag="Agent"
           />
         </div>
+          </>
+        )}
       </div>
     </div>
   );
