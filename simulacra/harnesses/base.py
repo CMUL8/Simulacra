@@ -69,6 +69,9 @@ class AgentHarness(ABC):
         except Exception as exc:  # adapter session failures must be normalized
             session = self._ephemeral_session(request)
             return self._failure(request, session, "session_unavailable", str(exc), started)
+        # Cancellation is scoped to an active invocation. A persisted session is
+        # reusable after a cancelled run, so stale markers cannot carry forward.
+        self._cancelled.discard(session.session_id)
         self._active.add(session.session_id)
         events = [self._event(request, session, "run_started", "started", {"selection": self._selection(request)})]
         try:
@@ -122,9 +125,11 @@ class AgentHarness(ABC):
                             usage={"steps": steps, **dict(raw.get("usage", {}))}, error=error)
 
     async def cancel(self, session_id: str) -> bool:
+        if session_id not in self._active:
+            return False
         self._cancelled.add(session_id)
         await self._safe_cancel_provider_id(session_id)
-        return session_id in self._active
+        return True
 
     async def stream_events(self, session_id: str) -> AsyncIterator[AgentEvent]:
         # Completed events are intentionally retained in-process for callers that

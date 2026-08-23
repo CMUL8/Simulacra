@@ -50,6 +50,41 @@ def test_default_selection_is_codex_and_no_adapter_fallback() -> None:
         ProviderConfig("unsupported")
 
 
+def test_canonical_environment_wins_and_safe_metadata_never_resolves_secrets() -> None:
+    config = HarnessConfig.from_env({
+        "CMUL8_AGENT_HARNESS": "codex",
+        "CMUL8_MODEL_PROVIDER": "custom",
+        "CMUL8_MODEL": "canonical-model",
+        "CMUL8_MODEL_BASE_URL": "https://model.example/v1",
+        "CMUL8_MODEL_API_KEY_ENV": "CMUL8_CANONICAL_SECRET",
+        "CMUL8_MODEL_REASONING_EFFORT": "high",
+        "CMUL8_CODEX_PROFILE": "production",
+        # Old aliases deliberately conflict; canonical names must win.
+        "CMUL8_AGENT_PROVIDER": "ollama",
+        "CMUL8_AGENT_MODEL": "legacy-model",
+        "CMUL8_AGENT_CREDENTIAL_ENV": "CMUL8_LEGACY_SECRET",
+        "CMUL8_CANONICAL_SECRET": "do-not-serialize-me",
+    })
+    assert config.provider.provider == "custom"
+    assert config.provider.endpoint == "https://model.example/v1"
+    assert config.provider.credential_env_var == "CMUL8_CANONICAL_SECRET"
+    assert config.model.model_id == "canonical-model"
+    assert config.model_reasoning_effort == "high"
+    assert config.codex_profile == "production"
+    assert "do-not-serialize-me" not in json.dumps(config.metadata())
+
+
+def test_capability_registry_fields_are_typed_and_aliases_remain_coherent() -> None:
+    capability = ModelCapability(
+        "registry", tool_calling=True, structured_outputs=True, file_editing=True,
+        patch_reliability=0.9, streaming=True, context_window=200_000,
+        reasoning_controls=True, image_input=True, responses_api_compatible=True,
+        approved_task_types={"chat", TaskType.BUILD_APP},
+    )
+    assert capability.structured_output and capability.source_edit
+    assert capability.approved_task_types == frozenset({TaskType.CHAT, TaskType.BUILD_APP})
+
+
 @pytest.mark.asyncio
 async def test_codex_unavailable_is_honest_not_a_fake_live_sdk(tmp_path: Path) -> None:
     config = HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("codex"))
@@ -93,6 +128,9 @@ async def test_fake_error_timeout_cancellation_budget_and_no_artifact(tmp_path: 
     await asyncio.sleep(0)
     assert await harness.cancel(session.session_id)
     assert (await task).status is TerminalStatus.CANCELLED
+    resumed = await harness.resume_session(request)
+    assert resumed.session_id == session.session_id
+    assert (await harness.run(request)).status is TerminalStatus.SUCCEEDED
 
 
 @pytest.mark.asyncio

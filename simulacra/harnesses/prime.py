@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import uuid
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Iterable
 
 from .base import AgentHarness
 from .contracts import AgentRunRequest, AgentSession, ModelCapability, TerminalStatus
@@ -14,9 +14,10 @@ from .contracts import AgentRunRequest, AgentSession, ModelCapability, TerminalS
 class PrimeHarness(AgentHarness):
     name = "prime"
 
-    def __init__(self, runner: Callable[..., Any] | Any | None = None, **kwargs: Any) -> None:
+    def __init__(self, runner: Callable[..., Any] | Any | None = None, *, model_capabilities: Iterable[ModelCapability] = (), **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.runner = runner
+        self._model_capabilities = tuple(model_capabilities)
 
     async def _create_session(self, request: AgentRunRequest, existing: AgentSession | None) -> AgentSession:
         # Legacy runners own their own session mechanics; thread_id is an opaque
@@ -60,4 +61,7 @@ class PrimeHarness(AgentHarness):
                 "reason": None if self.runner else "inject a legacy Prime callable/interface"}
 
     def capabilities(self) -> tuple[ModelCapability, ...]:
-        return (ModelCapability("legacy-prime", chat=self.runner is not None, source_edit=self.runner is not None),)
+        if self._model_capabilities:
+            return self._model_capabilities
+        # A generic injected callable does not prove source-edit capability.
+        return (ModelCapability("legacy-prime", chat=self.runner is not None),)

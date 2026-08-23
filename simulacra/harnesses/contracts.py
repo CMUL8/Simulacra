@@ -54,10 +54,41 @@ def _readonly(values: Mapping[str, Any] | None) -> Mapping[str, Any]:
 class ModelCapability:
     model_id: str
     chat: bool = True
+    tool_calling: bool = False
+    structured_outputs: bool = False
+    file_editing: bool = False
+    patch_reliability: float | None = None
+    streaming: bool = False
+    context_window: int | None = None
+    reasoning_controls: bool = False
+    image_input: bool = False
+    responses_api_compatible: bool = False
+    approved_task_types: frozenset[TaskType] = field(default_factory=frozenset)
+    # Compatibility aliases retained for the first adapter wave.
     architect: bool = False
     source_edit: bool = False
     network: bool = False
     structured_output: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "approved_task_types",
+            frozenset(item if isinstance(item, TaskType) else TaskType(item) for item in self.approved_task_types),
+        )
+        if self.patch_reliability is not None and not 0 <= self.patch_reliability <= 1:
+            raise ValueError("patch_reliability must be between 0 and 1")
+        if self.context_window is not None and self.context_window <= 0:
+            raise ValueError("context_window must be positive")
+        # New registry names are canonical; aliases remain internally coherent.
+        if self.source_edit and not self.file_editing:
+            object.__setattr__(self, "file_editing", True)
+        if self.file_editing and not self.source_edit:
+            object.__setattr__(self, "source_edit", True)
+        if self.structured_output and not self.structured_outputs:
+            object.__setattr__(self, "structured_outputs", True)
+        if self.structured_outputs and not self.structured_output:
+            object.__setattr__(self, "structured_output", True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +115,8 @@ class HarnessConfig:
     harness: str = "codex"
     provider: ProviderConfig = field(default_factory=lambda: ProviderConfig("openai"))
     model: ModelCapability = field(default_factory=lambda: ModelCapability("default"))
+    model_reasoning_effort: str | None = None
+    codex_profile: str | None = None
 
     def __post_init__(self) -> None:
         if self.harness not in _HARNESSES:
@@ -92,11 +125,39 @@ class HarnessConfig:
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "HarnessConfig":
         env = os.environ if environ is None else environ
-        harness = env.get("CMUL8_AGENT_HARNESS", "codex").strip().lower() or "codex"
-        provider = env.get("CMUL8_AGENT_PROVIDER", "openai").strip().lower() or "openai"
-        model = env.get("CMUL8_AGENT_MODEL", "default").strip() or "default"
-        credential = env.get("CMUL8_AGENT_CREDENTIAL_ENV", "").strip() or None
-        return cls(harness=harness, provider=ProviderConfig(provider, credential_env_var=credential), model=ModelCapability(model))
+        def setting(canonical: str, legacy: str | None, default: str = "") -> str:
+            # Presence of a canonical variable is authoritative, even if it is
+            # blank; aliases only support installations predating this contract.
+            if canonical in env:
+                return str(env[canonical]).strip() or default
+            if legacy and legacy in env:
+                return str(env[legacy]).strip() or default
+            return default
+
+        harness = setting("CMUL8_AGENT_HARNESS", None, "codex").lower()
+        provider = setting("CMUL8_MODEL_PROVIDER", "CMUL8_AGENT_PROVIDER", "openai").lower()
+        model = setting("CMUL8_MODEL", "CMUL8_AGENT_MODEL", "default")
+        endpoint = setting("CMUL8_MODEL_BASE_URL", None) or None
+        credential = setting("CMUL8_MODEL_API_KEY_ENV", "CMUL8_AGENT_CREDENTIAL_ENV") or None
+        reasoning = setting("CMUL8_MODEL_REASONING_EFFORT", None) or None
+        profile = setting("CMUL8_CODEX_PROFILE", None) or None
+        return cls(
+            harness=harness,
+            provider=ProviderConfig(provider, endpoint=endpoint, credential_env_var=credential),
+            model=ModelCapability(model),
+            model_reasoning_effort=reasoning,
+            codex_profile=profile,
+        )
+
+    def metadata(self) -> dict[str, Any]:
+        """Safe configuration metadata; credentials are never looked up or emitted."""
+        return {
+            "harness": self.harness,
+            "provider": self.provider.metadata(),
+            "model": self.model.model_id,
+            "model_reasoning_effort": self.model_reasoning_effort,
+            "codex_profile": self.codex_profile,
+        }
 
 
 @dataclass(frozen=True, slots=True)
