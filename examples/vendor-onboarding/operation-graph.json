@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "schema_id": "cmul8.operation-graph.v0",
+    "graph_id": "ogr_vendor_onboarding",
+    "tenant_id": "tenant_reference",
+    "project_id": "project_vendor_onboarding",
+    "name": "Vendor onboarding reference",
+    "version": 0,
+    "description": "Governed vendor intake, document review, risk exceptions, approval, and notification."
+  },
+  "entities": [
+    {
+      "id": "entity_vendor",
+      "name": "Vendor",
+      "fields": [
+        {"name": "name", "type": "string"},
+        {"name": "status", "type": "string"},
+        {"name": "risk_score", "type": "integer"},
+        {"name": "submitted_by", "type": "string"},
+        {"name": "exception_required", "type": "boolean"}
+      ]
+    },
+    {
+      "id": "entity_document",
+      "name": "Vendor document",
+      "fields": [
+        {"name": "vendor_record_id", "type": "string"},
+        {"name": "document_type", "type": "string"},
+        {"name": "status", "type": "string"}
+      ]
+    }
+  ],
+  "views": [
+    {"id": "view_vendor_queue", "name": "Vendor review queue", "entity_id": "entity_vendor"},
+    {"id": "view_document_queue", "name": "Document queue", "entity_id": "entity_document"}
+  ],
+  "workflows": [
+    {
+      "id": "workflow_vendor_onboarding",
+      "name": "Vendor onboarding",
+      "states": ["submitted", "documents_pending", "risk_review", "approval_pending", "approved", "notified"],
+      "initial_state": "submitted",
+      "transitions": {
+        "submitted": ["documents_pending"],
+        "documents_pending": ["risk_review"],
+        "risk_review": ["approval_pending"],
+        "approval_pending": ["approved"],
+        "approved": ["notified"]
+      }
+    }
+  ],
+  "agents": [
+    {
+      "id": "agent_exception",
+      "name": "Risk exception evaluator",
+      "actor_type": "runtime_agent",
+      "capabilities": ["entity.read", "risk.exception.evaluate"],
+      "tools": ["risk.exception.evaluate"]
+    }
+  ],
+  "automations": [
+    {
+      "id": "automation_vendor_review",
+      "name": "Queue vendor review",
+      "workflow_id": "workflow_vendor_onboarding",
+      "trigger": "entity.created"
+    }
+  ],
+  "connectors": [
+    {
+      "id": "connector_notifications",
+      "name": "Notification delivery",
+      "type": "injected_notification",
+      "operations": ["send"],
+      "configuration": {"endpoint_ref": "notification_endpoint_ref"}
+    }
+  ],
+  "permissions": [
+    {
+      "id": "permission_exception_agent",
+      "name": "Exception evaluator data access",
+      "principals": ["agent_exception"],
+      "actions": ["entity.read", "risk.exception.evaluate"],
+      "resources": ["entity_vendor"]
+    }
+  ],
+  "approval_rules": [
+    {
+      "id": "approval_vendor_notification",
+      "name": "Approve vendor onboarding",
+      "required": true,
+      "approvals_required": 1,
+      "allow_self_approval": false,
+      "actions": ["connector_notifications.send"]
+    }
+  ],
+  "schedules": [
+    {
+      "id": "schedule_vendor_review",
+      "name": "Vendor queue sweep",
+      "automation_id": "automation_vendor_review",
+      "cron": "*/15 * * * *",
+      "timezone": "UTC",
+      "enabled": true
+    }
+  ]
+}
