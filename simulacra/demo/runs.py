@@ -494,15 +494,35 @@ def create_project(
 def list_projects(*, tenant_id: str | None = None) -> list[ProjectState]:
 	ensure_runs_dir()
 	out: list[ProjectState] = []
-	for path in sorted(RUNS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-		if path.is_dir() and (path / "state.json").exists():
-			try:
-				state = load_state(path.name)
-			except Exception:  # noqa: BLE001 — one corrupt project must not empty the list
+	try:
+		entries = list(RUNS_DIR.iterdir())
+	except OSError:
+		return out
+
+	def modified_at(path: Path) -> float:
+		try:
+			return path.stat(follow_symlinks=False).st_mtime
+		except OSError:
+			return -1.0
+
+	for path in sorted(entries, key=modified_at, reverse=True):
+		try:
+			# Persistent volumes may contain filesystem-owned metadata such as
+			# ext4's lost+found. It is not application state and is commonly not
+			# traversable by the unprivileged API user.
+			if path.name == "lost+found" or path.name.startswith("."):
 				continue
-			if tenant_id and state.tenant_id != tenant_id:
+			if path.is_symlink() or not path.is_dir():
 				continue
-			out.append(state)
+			candidate = path / "state.json"
+			if candidate.is_symlink() or not candidate.is_file():
+				continue
+			state = load_state(path.name)
+		except Exception:  # noqa: BLE001 — one unsafe/corrupt entry must not empty the list
+			continue
+		if tenant_id and state.tenant_id != tenant_id:
+			continue
+		out.append(state)
 	return out
 
 

@@ -5,10 +5,32 @@ from __future__ import annotations
 import time
 import json
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 from simulacra.demo.design_brief import default_brief, merge_brief, merge_notes_from_message
 from simulacra.demo.jobs import BOUNDS, JobCancelled, JobRecord, check_bounds, _jobs, _lock
+
+
+def test_list_projects_ignores_volume_lost_found(tmp_path, monkeypatch):
+	from simulacra.demo import runs as runs_mod
+
+	monkeypatch.setattr(runs_mod, "RUNS_DIR", tmp_path)
+	project = runs_mod.ProjectState(id="proj_visible", prompt="Visible", tenant_id="tenant_one")
+	runs_mod.save_state(project)
+	blocked = tmp_path / "lost+found"
+	blocked.mkdir()
+	real_exists = Path.exists
+
+	def permission_denied_for_volume_metadata(path):
+		if path == blocked / "state.json":
+			raise PermissionError(13, "Permission denied", str(path))
+		return real_exists(path)
+
+	# This reproduces pathlib's behavior on Railway's unprivileged ext4 mount.
+	# The old scanner called exists() outside its per-project exception guard.
+	monkeypatch.setattr(Path, "exists", permission_denied_for_volume_metadata)
+	assert [item.id for item in runs_mod.list_projects(tenant_id="tenant_one")] == ["proj_visible"]
 
 
 def test_default_brief_has_required_keys():
