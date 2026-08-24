@@ -980,8 +980,8 @@ export function AgentShell({
           <span className="project-name">{project.app_config.title}</span>
         </div>
         <div className="agent-topbar-actions">
-          <button type="button" className="icon-btn" onClick={() => { setRoomOpen(false); setObservabilityOpen(false); setMissionOpen((value) => !value); }} title={missionOpen ? "Return to conversation" : "Open Mission"} aria-pressed={missionOpen}>
-            <Flag size={16} strokeWidth={1.5} />
+          <button type="button" className="icon-btn mission-nav-button" onClick={() => { setRoomOpen(false); setObservabilityOpen(false); setMissionOpen((value) => !value); }} title={missionOpen ? "Return to conversation" : "Open Mission"} aria-pressed={missionOpen}>
+            <Flag size={16} strokeWidth={1.5} /><span>Mission</span>
           </button>
           <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen(false); setRoomOpen((value) => !value); }} title={roomOpen ? "Return to conversation" : "Open Project Room"} aria-pressed={roomOpen}>
             <Users size={16} strokeWidth={1.5} />

@@ -78,6 +78,7 @@ def test_room_task_and_graph_are_durable_not_synthesized(monkeypatch, tmp_path):
 	created = cmul8_routes.create_room("project_api", cmul8_routes.RoomCreateBody(), request, ctx)
 	assert created["room"]["tenant_id"] == "tenant_api"
 	assert created["room"]["members"][0]["actor_id"] == "user_owner"
+	assert created["room"]["members"][0]["display_name"] == "Owner"
 
 	task = cmul8_routes.create_task(
 		"project_api",
@@ -288,6 +289,7 @@ def test_project_bootstrap_creates_an_owner_room_before_initial_plan(monkeypatch
 			initial_state.tenant_id, initial_state.id,
 		)
 		assert [(member.actor_id, member.role) for member in room.members] == [(actor_id, "owner")]
+		assert room.members[0].display_name == "Owner"
 		created.append("plan")
 		return initial_state
 

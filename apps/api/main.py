@@ -109,7 +109,7 @@ def _bootstrap_project_room(state: ProjectState, ctx: AuthContext) -> None:
 	try:
 		service.create_room(
 			tenant_id=state.tenant_id, project_id=state.id,
-			creator_id=ctx.user.id, creator_role="owner",
+			creator_id=ctx.user.id, creator_role="owner", creator_name=ctx.user.name,
 		)
 	except CollaborationError as exc:
 		# Project ids are normally fresh.  If a concurrent bootstrap already

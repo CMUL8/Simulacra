@@ -91,12 +91,13 @@ class CollaborationService:
 		))
 
 	def create_room(
-		self, *, tenant_id: str, project_id: str, creator_id: str, creator_role: str = "owner"
+		self, *, tenant_id: str, project_id: str, creator_id: str, creator_role: str = "owner",
+		creator_name: str = "",
 	) -> ProjectRoom:
 		validate_scope_id(creator_id, "creator_id")
 		room = ProjectRoom(
 			id=new_id("room"), tenant_id=tenant_id, project_id=project_id,
-			members=[Member(actor_id=creator_id, role=creator_role)],
+			members=[Member(actor_id=creator_id, role=creator_role, display_name=creator_name.strip())],
 		)
 		created = self.repository.create_room(room)
 		self._emit(tenant_id=tenant_id, project_id=project_id, actor_id=creator_id,
@@ -105,7 +106,7 @@ class CollaborationService:
 
 	def add_member(
 		self, *, tenant_id: str, project_id: str, actor_id: str, member_id: str,
-		role: str, expected_revision: int
+		role: str, expected_revision: int, member_name: str = "",
 	) -> ProjectRoom:
 		actor = self._room_member(tenant_id, project_id, actor_id)
 		if actor.role not in {"owner", "admin"}:
@@ -114,7 +115,7 @@ class CollaborationService:
 		room = self.repository.get_room(tenant_id, project_id)
 		if any(member.actor_id == member_id for member in room.members):
 			raise ConflictError("member already belongs to project room")
-		updated = replace(room, members=[*room.members, Member(actor_id=member_id, role=role)],
+		updated = replace(room, members=[*room.members, Member(actor_id=member_id, role=role, display_name=member_name.strip())],
 			revision=room.revision + 1, updated_at=iso_now())
 		updated = self.repository.save_room(updated, expected_revision)
 		self._emit(tenant_id=tenant_id, project_id=project_id, actor_id=actor_id,

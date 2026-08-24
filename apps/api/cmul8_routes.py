@@ -18,7 +18,7 @@ from apps.api.security import audit_request, require_project_access
 from simulacra.collaboration import ActivityInbox, CollaborationService, JsonCollaborationRepository, PresenceRegistry
 from simulacra.collaboration.errors import CollaborationError
 from simulacra.collaboration.models import CommentTargetType, ReviewDecision, TaskState
-from simulacra.demo.identity import AuthContext
+from simulacra.demo.identity import AuthContext, get_user
 from simulacra.demo.paths import RUNS_DIR
 from simulacra.demo.runs import load_state, project_dir
 from simulacra.harnesses import HarnessConfig, create_harness
@@ -51,6 +51,22 @@ def _graph_store(project_id: str, tenant_id: str) -> OperationGraphStore:
 
 def _room_role(room: Any, actor_id: str) -> str | None:
 	return next((member.role for member in room.members if member.actor_id == actor_id), None)
+
+
+def _display_name(actor_id: str, stored_name: str = "") -> str:
+	if stored_name.strip():
+		return stored_name.strip()
+	try:
+		return get_user(actor_id).name.strip() or actor_id
+	except KeyError:
+		return actor_id
+
+
+def _room_dict(room: Any) -> dict[str, Any]:
+	payload = room.to_dict()
+	for member in payload.get("members", []):
+		member["display_name"] = _display_name(member["actor_id"], member.get("display_name", ""))
+	return payload
 
 
 def _require_graph_mutator(project_id: str, ctx: AuthContext) -> None:
@@ -186,7 +202,7 @@ def _room_payload(project_id: str, ctx: AuthContext) -> dict[str, Any]:
 		tenant_id=ctx.tenant_id, project_id=project_id, actor_id=ctx.user.id
 	)
 	return {
-		"room": room.to_dict(),
+		"room": _room_dict(room),
 		"project": {"id": project_id, "name": state.app_config.title, "objective": state.goal or state.prompt},
 		"tasks": tasks,
 		"comments": comments,
@@ -227,7 +243,7 @@ def create_room(
 			tenant_id=ctx.tenant_id, project_id=project_id, creator_id=ctx.user.id,
 			# A bootstrapper is the initial room authority.  Seeding an owner avoids
 			# an admin-created room that no member can administrate as its owner.
-			creator_role="owner",
+			creator_role="owner", creator_name=body.display_name or ctx.user.name,
 		)
 	except CollaborationError as exc:
 		if "already exists" not in str(exc):
@@ -257,11 +273,12 @@ def add_room_member(
 		room = service.add_member(
 			tenant_id=ctx.tenant_id, project_id=project_id, actor_id=ctx.user.id,
 			member_id=body.member_id, role=body.role, expected_revision=body.expected_revision,
+			member_name=_display_name(body.member_id),
 		)
 	except CollaborationError as exc:
 		raise _translate(exc) from exc
 	audit_request(request, ctx, "cmul8.room.member_add", project_id=project_id, member_id=body.member_id)
-	return room.to_dict()
+	return _room_dict(room)
 
 
 @router.post("/presence")
