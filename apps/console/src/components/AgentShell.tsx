@@ -17,7 +17,7 @@ import {
   Flag,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
-import { createMissionRun, getMission, type AgentEvent, type ChatMessage, type Checkpoint, type DataRoomFile, type MissionOverview, type Snapshot } from "../api";
+import { createMissionRun, getCmul8Room, getMission, type AgentEvent, type ChatMessage, type Checkpoint, type Cmul8RoomPayload, type DataRoomFile, type MissionOverview, type Snapshot } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
 import { AnswerBlock } from "./agent/AnswerBlock";
 import { ApprovalCard } from "./agent/ApprovalCard";
@@ -904,6 +904,7 @@ export function AgentShell({
   const [missionFocus, setMissionFocus] = useState<"summary" | "crew">("summary");
   const [workspaceTab, setWorkspaceTab] = useState<"chat" | "tasks" | "files">("chat");
   const [missionData, setMissionData] = useState<MissionOverview | null>(null);
+  const [roomData, setRoomData] = useState<Cmul8RoomPayload | null>(null);
   const [assignAsTask, setAssignAsTask] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [assignmentError, setAssignmentError] = useState("");
@@ -933,6 +934,7 @@ export function AgentShell({
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const visibleChat = project.chat.filter((m) => !isOrphanJobStatus(m));
   const missionAgents = missionData?.agents ?? [];
+  const humanMembers = (roomData?.room.members ?? []).filter((member) => member.actor_type === "human" || !member.actor_type);
   const agentHandle = (name: string) => `@${name.trim().replace(/\s+/g, "_")}`;
   const mentionedAgentIds = missionAgents
     .filter((agent) => new RegExp(`(^|\\s)${agentHandle(agent.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$|[.,!?])`, "i").test(input))
@@ -943,15 +945,20 @@ export function AgentShell({
   }, [mentionedAgentIds.join("|")]);
 
   const refreshMission = async () => {
-    try { setMissionData(await getMission(project.id)); setAssignmentError(""); }
+    try {
+      const [mission, room] = await Promise.all([getMission(project.id), getCmul8Room(project.id).catch(() => null)]);
+      setMissionData(mission); setRoomData(room); setAssignmentError("");
+    }
     catch (cause) { setAssignmentError(cause instanceof Error ? cause.message : "Could not load Mission crew"); }
   };
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      try { const next = await getMission(project.id); if (!cancelled) setMissionData(next); }
-      catch { if (!cancelled) setMissionData(null); }
+      try {
+        const [mission, room] = await Promise.all([getMission(project.id), getCmul8Room(project.id).catch(() => null)]);
+        if (!cancelled) { setMissionData(mission); setRoomData(room); }
+      } catch { if (!cancelled) { setMissionData(null); setRoomData(null); } }
     };
     void load();
     const timer = window.setInterval(() => void load(), 8000);
@@ -1072,14 +1079,14 @@ export function AgentShell({
           const queued = missionData?.runs.find((run) => run.status === "queued" && (run.assigned_agent_ids?.includes(agent.id) || !run.assigned_agent_ids?.length));
           return <li key={agent.id}><button type="button" className={mentionedAgentIds.includes(agent.id) ? "selected" : ""} onClick={() => mentionAgent(agent.name)} title={`Assign work to ${agent.name}`}><i>{agent.name.slice(0, 1).toUpperCase()}</i><span><strong>{agent.name}</strong><small>{agent.role}</small></span><em className={active ? "working" : queued ? "queued" : "ready"} /></button>{active || queued ? <small className="agent-work-state">{active ? "Working" : "Queued"}</small> : null}</li>;
         })}</ul> : <button type="button" className="mission-crew-empty" onClick={() => { setMissionFocus("crew"); setMissionOpen(true); }}><Users size={16} /><span>Add your first agent</span></button>}
-        <div className="mission-human-list"><span>HUMANS</span><div><i>Y</i><strong>You</strong><small>Steer · approve · verify</small></div></div>
+        <div className="mission-human-list"><header><span>HUMANS</span><button type="button" onClick={() => setWorkspaceTab("tasks")} title="Invite a human">+</button></header>{humanMembers.length ? humanMembers.map((member) => { const live = roomData?.presence.find((item) => item.actor_id === member.actor_id); return <div key={member.actor_id}><i>{(member.display_name || member.actor_id).slice(0, 1).toUpperCase()}</i><strong>{member.display_name || member.actor_id}</strong><small>{member.role} · {live?.status || member.presence || "offline"}</small></div>; }) : <button type="button" onClick={() => setWorkspaceTab("tasks")}>Invite collaborators</button>}</div>
         <section className="mission-task-queue"><header><span>ACTIVE WORK</span><strong>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).length || 0}</strong></header>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).slice(-4).reverse().map((run) => <button type="button" key={run.id} onClick={() => setWorkspaceTab("tasks")}><span>{run.trigger_snapshot?.note || "Mission run"}</span><small>{run.status.replaceAll("_", " ")}</small></button>)}</section>
       </aside>
       <div className={`agent-center${workspaceTab !== "chat" || observabilityOpen ? " agent-center-surface" : ""}`}>
         {observabilityOpen ? (
           <ObservabilityContainer projectId={project.id} />
         ) : workspaceTab === "tasks" ? (
-          <ProjectRoomContainer projectId={project.id} />
+          <ProjectRoomContainer projectId={project.id} missionAssignments={(missionData?.runs ?? []).map((run) => ({ id: run.id, title: run.trigger_snapshot?.note || "Mission run", status: run.status, ownerNames: run.assigned_agent_ids?.length ? run.assigned_agent_ids.map((id) => missionAgents.find((agent) => agent.id === id)?.name || id) : missionAgents.map((agent) => agent.name), currentOwner: run.current_agent_id ? missionAgents.find((agent) => agent.id === run.current_agent_id)?.name : undefined }))} />
         ) : workspaceTab === "files" ? (
           <MissionFiles files={files} onBack={() => setWorkspaceTab("chat")} />
         ) : (

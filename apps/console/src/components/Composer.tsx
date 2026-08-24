@@ -74,14 +74,14 @@ export function Composer({ messages, input, busy, disabled, onInput, onSend, onC
         {messages.length === 0 && !busy && (
           <div className="thread-empty">
             <Sparkles size={20} className="thread-empty-icon" />
-            <p>Describe changes to your data app. Simulacra updates the preview after each message.</p>
+            <p>Describe the outcome or change. Missions keeps the shared work and preview in sync.</p>
           </div>
         )}
         {messages.map((m, i) => (
           <article key={i} className={`bubble ${m.role}`}>
             <div className="bubble-head">
               <span className="avatar">{m.role === "user" ? <User size={12} /> : <Bot size={12} />}</span>
-              <span className="who">{m.role === "user" ? "You" : "Simulacra"}</span>
+              <span className="who">{m.role === "user" ? "You" : "Missions"}</span>
               <time>{formatTime(m.at)}</time>
             </div>
             <div className="bubble-body">{m.content}</div>
@@ -91,7 +91,7 @@ export function Composer({ messages, input, busy, disabled, onInput, onSend, onC
           <article className="bubble assistant">
             <div className="bubble-head">
               <span className="avatar agent"><Bot size={12} /></span>
-              <span className="who">Simulacra</span>
+              <span className="who">Missions</span>
             </div>
             <BuildSteps active />
           </article>
@@ -131,7 +131,7 @@ export function Composer({ messages, input, busy, disabled, onInput, onSend, onC
           />
           <div className="composer-bar">
             <span className="model-tag">
-              <span className="dot" /> Agent · Simulacra
+              <span className="dot" /> Mission agent
             </span>
             <div className="composer-actions">
               <span className="kbd-hint">⌘↵</span>

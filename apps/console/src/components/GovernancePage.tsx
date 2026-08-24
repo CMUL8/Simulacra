@@ -48,7 +48,7 @@ export function GovernancePage({ onBack, embedded = false }: Props) {
           <strong>{data?.policy.message ?? "Apps never access business systems directly."}</strong>
           <p>
             {data?.policy.description ??
-              "Simulacra enforces authentication, abstracts secrets, and audits every interaction."}
+              "Missions enforces authentication, abstracts secrets, and audits every interaction."}
           </p>
         </div>
       </div>

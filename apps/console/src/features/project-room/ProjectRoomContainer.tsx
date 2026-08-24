@@ -15,7 +15,7 @@ import {
 } from "../../api";
 import type { GraphComment } from "../operation-graph";
 import type { ReviewDecision } from "../shared";
-import type { DurableTaskState, ProjectRoomFeatureAdapter, ProjectRoomPermissions } from "./contracts";
+import type { DurableTaskState, MissionAssignment, ProjectRoomFeatureAdapter, ProjectRoomPermissions } from "./contracts";
 import { mapCmul8RoomPayload } from "./mapper";
 import { ProjectRoom } from "./ProjectRoom";
 
@@ -37,7 +37,7 @@ function mentions(body: string): Array<{ ref_type: string; ref_id: string }> {
   return [...new Set([...body.matchAll(/(?:^|\s)@([A-Za-z0-9][A-Za-z0-9_.-]{0,127})/g)].map((match) => match[1]!))].map((ref_id) => ({ ref_type: "actor", ref_id }));
 }
 
-export function ProjectRoomContainer({ projectId }: { projectId: string }) {
+export function ProjectRoomContainer({ projectId, missionAssignments = [] }: { projectId: string; missionAssignments?: MissionAssignment[] }) {
   const [payload, setPayload] = useState<Cmul8RoomPayload | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error" | "forbidden">("loading");
   const [actionError, setActionError] = useState<string>();
@@ -141,5 +141,5 @@ export function ProjectRoomContainer({ projectId }: { projectId: string }) {
     },
   }), [load, mapped, mutate, projectId]);
 
-  return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} actionError={actionError} onRetryLoad={() => void load("manual")} />;
+  return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} missionAssignments={missionAssignments} actionError={actionError} onRetryLoad={() => void load("manual")} />;
 }

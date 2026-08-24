@@ -542,7 +542,7 @@ export default function App({
     return (
       <div className="landing landing-boot">
         <div className="landing-content">
-          <h1 className="boot-mark">Simulacra</h1>
+          <h1 className="boot-mark">Missions</h1>
           <p className="landing-boot-status">Opening…</p>
         </div>
       </div>

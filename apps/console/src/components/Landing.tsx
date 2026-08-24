@@ -113,7 +113,7 @@ const STOCK_SUBTITLES = new Set([
   "Data Explorer",
   "From your sources",
   "Chat with the agent — Build when ready",
-  "Built with Simulacra",
+  "Built with Missions",
   "Third-party diligence · live risk posture",
   "Monitor vendor findings and risk scores",
 ]);

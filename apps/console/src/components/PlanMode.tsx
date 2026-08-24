@@ -57,7 +57,7 @@ export function PlanMode({
     <div className="plan-shell">
       <header className="plan-header">
         <div className="plan-header-left">
-          <span className="product">Simulacra</span>
+          <span className="product">Missions</span>
           <span className="sep">/</span>
           <span className="plan-badge">Plan mode</span>
           <span className="project-name">{project.app_config.title}</span>
@@ -78,7 +78,7 @@ export function PlanMode({
         <div>
           <strong>Apps never access business systems directly.</strong>
           <p>
-            Simulacra is your integration control layer — data flows through governed APIs with
+            Missions is your governed collaboration layer — data flows through approved scopes with
             authentication, audit logging, and eval gates.
           </p>
         </div>
@@ -98,7 +98,7 @@ export function PlanMode({
               <article key={i} className={`bubble ${m.role}`}>
                 <div className="bubble-head">
                   <span className="avatar">{m.role === "user" ? <User size={12} /> : <Bot size={12} />}</span>
-                  <span className="who">{m.role === "user" ? "You" : "Simulacra"}</span>
+                  <span className="who">{m.role === "user" ? "You" : "Missions"}</span>
                   <time>{formatTime(m.at)}</time>
                 </div>
                 <div className="bubble-body plan-md">{m.content}</div>

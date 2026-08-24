@@ -147,13 +147,13 @@ export function LoginPage({
   );
 
   const title =
-    mode === "forgot" ? "Reset password" : mode === "reset" ? "Choose a new password" : "Simulacra";
+    mode === "forgot" ? "Reset password" : mode === "reset" ? "Choose a new password" : "Missions";
   const sub =
     mode === "forgot"
       ? "We’ll create a one-time link for your account"
       : mode === "reset"
         ? "This link works once and expires in about an hour"
-        : "Governed data apps";
+        : "Human-led agent teams";
 
   const passwordBlock = !clerkEnabled && (
     <div className={embedded ? "login-embed" : "login-card"}>

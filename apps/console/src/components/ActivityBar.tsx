@@ -18,7 +18,7 @@ const items: { id: Panel; label: string; icon: ReactNode }[] = [
 export function ActivityBar({ active, onChange }: Props) {
   return (
     <nav className="activity-bar" aria-label="Primary navigation">
-      <Tooltip label="Simulacra">
+      <Tooltip label="Missions">
         <div className="activity-brand">
           <Sparkles size={16} strokeWidth={2} />
         </div>
