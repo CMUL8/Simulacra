@@ -236,6 +236,9 @@ class MissionRun:
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
     occurrence_key: str | None = None
+    # Empty means the whole Mission crew (the automation/backward-compatible
+    # default). Manual assignments persist the exact ordered agent subset.
+    assigned_agent_ids: list[str] = field(default_factory=list)
     next_agent_position: int = 0
     completed_agent_ids: list[str] = field(default_factory=list)
     current_agent_id: str | None = None
@@ -257,6 +260,10 @@ class MissionRun:
         validate_scope_id(self.id, "run_id")
         if self.status not in RUN_STATUSES:
             raise ValueError("invalid run status")
+        if len(self.assigned_agent_ids) > 32 or len(set(self.assigned_agent_ids)) != len(self.assigned_agent_ids):
+            raise ValueError("invalid assigned Mission agents")
+        for agent_id in self.assigned_agent_ids:
+            validate_scope_id(agent_id, "agent_id")
 
     def to_dict(self):
         return asdict(self)

@@ -60,6 +60,8 @@ def test_mission_routes_owner_member_and_verification_contract(monkeypatch, tmp_
         mission_routes.AgentBody.model_validate({"name": "A", "role": "Engineer", "mandate": "Work", "provider": "x"})
     with pytest.raises(ValidationError):
         mission_routes.MissionPatch.model_validate({"expected_revision": 1, "approved_contract_revision": "spoof"})
+    with pytest.raises(ValidationError):
+        mission_routes.RunBody.model_validate({"trigger_note": "work", "agent_ids": [f"agent_{index}" for index in range(33)]})
     for budget in ({"max_steps": True}, {"max_steps": 101}, {"wall_timeout_seconds": "30"}, {"unknown": 1}):
         with pytest.raises(ValidationError):
             mission_routes.AgentBody.model_validate({"name": "A", "role": "Engineer", "mandate": "Work", "budget": budget})

@@ -251,6 +251,7 @@ class AgentBody(PublicBody):
 
 class RunBody(PublicBody):
     trigger_note: str = ""
+    agent_ids: list[str] = Field(default_factory=list, max_length=32)
 
 
 class TriggerBody(PublicBody):
@@ -401,11 +402,13 @@ def create_run(
             project_id,
             {"type": "manual", "actor_id": ctx.user.id, "note": body.trigger_note},
             verified_contract_revision=revision,
+            assigned_agent_ids=body.agent_ids,
         )
     except Exception as exc:
         raise _err(exc)
     audit_request(
-        request, ctx, "mission.run.manual", project_id=project_id, run_id=result.id
+        request, ctx, "mission.run.manual", project_id=project_id, run_id=result.id,
+        agent_ids=result.assigned_agent_ids,
     )
     return result.to_dict()
 

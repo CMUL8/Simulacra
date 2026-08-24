@@ -143,6 +143,25 @@ class MissionService:
     def agents(self, tenant_id: str, project_id: str) -> list[AgentDefinition]:
         return sorted(self._records(tenant_id, project_id, "agents", AgentDefinition), key=lambda agent: (agent.created_at, agent.id))
 
+    @staticmethod
+    def _run_agents(records: dict[str, Any], run: MissionRun) -> list[dict[str, Any]]:
+        all_agents = [row for _, row in sorted(records["agents"].items(), key=lambda item: (item[1].get("created_at", ""), item[0]))]
+        if not run.assigned_agent_ids:
+            return all_agents
+        by_id = {str(row.get("id")): row for row in all_agents}
+        if any(agent_id not in by_id for agent_id in run.assigned_agent_ids):
+            raise MissionConflictError("assigned Mission agent is no longer available")
+        return [by_id[agent_id] for agent_id in run.assigned_agent_ids]
+
+    def run_agents(self, tenant_id: str, project_id: str, run: MissionRun) -> list[AgentDefinition]:
+        agents = self.agents(tenant_id, project_id)
+        if not run.assigned_agent_ids:
+            return agents
+        by_id = {agent.id: agent for agent in agents}
+        if any(agent_id not in by_id for agent_id in run.assigned_agent_ids):
+            raise MissionConflictError("assigned Mission agent is no longer available")
+        return [by_id[agent_id] for agent_id in run.assigned_agent_ids]
+
     def add_agent(self, tenant_id: str, project_id: str, data: Mapping[str, Any]) -> AgentDefinition:
         clean_public_mapping(data)
         tools = list(data.get("tools") or [])
@@ -216,7 +235,7 @@ class MissionService:
     def finalize_recovered_run(self, tenant_id: str, project_id: str, run_id: str, worker_id: str) -> MissionRun:
         def mutate(records: dict[str, Any]) -> MissionRun:
             run = MissionRun.from_dict(records["runs"][run_id])
-            agents = [row for _, row in sorted(records["agents"].items(), key=lambda item: (item[1].get("created_at", ""), item[0]))]
+            agents = self._run_agents(records, run)
             if run.status != "running" or run.lease_owner != worker_id or run.next_agent_position != len(agents) or len(run.completed_agent_ids) != len(agents):
                 raise MissionConflictError("run is not safely finalizable")
             run.status = "succeeded"; run.completed_at = now(); run.result = {"status": "succeeded"}; run.current_agent_id = None; run.invocation_id = run.invocation_started_at = None; run.lease_owner = run.lease_until = None
@@ -342,6 +361,7 @@ class MissionService:
                 "tools": list(agent.get("tools") or []),
                 "autonomy": agent.get("autonomy"),
                 "execution_profile": run.execution_profile,
+                "assigned_agent_ids": list(run.assigned_agent_ids),
                 "effective_budget": effective_budget(self._mission(records).budget, agent.get("budget")),
             }
             supplied = dict(binding or {})
@@ -432,7 +452,7 @@ class MissionService:
             run.next_agent_position += 1; run.current_agent_id = None; run.invocation_started_at = None; run.invocation_id = None; run.execution_binding = None
             run.lease_owner = run.lease_until = None
             persist_artifacts(failed_run=False)
-            agents = [row for _, row in sorted(records["agents"].items(), key=lambda item: (item[1].get("created_at", ""), item[0]))]
+            agents = self._run_agents(records, run)
             if run.next_agent_position >= len(agents):
                 run.status = "succeeded"; run.completed_at = now(); run.result = {"status": "succeeded"}
             else: run.status = "queued"
@@ -482,12 +502,21 @@ class MissionService:
             records["runs"][run.id] = run.to_dict(); return run
         return self.repository.mutate(tenant_id, project_id, mutate)
 
-    def _create_run_locked(self, records: dict[str, Any], tenant_id: str, project_id: str, trigger: Mapping[str, Any], profile: str, occurrence_key: str | None, verified_contract_revision: str | None = None) -> MissionRun:
+    def _create_run_locked(self, records: dict[str, Any], tenant_id: str, project_id: str, trigger: Mapping[str, Any], profile: str, occurrence_key: str | None, verified_contract_revision: str | None = None, assigned_agent_ids: list[str] | None = None) -> MissionRun:
         if occurrence_key:
             existing = next((MissionRun.from_dict(row) for row in records["runs"].values() if row.get("occurrence_key") == occurrence_key), None)
             if existing:
                 return existing
         mission = self._mission(records)
+        assigned = list(assigned_agent_ids or [])
+        if len(assigned) > 32 or len(set(assigned)) != len(assigned):
+            raise ValueError("invalid assigned Mission agents")
+        available = {
+            str(row.get("id")) for row in records["agents"].values()
+            if row.get("mission_id") == mission.id
+        }
+        if any(not isinstance(agent_id, str) or agent_id not in available for agent_id in assigned):
+            raise MissionConflictError("assigned Mission agent does not belong to this Mission")
         if mission.approved_contract_revision != verified_contract_revision:
             mission.approved_contract_revision = verified_contract_revision
             mission.revision += 1
@@ -497,18 +526,19 @@ class MissionService:
             id=new_id("run"), tenant_id=tenant_id, project_id=project_id, mission_id=mission.id,
             trigger_snapshot=dict(trigger), contract_revision=mission.approved_contract_revision,
             execution_profile=self._profile(profile), occurrence_key=occurrence_key,
+            assigned_agent_ids=assigned,
         )
         records["runs"][run.id] = run.to_dict()
         return run
 
-    def create_run(self, tenant_id: str, project_id: str, trigger: Mapping[str, Any], profile: str = "balanced", occurrence_key: str | None = None, verified_contract_revision: str | None = None) -> MissionRun:
+    def create_run(self, tenant_id: str, project_id: str, trigger: Mapping[str, Any], profile: str = "balanced", occurrence_key: str | None = None, verified_contract_revision: str | None = None, assigned_agent_ids: list[str] | None = None) -> MissionRun:
         clean_public_mapping(trigger)
         safe_trigger = _safe_value(trigger)
         if not isinstance(safe_trigger, Mapping):
             raise ValueError("trigger must be a safe mapping")
         return self.repository.mutate(
             tenant_id, project_id,
-            lambda records: self._create_run_locked(records, tenant_id, project_id, safe_trigger, profile, occurrence_key, verified_contract_revision),
+            lambda records: self._create_run_locked(records, tenant_id, project_id, safe_trigger, profile, occurrence_key, verified_contract_revision, assigned_agent_ids),
         )
 
     def triggers(self, tenant_id: str, project_id: str) -> list[AutomationTrigger]:

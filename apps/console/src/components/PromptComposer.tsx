@@ -14,6 +14,10 @@ type Props = {
   files?: DataRoomFile[];
   submitLabel?: string;
   modeTag?: string;
+  mentions?: Array<{ id: string; name: string; detail: string; kind: "agent" | "source" }>;
+  onMentionSelect?: (id: string, kind: "agent" | "source") => void;
+  asTask?: boolean;
+  onAsTaskChange?: (value: boolean) => void;
 };
 
 export function PromptComposer({
@@ -27,6 +31,10 @@ export function PromptComposer({
   files = [],
   submitLabel = "Send",
   modeTag = "Plan",
+  mentions = [],
+  onMentionSelect,
+  asTask = false,
+  onAsTaskChange,
 }: Props) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -40,21 +48,27 @@ export function PromptComposer({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [value]);
 
-  const filtered = userFacingFiles(files).filter((f) =>
-    f.name.toLowerCase().includes(mentionFilter.toLowerCase()),
+  const mentionItems = [
+    ...mentions,
+    ...userFacingFiles(files).map((file) => ({ id: file.name, name: file.name, detail: file.type, kind: "source" as const })),
+  ];
+  const filtered = mentionItems.filter((item) =>
+    item.name.toLowerCase().includes(mentionFilter.toLowerCase()),
   );
 
-  function insertMention(name: string) {
+  function insertMention(item: (typeof mentionItems)[number]) {
     const el = areaRef.current;
     if (!el) return;
     const pos = el.selectionStart;
     const before = value.slice(0, pos);
     const atPos = before.lastIndexOf("@");
-    const tag = `@${name} `;
+    const handle = item.kind === "agent" ? item.name.trim().replace(/\s+/g, "_") : item.name;
+    const tag = `@${handle} `;
     const next = before.slice(0, atPos) + tag + value.slice(pos);
     onChange(next);
     setMentionOpen(false);
     setMentionFilter("");
+    onMentionSelect?.(item.id, item.kind);
     requestAnimationFrame(() => {
       el.focus();
       el.selectionStart = el.selectionEnd = atPos + tag.length;
@@ -79,7 +93,7 @@ export function PromptComposer({
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        insertMention(filtered[mentionIndex].name);
+        insertMention(filtered[mentionIndex]);
         return;
       }
       if (e.key === "Escape") {
@@ -120,18 +134,18 @@ export function PromptComposer({
       {mentionOpen && filtered.length > 0 && (
         <ul className="mention-menu" role="listbox">
           {filtered.map((f, i) => (
-            <li key={f.name}>
+            <li key={`${f.kind}:${f.id}`}>
               <button
                 type="button"
                 className={i === mentionIndex ? "active" : ""}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  insertMention(f.name);
+                  insertMention(f);
                 }}
               >
                 <span className="mention-tag">@</span>
                 {f.name}
-                <span className="mention-type">{f.type}</span>
+                <span className="mention-type">{f.detail}</span>
               </button>
             </li>
           ))}
@@ -142,8 +156,8 @@ export function PromptComposer({
         <button
           type="button"
           className="composer-attach"
-          disabled={disabled || busy || files.length === 0}
-          title={files.length ? "Insert @source" : "No sources"}
+          disabled={disabled || busy || mentionItems.length === 0}
+          title={mentionItems.length ? "Mention an agent or source" : "No agents or sources"}
           onClick={() => {
             onChange(value + (value && !value.endsWith(" ") ? " @" : "@"));
             areaRef.current?.focus();
@@ -191,6 +205,10 @@ export function PromptComposer({
           )}
         </div>
       </div>
+      {onAsTaskChange ? <label className="composer-task-toggle">
+        <input type="checkbox" checked={asTask} onChange={(event) => onAsTaskChange(event.target.checked)} />
+        <span>Assign as task</span>
+      </label> : null}
     </form>
   );
 }

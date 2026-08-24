@@ -22,6 +22,7 @@ from simulacra.operation_graph import OperationGraphStore
 
 from .artifacts import artifact_evidence
 from .models import AgentDefinition, MissionRun, effective_budget
+from .repository import MissionConflictError
 from .service import MissionService
 
 _TOOLS = frozenset({"document.read", "code.read", "artifact.write", "code.write"})
@@ -337,7 +338,10 @@ class MissionWorker:
         admitted, code, graph = self._admitted(run)
         if not admitted:
             return self.service.gate(tenant_id, project_id, run.id, code, "An exact approved Operation Graph is required before Codex can run.", lease_owner=self.worker_id)
-        agents = self.service.agents(tenant_id, project_id)
+        try:
+            agents = self.service.run_agents(tenant_id, project_id, run)
+        except MissionConflictError:
+            return self.service.gate(tenant_id, project_id, run.id, "crew_changed", "An assigned Mission agent is no longer available.", lease_owner=self.worker_id)
         if not agents:
             return self.service.gate(tenant_id, project_id, run.id, "crew_required", "Add a Mission agent before execution.", lease_owner=self.worker_id)
         if run.next_agent_position >= len(agents):
@@ -377,6 +381,7 @@ class MissionWorker:
                 "role": f"mission:{run.mission_id}:agent:{agent.id}",
                 "tools": list(agent.tools), "autonomy": agent.autonomy,
                 "execution_profile": run.execution_profile,
+                "assigned_agent_ids": list(run.assigned_agent_ids),
                 "effective_budget": budget,
             }
             started = self.service.mark_agent_started(tenant_id, project_id, run.id, agent.id, self.worker_id, prompt, binding)

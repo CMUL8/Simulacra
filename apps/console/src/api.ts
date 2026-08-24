@@ -376,10 +376,17 @@ export async function listProjects(): Promise<Project[]> {
   return data.projects;
 }
 
+export type MissionAgent = Record<string, unknown> & {
+  id: string; name: string; role: string; mandate: string; autonomy: string;
+};
+export type MissionRunSummary = Record<string, unknown> & {
+  id: string; status: string; assigned_agent_ids?: string[]; current_agent_id?: string | null;
+  trigger_snapshot?: { note?: string; [key: string]: unknown };
+};
 export type MissionOverview = {
   mission: Record<string, unknown> | null;
-  agents: Record<string, unknown>[];
-  runs: Record<string, unknown>[];
+  agents: MissionAgent[];
+  runs: MissionRunSummary[];
   triggers: Record<string, unknown>[];
   deliverables: Record<string, unknown>[];
   events: Record<string, unknown>[];
@@ -423,8 +430,8 @@ export async function verifyMissionDeliverable(projectId: string, deliverableId:
   return json<MissionDeliverable>(`/projects/${projectId}/mission/deliverables/${deliverableId}/verify`, { method: "POST", body: JSON.stringify({ content_hash: contentHash, expected_revision: expectedRevision }) });
 }
 
-export async function createMissionRun(projectId: string, triggerNote = "") {
-  return json<Record<string, unknown>>(`/projects/${projectId}/mission/runs`, { method: "POST", body: JSON.stringify({ trigger_note: triggerNote }) });
+export async function createMissionRun(projectId: string, triggerNote = "", agentIds: string[] = []) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission/runs`, { method: "POST", body: JSON.stringify({ trigger_note: triggerNote, agent_ids: agentIds }) });
 }
 export async function retryMissionRun(projectId: string, runId: string, expectedRevision: number) {
   return json<Record<string, unknown>>(`/projects/${projectId}/mission/runs/${encodeURIComponent(runId)}/retry`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) });

@@ -150,6 +150,38 @@ def test_worker_advances_agents_and_screens_response(tmp_path: Path):
     assert service.runs("tenant_1", "project_1")[0].id == run.id
 
 
+def test_manual_assignment_runs_only_the_tagged_agents_in_exact_order(tmp_path: Path):
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    first = service.add_agent("tenant_1", "project_1", {"name": "Researcher", "role": "research", "mandate": "find"})
+    skipped = service.add_agent("tenant_1", "project_1", {"name": "Designer", "role": "design", "mandate": "draw"})
+    last = service.add_agent("tenant_1", "project_1", {"name": "Reviewer", "role": "review", "mandate": "check"})
+    run = service.create_run(
+        "tenant_1", "project_1", {"type": "manual", "note": "@Reviewer then @Researcher"},
+        verified_contract_revision=revision, assigned_agent_ids=[last.id, first.id],
+    )
+    assert run.assigned_agent_ids == [last.id, first.id]
+    seen: list[str] = []
+    worker = MissionWorker(service, tmp_path, "worker", lambda _config, **_kw: _Harness(seen))
+    assert worker.run_once("tenant_1", "project_1").status == "queued"
+    completed = worker.run_once("tenant_1", "project_1")
+    assert completed.status == "succeeded"
+    assert completed.completed_agent_ids == [last.id, first.id]
+    assert skipped.id not in completed.completed_agent_ids
+    assert completed.progress == {"completed": 2, "total": 2}
+
+
+def test_manual_assignment_rejects_foreign_duplicate_or_missing_agent(tmp_path: Path):
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    agent = service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    with pytest.raises(ValueError, match="invalid assigned"):
+        service.create_run("tenant_1", "project_1", {"type": "manual"}, assigned_agent_ids=[agent.id, agent.id])
+    with pytest.raises(MissionConflictError, match="does not belong"):
+        service.create_run("tenant_1", "project_1", {"type": "manual"}, assigned_agent_ids=["agent_missing"])
+
+
 def test_relative_artifact_is_evidenced_and_versioned(tmp_path: Path):
     revision = _approved_workspace(tmp_path); service = MissionService(JsonMissionRepository(tmp_path / "control"))
     service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})

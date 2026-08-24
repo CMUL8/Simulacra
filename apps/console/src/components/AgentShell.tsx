@@ -17,7 +17,7 @@ import {
   Flag,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
-import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
+import { createMissionRun, getMission, type AgentEvent, type ChatMessage, type Checkpoint, type DataRoomFile, type MissionOverview, type Snapshot } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
 import { AnswerBlock } from "./agent/AnswerBlock";
 import { ApprovalCard } from "./agent/ApprovalCard";
@@ -903,6 +903,10 @@ export function AgentShell({
   const [missionOpen, setMissionOpen] = useState(false);
   const [missionFocus, setMissionFocus] = useState<"summary" | "crew">("summary");
   const [workspaceTab, setWorkspaceTab] = useState<"chat" | "tasks" | "files">("chat");
+  const [missionData, setMissionData] = useState<MissionOverview | null>(null);
+  const [assignAsTask, setAssignAsTask] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [assignmentError, setAssignmentError] = useState("");
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
@@ -928,6 +932,55 @@ export function AgentShell({
     (isPlan && Boolean(lastAssistant?.content && asksToBuild(lastAssistant.content)));
   const hasPlanTurn = project.chat.some((m) => turnKind(m) === "plan");
   const visibleChat = project.chat.filter((m) => !isOrphanJobStatus(m));
+  const missionAgents = missionData?.agents ?? [];
+  const agentHandle = (name: string) => `@${name.trim().replace(/\s+/g, "_")}`;
+  const mentionedAgentIds = missionAgents
+    .filter((agent) => new RegExp(`(^|\\s)${agentHandle(agent.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$|[.,!?])`, "i").test(input))
+    .map((agent) => agent.id);
+
+  useEffect(() => {
+    if (mentionedAgentIds.length) setAssignAsTask(true);
+  }, [mentionedAgentIds.join("|")]);
+
+  const refreshMission = async () => {
+    try { setMissionData(await getMission(project.id)); setAssignmentError(""); }
+    catch (cause) { setAssignmentError(cause instanceof Error ? cause.message : "Could not load Mission crew"); }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try { const next = await getMission(project.id); if (!cancelled) setMissionData(next); }
+      catch { if (!cancelled) setMissionData(null); }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 8000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [project.id]);
+
+  const assignTask = async () => {
+    if (!input.trim() || assigning) return;
+    if (!missionData?.mission || !missionAgents.length) {
+      setAssignmentError("Create the Mission and add an agent before assigning work.");
+      setMissionFocus("crew"); setMissionOpen(true);
+      return;
+    }
+    setAssigning(true); setAssignmentError("");
+    try {
+      await createMissionRun(project.id, input.trim(), mentionedAgentIds);
+      onInput(""); setAssignAsTask(false);
+      await refreshMission();
+    } catch (cause) {
+      setAssignmentError(cause instanceof Error ? cause.message : "Could not assign the task");
+    } finally { setAssigning(false); }
+  };
+
+  const mentionAgent = (name: string) => {
+    const handle = agentHandle(name);
+    const separator = input && !input.endsWith(" ") ? " " : "";
+    onInput(`${input}${separator}${handle} `);
+    setAssignAsTask(true);
+  };
   const showStandalonePlan =
     isPlan && !busy && !hasPlanTurn && Boolean(project.plan_preview?.row_count || project.row_count || hasPreview);
   const lastAssistantIdx = (() => {
@@ -1011,6 +1064,17 @@ export function AgentShell({
         </div>
       )}
 
+      <div className="mission-collab-body">
+      <aside className="mission-crew-rail" aria-label="Mission crew">
+        <header><span>CREW</span><button type="button" onClick={() => { setMissionFocus("crew"); setMissionOpen(true); }} title="Add or manage agents">+</button></header>
+        {missionAgents.length ? <ul>{missionAgents.map((agent) => {
+          const active = missionData?.runs.find((run) => run.current_agent_id === agent.id && run.status === "running");
+          const queued = missionData?.runs.find((run) => run.status === "queued" && (run.assigned_agent_ids?.includes(agent.id) || !run.assigned_agent_ids?.length));
+          return <li key={agent.id}><button type="button" className={mentionedAgentIds.includes(agent.id) ? "selected" : ""} onClick={() => mentionAgent(agent.name)} title={`Assign work to ${agent.name}`}><i>{agent.name.slice(0, 1).toUpperCase()}</i><span><strong>{agent.name}</strong><small>{agent.role}</small></span><em className={active ? "working" : queued ? "queued" : "ready"} /></button>{active || queued ? <small className="agent-work-state">{active ? "Working" : "Queued"}</small> : null}</li>;
+        })}</ul> : <button type="button" className="mission-crew-empty" onClick={() => { setMissionFocus("crew"); setMissionOpen(true); }}><Users size={16} /><span>Add your first agent</span></button>}
+        <div className="mission-human-list"><span>HUMANS</span><div><i>Y</i><strong>You</strong><small>Steer · approve · verify</small></div></div>
+        <section className="mission-task-queue"><header><span>ACTIVE WORK</span><strong>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).length || 0}</strong></header>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).slice(-4).reverse().map((run) => <button type="button" key={run.id} onClick={() => setWorkspaceTab("tasks")}><span>{run.trigger_snapshot?.note || "Mission run"}</span><small>{run.status.replaceAll("_", " ")}</small></button>)}</section>
+      </aside>
       <div className={`agent-center${workspaceTab !== "chat" || observabilityOpen ? " agent-center-surface" : ""}`}>
         {observabilityOpen ? (
           <ObservabilityContainer projectId={project.id} />
@@ -1192,23 +1256,29 @@ export function AgentShell({
               />
             </div>
           </div>
+          {assignmentError ? <div className="assignment-error" role="alert">{assignmentError}</div> : null}
           <PromptComposer
             value={input}
             onChange={onInput}
-            onSubmit={onSend}
+            onSubmit={assignAsTask ? assignTask : onSend}
             onCancel={onCancel}
             disabled={project.status === "failed"}
-            busy={busy}
+            busy={busy || assigning}
             files={files}
-            placeholder="Message the agent…"
-            submitLabel="Send"
-            modeTag="Agent"
+            placeholder="Message the crew — use @ to assign an agent…"
+            submitLabel={assignAsTask ? "Assign task" : "Send"}
+            modeTag={mentionedAgentIds.length ? `${mentionedAgentIds.length} agent${mentionedAgentIds.length === 1 ? "" : "s"}` : "Crew"}
+            mentions={missionAgents.map((agent) => ({ id: agent.id, name: agent.name, detail: agent.role, kind: "agent" as const }))}
+            onMentionSelect={(_id, kind) => { if (kind === "agent") setAssignAsTask(true); }}
+            asTask={assignAsTask}
+            onAsTaskChange={setAssignAsTask}
           />
         </div>
           </>
         )}
       </div>
-      {missionOpen ? <MissionPod projectId={project.id} projectTitle={project.app_config.title} projectPrompt={project.prompt} artifactKind={project.artifact_kind} focus={missionFocus} onClose={() => setMissionOpen(false)} onOpenTasks={() => { setMissionOpen(false); setWorkspaceTab("tasks"); }} onOpenFiles={() => { setMissionOpen(false); setWorkspaceTab("files"); }} /> : null}
+      </div>
+      {missionOpen ? <MissionPod projectId={project.id} projectTitle={project.app_config.title} projectPrompt={project.prompt} artifactKind={project.artifact_kind} focus={missionFocus} onClose={() => { setMissionOpen(false); void refreshMission(); }} onOpenTasks={() => { setMissionOpen(false); setWorkspaceTab("tasks"); }} onOpenFiles={() => { setMissionOpen(false); setWorkspaceTab("files"); }} /> : null}
     </div>
   );
 }
