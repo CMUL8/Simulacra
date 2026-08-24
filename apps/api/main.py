@@ -793,7 +793,11 @@ def post_project(
 	except HTTPException:
 		raise
 	except PermissionError as exc:
-		raise HTTPException(403, str(exc)) from exc
+		log.exception("project_storage_unavailable tenant=%s user=%s", ctx.tenant_id, ctx.user.id)
+		raise HTTPException(
+			503,
+			"Project storage is temporarily unavailable. Please try again.",
+		) from exc
 	except KeyError as exc:
 		raise HTTPException(404, str(exc)) from exc
 	except Exception as exc:

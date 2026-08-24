@@ -1,5 +1,24 @@
 #!/bin/sh
 set -eu
+
+# Railway mounts persistent volumes as root. When RAILWAY_RUN_UID=0 starts this
+# entrypoint as root, initialise only CMUL8's fixed data roots and immediately
+# drop back to the image's unprivileged runtime user. Keep ext filesystem
+# metadata such as lost+found owned by root and out of application discovery.
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p /app/runs /app/data/codex /app/data/mission-runtime
+  chown 65532:65532 /app/runs /app/data /app/data/codex /app/data/mission-runtime
+  ownership_marker=/app/runs/.cmul8-volume-owned-v1
+  if [ ! -f "$ownership_marker" ]; then
+    find /app/runs -mindepth 1 -maxdepth 1 \
+      ! -name lost+found ! -name .cmul8-volume-owned-v1 \
+      -exec chown -hR 65532:65532 {} +
+    : > "$ownership_marker"
+    chown 65532:65532 "$ownership_marker"
+  fi
+  exec gosu 65532:65532 "$0" "$@"
+fi
+
 program="${0##*/}"
 if [ "$program" = "cmul8-entrypoint" ]; then
   [ "$#" -ge 1 ] || { echo "CMUL8 process argument required" >&2; exit 64; }

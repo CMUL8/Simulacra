@@ -303,6 +303,25 @@ def test_project_bootstrap_creates_an_owner_room_before_initial_plan(monkeypatch
 	assert created == ["project", "plan"]
 
 
+def test_project_bootstrap_hides_storage_paths(monkeypatch, tmp_path):
+	_prepare(monkeypatch, tmp_path)
+	request = SimpleNamespace(url=SimpleNamespace(path="/projects"))
+	secret_path = "/app/runs/proj_secret"
+	monkeypatch.setattr(
+		api_main,
+		"create_project",
+		lambda *_args, **_kwargs: (_ for _ in ()).throw(
+			PermissionError(13, "Permission denied", secret_path),
+		),
+	)
+	body = api_main.CreateProjectBody(prompt="Create a project")
+	with pytest.raises(HTTPException) as unavailable:
+		api_main.post_project(body, request, _context())
+	assert unavailable.value.status_code == 503
+	assert unavailable.value.detail == "Project storage is temporarily unavailable. Please try again."
+	assert secret_path not in unavailable.value.detail
+
+
 def test_main_mutation_endpoints_carry_room_authority_and_preserve_read_only_chat(monkeypatch, tmp_path):
 	_prepare(monkeypatch, tmp_path)
 	owner, request = _context(), SimpleNamespace(url=SimpleNamespace(path="/test"))

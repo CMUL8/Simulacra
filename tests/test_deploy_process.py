@@ -196,11 +196,16 @@ def test_real_worker_serves_live_ready_and_a_second_probe(monkeypatch, tmp_path)
 
 
 def test_image_defines_the_process_entrypoint():
-	dockerfile = (deploy_process.Path(__file__).parents[1] / "Dockerfile").read_text()
+	repository = deploy_process.Path(__file__).parents[1]
+	dockerfile = (repository / "Dockerfile").read_text()
+	entrypoint = (repository / "deploy/bin/cmul8-entrypoint").read_text()
 	assert 'ENTRYPOINT ["/opt/cmul8/bin/cmul8-entrypoint"]' in dockerfile
 	assert 'CMD ["api"]' in dockerfile
 	assert "worker-health" in dockerfile
 	assert "@openai/codex@0.148.0" in dockerfile
+	assert "gosu" in dockerfile
+	assert "lost+found" in entrypoint
+	assert 'exec gosu 65532:65532 "$0" "$@"' in entrypoint
 
 
 def test_railway_uses_the_public_web_process_port():
