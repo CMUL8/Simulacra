@@ -787,7 +787,7 @@ body {
 }
 .landing-sub {
   margin: 0 auto 34px;
-  max-width: 590px;
+  max-width: 610px;
   color: rgba(244, 240, 232, 0.58);
   font-family: var(--font-ui);
   font-style: normal;
@@ -796,6 +796,19 @@ body {
   font-weight: 400;
   letter-spacing: -0.012em;
   text-shadow: none;
+}
+.landing-sub strong,
+.landing-sub span {
+  display: block;
+}
+.landing-sub strong {
+  margin-bottom: 7px;
+  color: rgba(244, 240, 232, 0.86);
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.7vw, 25px);
+  font-weight: 400;
+  line-height: 1.22;
+  letter-spacing: -0.025em;
 }
 .landing-error {
   display: flex;

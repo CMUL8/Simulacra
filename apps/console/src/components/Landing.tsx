@@ -263,11 +263,12 @@ export function Landing({
 
       <div className="landing-content" id="start">
         <div className="landing-product-lockup">
-          <span className="landing-product-eyebrow">A HUMAN + AGENT OPERATING SYSTEM</span>
+          <span className="landing-product-eyebrow">OUTCOMES, IN MOTION</span>
           <h1 className="brand-mark">Missions</h1>
         </div>
         <p className="landing-sub">
-          Turn an outcome into a governed, long-running collaboration between people and Codex agents—grounded in your data, shaped by your judgment, and verified before it ships.
+          <strong>Where people and AI agents carry work forward together.</strong>
+          <span>Set the outcome. Missions coordinate context, permissions, handoffs, and proof—until the work is verified and done.</span>
         </p>
 
         {error && (
