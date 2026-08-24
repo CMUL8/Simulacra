@@ -4,17 +4,58 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
-from typing import Any, Mapping
+import re
+import hashlib
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable, Mapping
 
 from .models import (
     PROFILES, AgentDefinition, AutomationTrigger, Deliverable, Mission,
-    MissionRun, clean_public_mapping, condition_matches, hash_artifact,
+    MissionRun, clean_public_mapping, condition_matches, effective_budget, hash_artifact, normalize_budget,
     new_id, next_cron_due, now,
 )
 from .repository import JsonMissionRepository, MissionConflictError, MissionNotFoundError
 
 ACTIVE_RUN_STATUSES = {"queued", "preparing", "running", "awaiting_approval", "verifying"}
+# This deliberately mirrors models._SECRET_VALUE, which rejects public Mission
+# inputs. Provider output is untrusted too: redact it before events, results, or
+# trajectory exports can persist it. Query-key variants are common in URLs and
+# must include both underscore and hyphen spellings.
+_SECRET_VALUE = re.compile(
+    r"(?:-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z]+)? PRIVATE KEY-----|"
+    r"(?:sk(?:-|_live_|_test_)|ghp_|github_pat_|xox[abp]-|npm_)[A-Za-z0-9_-]{8,}|"
+    r"(?:AKIA|ASIA)[A-Z0-9]{16}|Bearer\s+[A-Za-z0-9._~-]{8,}|"
+    r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|"
+    r"https?://[^\s/@]+:[^\s/@]+@|"
+    r"[?&](?:access[_-]?token|api[_-]?key|token|key|secret|password|authorization|credential)=[^&\s]+|"
+    r"(?:api[_-]?key|access[_-]?token|token|secret|password|authorization)\s*[:=]\s*[^\s,;)}\]]+)",
+    re.I,
+)
+_SECRET_KEY = re.compile(
+    r"(?:api[_-]?key|access[_-]?token|token|key|secret|password|authorization|credential)",
+    re.I,
+)
+_MISSION_TOOLS = frozenset({"document.read", "code.read", "artifact.write", "code.write"})
+EVENT_RETENTION = 2000
+APPROVAL_RETENTION = 500
+OVERVIEW_RETENTION = 100
+
+
+def _safe_value(value: Any, depth: int = 0) -> Any:
+    """Bounded durable telemetry; credential-looking content is never retained."""
+    if depth > 6:
+        return "[truncated]"
+    if isinstance(value, str):
+        return _SECRET_VALUE.sub("[redacted]", value)[:8000]
+    if isinstance(value, Mapping):
+        return {str(key)[:128]: _safe_value(item, depth + 1) for key, item in list(value.items())[:80]
+                if not _SECRET_KEY.search(str(key))}
+    if isinstance(value, (list, tuple)):
+        return [_safe_value(item, depth + 1) for item in list(value)[:80]]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:512]
 
 
 class MissionService:
@@ -32,6 +73,7 @@ class MissionService:
                 f"CMUL8_MISSION_{profile.upper()}_REASONING",
                 os.getenv("CMUL8_MODEL_REASONING_EFFORT", ""),
             ) or None,
+            "codex_profile": os.getenv("CMUL8_CODEX_PROFILE") or None,
         }
 
     @staticmethod
@@ -55,7 +97,7 @@ class MissionService:
                 verifier_ids=list(data.get("verifier_ids") or [owner_id]),
                 priority=str(data.get("priority") or "normal"),
                 risk_level=str(data.get("risk_level") or "medium"),
-                deadline=data.get("deadline"), budget=dict(data.get("budget") or {}),
+                deadline=data.get("deadline"), budget=normalize_budget(data.get("budget")),
             )
             records["mission"] = mission.to_dict()
             return mission
@@ -77,7 +119,7 @@ class MissionService:
                 "priority", "risk_level", "deadline", "budget",
             ):
                 if key in patch:
-                    setattr(mission, key, patch[key])
+                    setattr(mission, key, normalize_budget(patch[key]) if key == "budget" else patch[key])
             mission.revision += 1
             mission.updated_at = now()
             mission.__post_init__()
@@ -90,19 +132,28 @@ class MissionService:
         return [cls.from_dict(value) for _, value in sorted(self.repository.list_collection(tenant_id, project_id, name).items())]
 
     def agents(self, tenant_id: str, project_id: str) -> list[AgentDefinition]:
-        return self._records(tenant_id, project_id, "agents", AgentDefinition)
+        return sorted(self._records(tenant_id, project_id, "agents", AgentDefinition), key=lambda agent: (agent.created_at, agent.id))
 
     def add_agent(self, tenant_id: str, project_id: str, data: Mapping[str, Any]) -> AgentDefinition:
         clean_public_mapping(data)
+        tools = list(data.get("tools") or [])
+        scopes = list(data.get("data_scope") or [])
+        if any(not isinstance(item, str) or item not in _MISSION_TOOLS for item in tools):
+            raise ValueError("Mission agent tools must be from the approved allowlist")
+        if any(not isinstance(item, str) or not item or item.startswith("/") or "\\" in item or (len(item) > 1 and item[1] == ":") or any(
+            part in {"", ".", "..", ".codex", ".cmul8", ".mission-control", "audit", "control"} or any(ord(char) < 32 for char in part)
+            for part in item.split("/")
+        ) for item in scopes):
+            raise ValueError("Mission data scope must be a safe relative path")
 
         def mutate(records: dict[str, Any]) -> AgentDefinition:
             mission = self._mission(records)
             agent = AgentDefinition(
                 id=new_id("agent"), tenant_id=tenant_id, project_id=project_id, mission_id=mission.id,
                 name=str(data["name"]), role=str(data["role"]), mandate=str(data["mandate"]),
-                responsibilities=list(data.get("responsibilities") or []), data_scope=list(data.get("data_scope") or []),
-                tools=list(data.get("tools") or []), autonomy=str(data.get("autonomy") or "assist"),
-                escalation_actor_id=data.get("escalation_actor_id"), budget=dict(data.get("budget") or {}),
+                responsibilities=list(data.get("responsibilities") or []), data_scope=scopes,
+                tools=tools, autonomy=str(data.get("autonomy") or "assist"),
+                escalation_actor_id=data.get("escalation_actor_id"), budget=normalize_budget(data.get("budget")),
             )
             records["agents"][agent.id] = agent.to_dict()
             return agent
@@ -110,7 +161,317 @@ class MissionService:
         return self.repository.mutate(tenant_id, project_id, mutate)
 
     def runs(self, tenant_id: str, project_id: str) -> list[MissionRun]:
-        return self._records(tenant_id, project_id, "runs", MissionRun)
+        return sorted(self._records(tenant_id, project_id, "runs", MissionRun), key=lambda run: (run.created_at, run.id))
+
+    def events(self, tenant_id: str, project_id: str, limit: int | None = None) -> list[dict[str, Any]]:
+        values = sorted((dict(value) for value in self.repository.list_collection(tenant_id, project_id, "events").values()), key=lambda value: (str(value.get("timestamp", "")), str(value.get("id", ""))))
+        return values[-limit:] if limit else values
+
+    def approvals(self, tenant_id: str, project_id: str) -> list[dict[str, Any]]:
+        """Return an overview where actionable approvals are never hidden.
+
+        Storage itself is capped at ``APPROVAL_RETENTION``. Within that bound,
+        retain every pending/approved item (even if it is old), then use any
+        remaining response capacity for the newest closed history.
+        """
+        values = [dict(value) for value in self.repository.list_collection(tenant_id, project_id, "approvals").values()]
+        sort_key = lambda value: (str(value.get("updated_at") or value.get("created_at") or ""), str(value.get("id") or ""))
+        active = [value for value in values if value.get("status") in {"pending", "approved"}]
+        closed = [value for value in values if value.get("status") not in {"pending", "approved"}]
+        capacity = max(0, APPROVAL_RETENTION - len(active))
+        return sorted([*active, *sorted(closed, key=sort_key)[-capacity:]], key=sort_key)
+
+    def approval(self, tenant_id: str, project_id: str, approval_id: str) -> dict[str, Any] | None:
+        """Read exactly one durable approval for execution gating, never an overview."""
+        return self.repository.get_collection_item(tenant_id, project_id, "approvals", approval_id)
+
+    def trajectory_page(self, tenant_id: str, project_id: str, cursor: str | None, limit: int) -> dict[str, Any]:
+        values = self.events(tenant_id, project_id); start = 0
+        if cursor:
+            matching = next((index for index, event in enumerate(values) if event.get("id") == cursor), None)
+            if matching is None: raise ValueError("invalid or expired trajectory cursor")
+            start = matching + 1
+        page = values[start:start + max(1, min(limit, 500))]
+        next_cursor = str(page[-1]["id"]) if start + len(page) < len(values) and page else None
+        dropped = int(self.repository.retention(tenant_id, project_id).get("dropped_events", 0))
+        return {"events": page, "next_cursor": next_cursor, "retention": {"events": EVENT_RETENTION, "retained": len(values), "dropped_events": dropped, "truncated": dropped > 0}}
+
+    def trajectory_export(self, tenant_id: str, project_id: str, *, include_events: bool = True) -> dict[str, Any]:
+        export = {"schema_version": 1, "mission": self.mission(tenant_id, project_id).to_dict(),
+            "agents": [item.to_dict() for item in self.agents(tenant_id, project_id)],
+            "runs": [item.to_dict() for item in self.runs(tenant_id, project_id)], "approvals": self.approvals(tenant_id, project_id),
+            "deliverables": [item.to_dict() for item in self.deliverables(tenant_id, project_id)]}
+        if include_events: export["events"] = self.events(tenant_id, project_id)
+        return _safe_value(export)
+
+    def finalize_recovered_run(self, tenant_id: str, project_id: str, run_id: str, worker_id: str) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            run = MissionRun.from_dict(records["runs"][run_id])
+            agents = [row for _, row in sorted(records["agents"].items(), key=lambda item: (item[1].get("created_at", ""), item[0]))]
+            if run.status != "running" or run.lease_owner != worker_id or run.next_agent_position != len(agents) or len(run.completed_agent_ids) != len(agents):
+                raise MissionConflictError("run is not safely finalizable")
+            run.status = "succeeded"; run.completed_at = now(); run.result = {"status": "succeeded"}; run.current_agent_id = None; run.invocation_id = run.invocation_started_at = None; run.lease_owner = run.lease_until = None
+            self._touch(run); self._event(records, run, "run_finalized", {}); records["runs"][run.id] = run.to_dict(); return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    @staticmethod
+    def _touch(run: MissionRun) -> None:
+        run.revision += 1; run.updated_at = now()
+
+    @staticmethod
+    def _close_pending(records: dict[str, Any], run: MissionRun, reason: str) -> None:
+        for approval in records["approvals"].values():
+            if approval.get("run_id") == run.id and approval.get("status") in {"pending", "approved"}:
+                approval["status"] = "superseded"; approval["superseded_reason"] = reason
+                approval["revision"] = int(approval.get("revision", 0)) + 1; approval["updated_at"] = now()
+        run.active_approval_id = None
+
+    @staticmethod
+    def _cap_approvals(records: dict[str, Any]) -> None:
+        """Never evict an actionable approval merely to satisfy retention."""
+        approvals = records["approvals"]
+        stale = sorted((item for item in approvals.items() if item[1].get("status") not in {"pending", "approved"}), key=lambda item: (str(item[1].get("updated_at", "")), item[0]))
+        for approval_id, _ in stale:
+            if len(approvals) <= APPROVAL_RETENTION:
+                break
+            approvals.pop(approval_id, None)
+        if len(approvals) > APPROVAL_RETENTION:
+            raise MissionConflictError("approval retention quota reached")
+
+    @staticmethod
+    def _event(records: dict[str, Any], run: MissionRun, kind: str, payload: Mapping[str, Any] | None = None) -> None:
+        event_id = new_id("trajectory")
+        records["events"][event_id] = {"id": event_id, "run_id": run.id, "mission_id": run.mission_id,
+            "type": kind, "timestamp": now(), "correlation_id": run.invocation_id or run.id,
+            "payload": _safe_value(payload or {})}
+        stale = sorted(records["events"].items(), key=lambda item: (str(item[1].get("timestamp", "")), item[0]))[:-EVENT_RETENTION]
+        for old, _ in stale: records["events"].pop(old, None)
+        if stale: records.setdefault("retention", {}).update({"dropped_events": int(records.setdefault("retention", {}).get("dropped_events", 0)) + len(stale)})
+
+    def claim_next(self, tenant_id: str, project_id: str, worker_id: str, lease_seconds: int = 900) -> MissionRun | None:
+        """Atomically claim one safe queued run. Expired started work is uncertain."""
+        def mutate(records: dict[str, Any]) -> MissionRun | None:
+            self._mission(records); point = datetime.now(UTC)
+            for raw in records["runs"].values():
+                run = MissionRun.from_dict(raw)
+                if run.status == "running" and run.lease_until and datetime.fromisoformat(run.lease_until) <= point:
+                    if run.invocation_started_at:
+                        run.status = "awaiting_approval"; run.lease_owner = run.lease_until = None
+                        run.error = {"code": "recovery_retry", "message": "A previous Codex turn may have started; human retry required."}
+                        if not run.active_approval_id:
+                            approval_id = new_id("approval")
+                            records["approvals"][approval_id] = {"id": approval_id, "run_id": run.id, "agent_id": run.current_agent_id,
+                                "code": "recovery_retry", "message": run.error["message"], "status": "pending", "revision": 1, "created_at": now(), "updated_at": now()}
+                            run.active_approval_id = approval_id
+                            self._cap_approvals(records)
+                        self._touch(run); self._event(records, run, "recovery_required", run.error); records["runs"][run.id] = run.to_dict()
+                    else:
+                        run.status = "queued"; run.lease_owner = run.lease_until = None; self._touch(run); records["runs"][run.id] = run.to_dict()
+            # Repository mutation is the cross-worker coordination boundary.
+            # Do not let another replica claim a second run while this Mission
+            # has any live worker-owned execution; process-local locks cannot
+            # enforce this with multiple worker pods. Expired executions were
+            # reconciled above before this fail-closed check.
+            mission_id = self._mission(records).id
+            if any(
+                run.mission_id == mission_id and run.status == "running"
+                for run in (MissionRun.from_dict(raw) for raw in records["runs"].values())
+            ):
+                return None
+            for raw in records["runs"].values():
+                run = MissionRun.from_dict(raw)
+                if run.status != "queued": continue
+                run.status = "running"; run.started_at = run.started_at or now(); run.lease_owner = worker_id
+                run.lease_until = (point + timedelta(seconds=max(30, lease_seconds))).isoformat(); run.error = None
+                self._touch(run); self._event(records, run, "run_claimed", {"worker": worker_id})
+                records["runs"][run.id] = run.to_dict(); return run
+            return None
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    def gate(self, tenant_id: str, project_id: str, run_id: str, code: str, message: str, *, lease_owner: str | None = None, agent_id: str | None = None) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            run = MissionRun.from_dict(records["runs"][run_id])
+            if lease_owner and run.lease_owner != lease_owner: raise MissionConflictError("lease is no longer owned")
+            actionable = code in {"checkpoint_required", "recovery_retry"}
+            approval_id = new_id("approval") if actionable else None
+            if actionable:
+                self._close_pending(records, run, "replaced")
+                records["approvals"][approval_id] = {"id": approval_id, "run_id": run.id, "agent_id": agent_id,
+                    "code": code, "message": message[:500], "status": "pending", "revision": 1, "created_at": now(), "updated_at": now()}
+                self._cap_approvals(records)
+            run.status = "awaiting_approval"; run.lease_owner = run.lease_until = None
+            run.active_approval_id = approval_id
+            run.error = {"code": code, "message": message[:500]}; self._touch(run); self._event(records, run, "gate", run.error)
+            records["runs"][run.id] = run.to_dict(); return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    @staticmethod
+    def _binding_digest(value: Mapping[str, Any]) -> str:
+        return hashlib.sha256(json.dumps(dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+    def mark_agent_started(self, tenant_id: str, project_id: str, run_id: str, agent_id: str, worker_id: str,
+                           prompt: str = "", binding: Mapping[str, Any] | None = None) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            run = MissionRun.from_dict(records["runs"][run_id])
+            if run.status != "running" or run.lease_owner != worker_id: raise MissionConflictError("lease is no longer owned")
+            if run.active_approval_id:
+                approval = records["approvals"].get(run.active_approval_id)
+                if not approval or approval.get("status") != "approved" or approval.get("agent_id") != agent_id:
+                    raise MissionConflictError("active checkpoint approval is required")
+                approval["status"] = "consumed"; approval["revision"] += 1; approval["updated_at"] = now(); run.active_approval_id = None
+            agent = records["agents"].get(agent_id)
+            if not isinstance(agent, Mapping) or agent.get("mission_id") != run.mission_id:
+                raise MissionConflictError("Mission agent is no longer valid")
+            # The worker supplies the immutable admission snapshot.  Rebuild the
+            # values that are owned by Mission state rather than trusting caller
+            # input, then reject a mismatched/tampered snapshot before an
+            # invocation marker is persisted.
+            expected = {
+                "operation_graph_hash": run.contract_revision,
+                "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                "role": f"mission:{run.mission_id}:agent:{agent_id}",
+                "tools": list(agent.get("tools") or []),
+                "autonomy": agent.get("autonomy"),
+                "execution_profile": run.execution_profile,
+                "effective_budget": effective_budget(self._mission(records).budget, agent.get("budget")),
+            }
+            supplied = dict(binding or {})
+            if binding is not None:
+                required = {"operation_graph_revision", *expected}
+                if set(supplied) != required or not isinstance(supplied.get("operation_graph_revision"), int) or supplied["operation_graph_revision"] <= 0:
+                    raise MissionConflictError("invalid Mission execution binding")
+                if any(supplied[key] != value for key, value in expected.items()):
+                    raise MissionConflictError("Mission execution binding changed")
+            else:
+                # Compatibility for historical/direct callers; production worker
+                # always sends the complete graph-revision binding above.
+                supplied = {"operation_graph_revision": 0, **expected}
+            run.current_agent_id = agent_id; run.invocation_id = new_id("invocation"); run.invocation_started_at = now()
+            supplied["invocation_id"] = run.invocation_id
+            run.execution_binding = supplied
+            run.progress = {"current_agent_id": agent_id, "completed": len(run.completed_agent_ids)}
+            self._touch(run); self._event(records, run, "agent_started", {
+                "agent_id": agent_id, "prompt": prompt,
+                "effective_budget": supplied["effective_budget"],
+                "binding_sha256": self._binding_digest(supplied),
+            })
+            records["runs"][run.id] = run.to_dict(); return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    def record_result(self, tenant_id: str, project_id: str, run_id: str, worker_id: str, agent_id: str,
+                      result: Mapping[str, Any], artifacts: list[Mapping[str, Any]]) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            run = MissionRun.from_dict(records["runs"][run_id])
+            if run.status != "running" or run.lease_owner != worker_id or run.current_agent_id != agent_id:
+                raise MissionConflictError("lease is no longer owned")
+            status = str(result.get("status", "failed"))
+            session_id = result.get("session_id")
+            if isinstance(session_id, str): run.session_ids[agent_id] = session_id
+
+            def persist_artifacts(*, failed_run: bool) -> None:
+                """Keep observed files immutable and explicitly unverified.
+
+                The worker supplies descriptor-read evidence only after
+                confining each changed path to the agent's write roots. This
+                service still rejects malformed references so a direct caller
+                cannot turn a failed provider response into arbitrary durable
+                deliverable metadata.
+                """
+                for artifact in artifacts:
+                    evidence = _safe_value(artifact)
+                    if not isinstance(evidence, Mapping):
+                        raise MissionConflictError("invalid Mission artifact evidence")
+                    artifact_ref = evidence.get("artifact_ref")
+                    digest = evidence.get("sha256")
+                    reference = Path(artifact_ref) if isinstance(artifact_ref, str) else None
+                    if (
+                        reference is None or reference.is_absolute() or not reference.parts
+                        or "\\" in artifact_ref
+                        or any(part in {"", ".", ".."} or any(ord(char) < 32 for char in part) for part in reference.parts)
+                        or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    ):
+                        raise MissionConflictError("invalid Mission artifact evidence")
+                    captured = dict(evidence)
+                    if failed_run:
+                        # A candidate from an interrupted/failed turn is never
+                        # indistinguishable from a successful delivery.
+                        captured.update({"run_id": run.id, "run_status": "failed"})
+                    name = reference.name[:200]
+                    older = sorted(
+                        (Deliverable.from_dict(row) for row in records["deliverables"].values() if row.get("name") == name),
+                        key=lambda item: item.version,
+                    )
+                    suffix = reference.suffix.lower()
+                    kind = "report" if suffix in {".md", ".txt", ".pdf"} else "dataset" if suffix in {".csv", ".json", ".parquet"} else "visualization" if suffix in {".svg", ".png", ".jpg"} else "application" if suffix in {".html"} else "code"
+                    item = Deliverable(
+                        id=new_id("deliverable"), tenant_id=tenant_id, project_id=project_id,
+                        mission_id=run.mission_id, type=kind, name=name, producer_id=agent_id,
+                        version=max((old.version for old in older), default=0) + 1,
+                        content_hash=digest,
+                        source_ref=(f"mission/run/{run.id}/failed-agent/{agent_id}" if failed_run else "mission/agent"),
+                        artifact_ref=artifact_ref, validation_evidence=[captured],
+                        state="awaiting_verification", supersedes_id=older[-1].id if older else None,
+                    )
+                    records["deliverables"][item.id] = item.to_dict()
+
+            if status != "succeeded":
+                persist_artifacts(failed_run=True)
+                run.status = "failed"; run.completed_at = now(); run.error = {"code": "provider_failed", "message": "Codex execution failed."}
+                run.lease_owner = run.lease_until = None; self._touch(run); self._event(records, run, "agent_failed", {**run.error, "artifact_candidates": len(artifacts)})
+                records["runs"][run.id] = run.to_dict(); return run
+            run.usage = _safe_value(result.get("usage", {})); run.completed_agent_ids.append(agent_id)
+            run.next_agent_position += 1; run.current_agent_id = None; run.invocation_started_at = None; run.invocation_id = None; run.execution_binding = None
+            run.lease_owner = run.lease_until = None
+            persist_artifacts(failed_run=False)
+            agents = [row for _, row in sorted(records["agents"].items(), key=lambda item: (item[1].get("created_at", ""), item[0]))]
+            if run.next_agent_position >= len(agents):
+                run.status = "succeeded"; run.completed_at = now(); run.result = {"status": "succeeded"}
+            else: run.status = "queued"
+            run.progress = {"completed": len(run.completed_agent_ids), "total": len(agents)}
+            self._touch(run); self._event(records, run, "agent_completed", {
+                "agent_id": agent_id, "response": result.get("response"),
+                "structured_output": result.get("structured_output", {}), "events": result.get("events", []),
+                "usage": result.get("usage", {}), "session_id": result.get("session_id"),
+                "model_id": result.get("model_id"), "artifacts": artifacts,
+            })
+            records["runs"][run.id] = run.to_dict(); return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    def checkpoint_decision(self, tenant_id: str, project_id: str, approval_id: str, actor_id: str, decision: str, expected_revision: int, expected_run_revision: int) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            approval = records["approvals"].get(approval_id)
+            if not approval: raise MissionNotFoundError("approval not found")
+            run = MissionRun.from_dict(records["runs"][approval["run_id"]])
+            if run.status != "awaiting_approval" or run.active_approval_id != approval_id or approval["status"] != "pending" or approval["revision"] != expected_revision or run.revision != expected_run_revision: raise MissionConflictError("stale approval or run")
+            if actor_id == approval.get("agent_id"): raise PermissionError("producing Mission agent cannot approve its checkpoint")
+            approval["status"] = "approved" if decision == "approve" else "rejected"; approval["actor_id"] = actor_id; approval["revision"] += 1; approval["updated_at"] = now()
+            if decision == "approve": run.status = "queued"; run.error = None
+            else:
+                run.status = "cancelled"; run.completed_at = now(); run.error = {"code": "checkpoint_rejected", "message": "Checkpoint was rejected."}; run.active_approval_id = None
+            self._touch(run); self._event(records, run, "checkpoint_" + approval["status"], {"approval_id": approval_id})
+            records["runs"][run.id] = run.to_dict(); return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    def retry_run(self, tenant_id: str, project_id: str, run_id: str, expected_revision: int, verified_contract_revision: str) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            run = MissionRun.from_dict(records["runs"][run_id]); mission = self._mission(records)
+            if run.revision != expected_revision or run.status not in {"failed", "awaiting_approval"}: raise MissionConflictError("run cannot be retried")
+            if not verified_contract_revision: raise MissionConflictError("approved operation graph required")
+            self._close_pending(records, run, "retry")
+            mission.approved_contract_revision = verified_contract_revision; mission.revision += 1; mission.updated_at = now(); records["mission"] = mission.to_dict()
+            run.contract_revision = verified_contract_revision; run.status = "queued"; run.error = None; run.lease_owner = run.lease_until = None; self._touch(run); self._event(records, run, "retry_queued", {})
+            records["runs"][run.id] = run.to_dict(); return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    def cancel_run(self, tenant_id: str, project_id: str, run_id: str, expected_revision: int) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            run = MissionRun.from_dict(records["runs"][run_id])
+            if run.revision != expected_revision or run.status not in {"queued", "awaiting_approval"} or run.lease_owner:
+                raise MissionConflictError("active provider turns cannot be cancelled")
+            self._close_pending(records, run, "cancelled")
+            run.status = "cancelled"; run.completed_at = now(); self._touch(run); self._event(records, run, "cancelled", {})
+            records["runs"][run.id] = run.to_dict(); return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
 
     def _create_run_locked(self, records: dict[str, Any], tenant_id: str, project_id: str, trigger: Mapping[str, Any], profile: str, occurrence_key: str | None, verified_contract_revision: str | None = None) -> MissionRun:
         if occurrence_key:
@@ -133,9 +494,12 @@ class MissionService:
 
     def create_run(self, tenant_id: str, project_id: str, trigger: Mapping[str, Any], profile: str = "balanced", occurrence_key: str | None = None, verified_contract_revision: str | None = None) -> MissionRun:
         clean_public_mapping(trigger)
+        safe_trigger = _safe_value(trigger)
+        if not isinstance(safe_trigger, Mapping):
+            raise ValueError("trigger must be a safe mapping")
         return self.repository.mutate(
             tenant_id, project_id,
-            lambda records: self._create_run_locked(records, tenant_id, project_id, trigger, profile, occurrence_key, verified_contract_revision),
+            lambda records: self._create_run_locked(records, tenant_id, project_id, safe_trigger, profile, occurrence_key, verified_contract_revision),
         )
 
     def triggers(self, tenant_id: str, project_id: str) -> list[AutomationTrigger]:
@@ -205,6 +569,7 @@ class MissionService:
                     continue
                 active = [MissionRun.from_dict(row) for row in records["runs"].values() if row["status"] in ACTIVE_RUN_STATUSES]
                 owned = [run for run in active if run.mission_id == trigger.mission_id]
+                live = [run for run in owned if run.status == "running" or run.lease_owner or run.invocation_started_at]
                 if trigger.concurrency_policy == "skip" and owned:
                     trigger.handled_occurrences[key] = {"outcome": "skipped"}
                     if trigger.type == "cron":
@@ -214,16 +579,26 @@ class MissionService:
                         records["triggers"][trigger.id] = trigger.to_dict()
                     continue
                 if trigger.concurrency_policy == "replace":
-                    for run in owned:
-                        run.status = "cancelled"
-                        run.completed_at = now()
-                        run.revision += 1
-                        run.updated_at = now()
-                        records["runs"][run.id] = run.to_dict()
-                    replacement_outcome = "replaced"
+                    if live:
+                        # A launched provider may still write.  State-cancelling
+                        # it would create two overlapping side-effecting turns.
+                        # Preserve this occurrence as one queued successor so
+                        # its facts are not silently discarded; claim_next
+                        # enforces that it cannot begin until the live run
+                        # releases its lease.
+                        replacement_outcome = "queued_after_live"
+                    else:
+                        for run in owned:
+                            self._close_pending(records, run, "replaced")
+                            run.status = "cancelled"
+                            run.completed_at = now()
+                            run.revision += 1
+                            run.updated_at = now()
+                            records["runs"][run.id] = run.to_dict()
+                        replacement_outcome = "replaced"
                 else:
                     replacement_outcome = "created"
-                if trigger.concurrency_policy == "merge" and owned:
+                if trigger.concurrency_policy == "merge" and owned and not live:
                     run = owned[0]
                     occurrences = run.trigger_snapshot.setdefault("merged_occurrences", [])
                     if key not in occurrences:
@@ -236,7 +611,7 @@ class MissionService:
                 else:
                     created = self._create_run_locked(records, tenant_id, project_id, {"type": trigger.type, "trigger_id": trigger.id, "facts": facts}, "balanced", key, verified_contract_revision)
                     outcome.append(created)
-                    trigger.handled_occurrences[key] = {"outcome": replacement_outcome, "run_id": created.id}
+                    trigger.handled_occurrences[key] = {"outcome": "deferred_live_run" if trigger.concurrency_policy == "merge" and live else replacement_outcome, "run_id": created.id}
                 if trigger.type == "cron":
                     trigger.next_due_at = next_cron_due(trigger.cron or "", trigger.timezone, due_at).isoformat()
                     trigger.revision += 1
@@ -286,7 +661,8 @@ class MissionService:
 
         return self.repository.mutate(tenant_id, project_id, mutate)
 
-    def verify_deliverable(self, tenant_id: str, project_id: str, deliverable_id: str, actor_id: str, content_hash: str, expected_revision: int) -> Deliverable:
+    def verify_deliverable(self, tenant_id: str, project_id: str, deliverable_id: str, actor_id: str, content_hash: str, expected_revision: int,
+                           promote: Callable[[Deliverable], None] | None = None) -> Deliverable:
         def mutate(records: dict[str, Any]) -> Deliverable:
             mission = self._mission(records)
             if deliverable_id not in records["deliverables"]:
@@ -298,6 +674,8 @@ class MissionService:
                 raise PermissionError("designated verifier required")
             if item.revision != expected_revision or item.content_hash != content_hash:
                 raise MissionConflictError("stale deliverable revision or hash")
+            if promote is not None:
+                promote(item)
             item.state = "verified"
             item.verified_by = actor_id
             item.verified_hash = content_hash

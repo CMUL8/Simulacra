@@ -13,6 +13,8 @@ from apps.api import mission_routes
 from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
 from simulacra.demo.identity import AuthContext, User
 from simulacra.operation_graph import OperationGraphStore, load_operation_graph
+from simulacra.harnesses import AgentRunResult, TerminalStatus
+from simulacra.missions import MissionWorker
 
 
 def _context(user_id: str, role: str) -> AuthContext:
@@ -51,6 +53,9 @@ def test_mission_routes_owner_member_and_verification_contract(monkeypatch, tmp_
         mission_routes.AgentBody.model_validate({"name": "A", "role": "Engineer", "mandate": "Work", "provider": "x"})
     with pytest.raises(ValidationError):
         mission_routes.MissionPatch.model_validate({"expected_revision": 1, "approved_contract_revision": "spoof"})
+    for budget in ({"max_steps": True}, {"max_steps": 101}, {"wall_timeout_seconds": "30"}, {"unknown": 1}):
+        with pytest.raises(ValidationError):
+            mission_routes.AgentBody.model_validate({"name": "A", "role": "Engineer", "mandate": "Work", "budget": budget})
     for state in ("verified", "published"):
         with pytest.raises(ValidationError):
             mission_routes.DeliverableBody.model_validate({"type": "report", "name": "R", "source_ref": "x", "artifact_ref": "release.md", "state": state})
@@ -80,6 +85,58 @@ def test_mission_routes_owner_member_and_verification_contract(monkeypatch, tmp_
     assert traversal.value.status_code == 400
 
 
+def test_code_agent_stages_until_exact_verifier_promotes(monkeypatch, tmp_path: Path):
+    """Unverified code never reaches the canonical app/preview tree."""
+    monkeypatch.setattr(mission_routes, "_root", tmp_path / "missions")
+    monkeypatch.setattr(mission_routes, "_rooms", tmp_path / "rooms")
+    monkeypatch.setattr(mission_routes, "audit_request", lambda *args, **kwargs: None)
+    workspace = tmp_path / "project"; (workspace / "app").mkdir(parents=True); (workspace / "source").mkdir()
+    (workspace / "app" / "index.html").write_text("verified old app", encoding="utf-8")
+    (workspace / "source" / "secret.txt").write_text("source-secret", encoding="utf-8")
+    monkeypatch.setattr(mission_routes, "project_dir", lambda _project_id: workspace)
+    owner, reviewer = _context("owner", "owner"), _context("reviewer", "member")
+    room_service = CollaborationService(JsonCollaborationRepository(mission_routes._rooms))
+    room = room_service.create_room(tenant_id="tenant_api", project_id="project_api", creator_id="owner")
+    room_service.add_member(tenant_id="tenant_api", project_id="project_api", actor_id="owner", member_id="reviewer", role="reviewer", expected_revision=room.revision)
+    request = SimpleNamespace(url=SimpleNamespace(path="/test"))
+    mission_routes.bootstrap("project_api", mission_routes.BootstrapBody(title="Launch", verifier_ids=["reviewer"]), request, owner)
+    graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+    graph["metadata"]["tenant_id"] = "tenant_api"; graph["metadata"]["project_id"] = "project_api"
+    store = OperationGraphStore(workspace, tenant_id="tenant_api", project_id="project_api")
+    revision = store.create_revision(graph, expected_revision_hash=None); store.approve_revision(revision.revision_hash, actor_id="owner")
+    service = mission_routes._service()
+    service.add_agent("tenant_api", "project_api", {
+        "name": "Code", "role": "Engineer", "mandate": "Produce candidate code", "autonomy": "execute_safely",
+        "tools": ["code.write"], "data_scope": ["source"],
+    })
+    service.create_run("tenant_api", "project_api", {"type": "manual"}, verified_contract_revision=revision.revision_hash)
+    class Writer:
+        async def run(self, run_request):
+            assert all(path != workspace / "app" for path in run_request.write_paths)
+            staged = run_request.write_paths[0] / "index.html"
+            staged.write_text("unverified source-secret", encoding="utf-8")
+            return AgentRunResult("codex", "openai", "model", "session", TerminalStatus.SUCCEEDED, "ok", {}, (staged.relative_to(workspace),), (), 0, {})
+    completed = MissionWorker(service, workspace, "worker", lambda _config, **_kw: Writer()).run_once("tenant_api", "project_api")
+    assert completed is not None and completed.status == "succeeded"
+    item = service.deliverables("tenant_api", "project_api")[0]
+    assert item.state == "awaiting_verification" and "code-staging" in str(item.artifact_ref)
+    assert item.validation_evidence[0]["intended_target"] == "app/index.html"
+    assert (workspace / "app" / "index.html").read_text() == "verified old app"
+    assert "source-secret" not in (workspace / "app" / "index.html").read_text()
+
+    with pytest.raises(HTTPException) as wrong_hash:
+        mission_routes.verify_deliverable("project_api", item.id, mission_routes.VerifyBody(content_hash="0" * 64, expected_revision=item.revision), request, reviewer)
+    assert wrong_hash.value.status_code == 409 and (workspace / "app" / "index.html").read_text() == "verified old app"
+    staged_path = workspace / str(item.artifact_ref); original = staged_path.read_text()
+    staged_path.write_text("tampered", encoding="utf-8")
+    with pytest.raises(HTTPException) as tampered:
+        mission_routes.verify_deliverable("project_api", item.id, mission_routes.VerifyBody(content_hash=item.content_hash, expected_revision=item.revision), request, reviewer)
+    assert tampered.value.status_code == 409 and (workspace / "app" / "index.html").read_text() == "verified old app"
+    staged_path.write_text(original, encoding="utf-8")
+    verified = mission_routes.verify_deliverable("project_api", item.id, mission_routes.VerifyBody(content_hash=item.content_hash, expected_revision=item.revision), request, reviewer)
+    assert verified["state"] == "verified" and (workspace / "app" / "index.html").read_text() == original
+
+
 def test_platform_admin_without_room_membership_is_denied(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(mission_routes, "_root", tmp_path / "missions")
     monkeypatch.setattr(mission_routes, "_rooms", tmp_path / "rooms")
@@ -99,6 +156,28 @@ def test_platform_admin_without_room_membership_is_denied(monkeypatch, tmp_path:
             request, admin,
         )
     assert verification_denied.value.status_code == 403
+
+
+def test_mission_api_trajectory_paginates_and_overview_is_bounded(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(mission_routes, "_root", tmp_path / "missions")
+    monkeypatch.setattr(mission_routes, "_rooms", tmp_path / "rooms")
+    monkeypatch.setattr(mission_routes, "audit_request", lambda *args, **kwargs: None)
+    workspace = tmp_path / "project"; workspace.mkdir(); monkeypatch.setattr(mission_routes, "project_dir", lambda _id: workspace)
+    owner = _context("owner", "owner"); request = SimpleNamespace(url=SimpleNamespace(path="/test"))
+    CollaborationService(JsonCollaborationRepository(mission_routes._rooms)).create_room(tenant_id="tenant_api", project_id="project_api", creator_id="owner")
+    mission_routes.bootstrap("project_api", mission_routes.BootstrapBody(title="x"), request, owner)
+    service = mission_routes._service(); run = service.create_run("tenant_api", "project_api", {"type": "manual"})
+    service.repository.mutate("tenant_api", "project_api", lambda records: [service._event(records, run, "event", {"n": n}) for n in range(2001)])
+    first = mission_routes.trajectory("project_api", owner, None, 50)
+    second = mission_routes.trajectory("project_api", owner, first["next_cursor"], 50)
+    assert len(first["events"]) == len(second["events"]) == 50 and first["next_cursor"]
+    assert not {item["id"] for item in first["events"]} & {item["id"] for item in second["events"]}
+    assert first["retention"]["dropped_events"] == 1 and first["retention"]["truncated"] and first["retention"]["retained"] == 2000
+    with pytest.raises(HTTPException) as invalid: mission_routes.trajectory("project_api", owner, "expired", 50)
+    assert invalid.value.status_code == 400
+    overview = mission_routes.overview("project_api", owner)
+    assert len(overview["events"]) == 100 and overview["events"] == service.events("tenant_api", "project_api", 100)
+    assert set(first).isdisjoint({"all_events", "unpaged_events"})
 
 
 def test_actual_approved_graph_revisions_bind_manual_and_due_runs(monkeypatch, tmp_path: Path):

@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""TCB launcher for one exact, network-denied Mission Codex invocation.
+
+argv: MANIFEST MANIFEST_SHA256 CODEX <pinned Mission app-server arguments>
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+from simulacra.missions.landlock import apply
+
+
+_MAX_MANIFEST_BYTES = 64 * 1024
+_RUNTIME_ROOT = Path("/opt/codex")
+_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_ENV_ALLOWLIST = frozenset({
+    "OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID",
+    "LANG", "LC_ALL",
+})
+
+
+def _codex_args(workspace: Path) -> tuple[str, ...]:
+    rendered = str(workspace)
+    if any(ord(character) < 32 for character in rendered):
+        die("unsafe workspace")
+    project_override = f"projects={{{json.dumps(rendered)}={{trust_level=\"untrusted\"}}}}"
+    return (
+    "--strict-config", "-c", 'shell_environment_policy.inherit="none"',
+    "-c", "shell_environment_policy.ignore_default_excludes=false", "-c", "mcp_servers={}",
+    "-c", project_override, "-c", 'model_provider="openai"', "-c", 'openai_base_url="https://api.openai.com/v1"',
+    "-c", "project_doc_max_bytes=0", "-c", "agents.enabled=false", "-c", "allow_login_shell=false",
+    "-c", "check_for_update_on_startup=false", "--disable", "plugins", "--disable", "remote_plugin",
+    "--disable", "recommended_plugins", "--disable", "apps", "--disable", "hooks", "--disable", "multi_agent",
+    "--disable", "skill_search", "--disable", "skill_mcp_dependency_install", "app-server", "--listen", "stdio://",
+    )
+
+
+def die(message: str) -> None:
+    raise SystemExit(message)
+
+
+def _open_manifest(path: Path, expected_hash: str) -> dict[str, object]:
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+        die("invalid manifest hash")
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        die("O_NOFOLLOW is required")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | no_follow | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        die("unsafe manifest")
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.getuid():
+            die("unsafe manifest")
+        data = os.read(descriptor, _MAX_MANIFEST_BYTES + 1)
+        if len(data) > _MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != expected_hash:
+            die("manifest hash mismatch")
+    finally:
+        os.close(descriptor)
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        die("invalid manifest")
+    if not isinstance(value, dict):
+        die("invalid manifest")
+    return value
+
+
+def _canonical(value: object, *, directory: bool | None = None) -> Path:
+    if not isinstance(value, str) or not value or not Path(value).is_absolute():
+        die("invalid manifest path")
+    try:
+        path = Path(value).resolve(strict=True)
+    except OSError:
+        die("invalid manifest path")
+    if str(path) != value or path.is_symlink() or (directory is True and not path.is_dir()) or (directory is False and not path.is_file()):
+        die("non-canonical manifest path")
+    return path
+
+
+def _roots(value: object, *, workspace: Path) -> list[Path]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        die("invalid root list")
+    result = [_canonical(item) for item in value]
+    rendered = [str(item) for item in result]
+    if rendered != sorted(set(rendered)):
+        die("non-canonical root list")
+    if any(item != workspace and workspace not in item.parents for item in result):
+        die("root escapes workspace")
+    return result
+
+
+def _manifest(data: dict[str, object], executable: str) -> tuple[Path, list[Path], list[Path], Path, Path, Path]:
+    if data.get("network") is not False:
+        die("network must be denied")
+    if any(not isinstance(data.get(key), str) or not _ID.fullmatch(str(data[key])) for key in ("mission_id", "run_id", "agent_id")):
+        die("invalid Mission identifiers")
+    if not isinstance(data.get("invocation_id"), str) or not _ID.fullmatch(str(data["invocation_id"])):
+        die("invalid invocation identifier")
+    if not isinstance(data.get("execution_binding_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", str(data["execution_binding_sha256"])):
+        die("invalid execution binding")
+    workspace = _canonical(data.get("workspace"), directory=True)
+    reads, writes = _roots(data.get("read_roots"), workspace=workspace), _roots(data.get("write_roots"), workspace=workspace)
+    temp_root, codex_home = _canonical(data.get("temp_root"), directory=True), _canonical(data.get("codex_home"), directory=True)
+    runtime = _canonical(data.get("codex_runtime_root"), directory=True)
+    codex = _canonical(data.get("codex_executable"), directory=False)
+    if runtime != _RUNTIME_ROOT or runtime not in codex.parents or str(codex) != executable:
+        die("invalid Codex runtime")
+    return workspace, reads, writes, temp_root, codex_home, runtime
+
+
+def _child_environment(*, temp_root: Path, codex_home: Path) -> dict[str, str]:
+    environment = {key: os.environ[key] for key in _ENV_ALLOWLIST if os.environ.get(key)}
+    environment.update({
+        "HOME": str(codex_home), "CODEX_HOME": str(codex_home), "TMPDIR": str(temp_root),
+        "XDG_CACHE_HOME": str(codex_home / "cache"), "XDG_CONFIG_HOME": str(codex_home / "config"),
+        "XDG_DATA_HOME": str(codex_home / "data"), "PATH": "/opt/codex/bin:/usr/bin:/bin",
+    })
+    return environment
+
+
+def main(argv: list[str]) -> None:
+    if len(argv) < 7: die("invalid sandbox argv")
+    manifest = _open_manifest(Path(argv[1]), argv[2])
+    workspace, reads, writes, temp_root, codex_home, runtime = _manifest(manifest, argv[3])
+    expected = _codex_args(workspace)
+    if len(argv) != 4 + len(expected) or tuple(argv[4:]) != expected:
+        die("invalid sandbox argv")
+    apply(workspace, reads, writes, runtime_root=runtime, executable=Path(argv[3]), temp_root=temp_root, codex_home=codex_home)
+    os.execve(argv[3], argv[3:], _child_environment(temp_root=temp_root, codex_home=codex_home))
+
+
+if __name__ == "__main__":
+    main(sys.argv)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import json
 import threading
 import os
 import signal
@@ -15,6 +16,7 @@ from simulacra import deploy_process
 from apps.api.main import liveness, readiness
 from simulacra.operation_graph import OperationGraphStore, load_operation_graph
 from simulacra.runtime import RuntimePlane
+from simulacra.missions import JsonMissionRepository, MissionService
 
 
 def test_preflight_rejects_missing_contract(monkeypatch):
@@ -377,3 +379,45 @@ def test_worker_survives_a_probe_io_failure_and_closes_every_test_connection(mon
 	assert deploy_process.worker() == 0
 	assert responses == [b"OK\n"]
 	assert all(connection.closed for connection in server.all_connections)
+
+
+def test_mission_discovery_refuses_links_mismatches_and_honors_project_filter(monkeypatch, tmp_path):
+	runs = tmp_path / "runs"; runs.mkdir(); control = runs / ".mission-control"
+	for project in ("project_one", "project_two"):
+		(runs / project).mkdir()
+		(runs / project / "state.json").write_text(json.dumps({"id": project, "tenant_id": "tenant_one"}))
+		service = MissionService(JsonMissionRepository(control)); service.bootstrap("tenant_one", project, "owner", {"title": "x"})
+	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
+	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one"), ("tenant_one", "project_two")}
+	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers(project_only="project_one")} == {("tenant_one", "project_one")}
+	state = control / "tenant_one" / "project_two" / "missions" / "state.json"
+	state.write_text('{"mission":{"tenant_id":"wrong","project_id":"project_two"}}')
+	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one")}
+	state.unlink(); state.symlink_to(control / "tenant_one" / "project_one" / "missions" / "state.json")
+	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one")}
+	workspace_state = runs / "project_one" / "state.json"
+	valid = json.dumps({"id": "project_one", "tenant_id": "tenant_one"})
+	workspace_state.unlink()
+	assert deploy_process._discovered_mission_workers() == []
+	workspace_state.symlink_to(runs / "project_two" / "state.json")
+	assert deploy_process._discovered_mission_workers() == []
+	workspace_state.unlink()
+	for payload in ("{", "[]", json.dumps({"id": "wrong", "tenant_id": "tenant_one"}), json.dumps({"id": "project_one", "tenant_id": "wrong"})):
+		workspace_state.write_text(payload)
+		assert deploy_process._discovered_mission_workers() == []
+	workspace_state.write_text(valid)
+	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one")}
+
+
+def test_mission_discovery_explicit_tenant_filter_excludes_same_project_other_tenant(monkeypatch, tmp_path):
+	runs = tmp_path / "runs"; runs.mkdir(); control = runs / ".mission-control"; project = "project_shared"
+	(runs / project).mkdir()
+	for tenant in ("tenant_one", "tenant_two"):
+		MissionService(JsonMissionRepository(control)).bootstrap(tenant, project, "owner", {"title": tenant})
+	# This workspace is self-consistent with tenant_two; an explicit tenant_one
+	# worker must never execute it merely because the project id matches.
+	(runs / project / "state.json").write_text(json.dumps({"id": project, "tenant_id": "tenant_two"}))
+	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
+	assert {(tenant, item) for _, tenant, item in deploy_process._discovered_mission_workers()} == {("tenant_two", project)}
+	assert deploy_process._discovered_mission_workers(project_only=project, tenant_only="tenant_one") == []
+	assert {(tenant, item) for _, tenant, item in deploy_process._discovered_mission_workers(project_only=project, tenant_only="tenant_two")} == {("tenant_two", project)}

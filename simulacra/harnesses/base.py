@@ -107,12 +107,22 @@ class AgentHarness(ABC):
             return self._result(request, session, TerminalStatus.CANCELLED, raw.get("response"), raw.get("structured_output", {}), (), events, started,
                                 error={"code": "cancelled", "message": "Run was cancelled"})
         steps = int(raw.get("steps", 0))
+        changed = tuple(Path(value) for value in raw.get("changed_files", ()))
         if steps > request.step_budget:
+            # A provider can exceed its budget only after it has already
+            # completed the N+1th tool action. Preserve valid, confined files
+            # for human verification rather than silently losing evidence of
+            # those side effects; never surface an out-of-scope provider path.
+            try:
+                self._validate_changed_files(request, changed)
+            except PermissionError as exc:
+                events.append(self._event(request, session, "artifact_validation", "failed", {}))
+                return self._result(request, session, TerminalStatus.FAILED, raw.get("response"), raw.get("structured_output", {}), (), events, started,
+                                    error={"code": "artifact_validation", "message": str(exc)})
             events.append(self._event(request, session, "budget_enforced", "failed", {"steps": steps, "limit": request.step_budget}))
-            return self._result(request, session, TerminalStatus.FAILED, raw.get("response"), raw.get("structured_output", {}), (), events, started,
+            return self._result(request, session, TerminalStatus.FAILED, raw.get("response"), raw.get("structured_output", {}), changed, events, started,
                                 error={"code": "step_budget_exceeded", "message": f"Provider used {steps} steps; limit is {request.step_budget}"})
         status = TerminalStatus(raw.get("status", TerminalStatus.SUCCEEDED))
-        changed = tuple(Path(value) for value in raw.get("changed_files", ()))
         try:
             self._validate_changed_files(request, changed)
             if status is TerminalStatus.SUCCEEDED:

@@ -56,8 +56,20 @@ DELIVERABLE_STATES = frozenset(
     }
 )
 PROFILES = frozenset({"routine", "balanced", "deep", "code", "verification"})
+MISSION_BUDGET_KEYS = frozenset({"max_steps", "wall_timeout_seconds"})
+MISSION_MAX_STEPS = 100
+MISSION_MAX_WALL_TIMEOUT_SECONDS = 600
 _SECRET = re.compile(
     r"(?:api[_-]?key|token|secret|password|credential|provider|model|runtime|computer)",
+    re.I,
+)
+_SECRET_VALUE = re.compile(
+    r"(?:-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z]+)? PRIVATE KEY-----|"
+    r"(?:sk(?:-|_live_|_test_)|ghp_|github_pat_|xox[abp]-|npm_)[A-Za-z0-9_-]{8,}|"
+    r"(?:AKIA|ASIA)[A-Z0-9]{16}|Bearer\s+[A-Za-z0-9._~-]{8,}|"
+    r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|"
+    r"https?://[^\s/@]+:[^\s/@]+@|[?&](?:access[_-]?token|api[_-]?key|token|key|secret)=[^&\s]+|"
+    r"(?:api[_-]?key|access[_-]?token|token|secret|password|authorization)\s*[:=]\s*[^\s,;)}\]]+)",
     re.I,
 )
 
@@ -72,16 +84,65 @@ def new_id(prefix: str) -> str:
 
 def clean_public_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
     """Reject control-plane/credential input before persistence."""
-    for key in value:
-        if _SECRET.search(str(key)):
-            raise ValueError(
-                "provider, model, runtime, computer, and credential fields are server-controlled"
-            )
+    def reject(item: Any, path: str = "$") -> None:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                if _SECRET.search(str(key)):
+                    raise ValueError(
+                        "mission payload contains credential material; provider, model, runtime, and computer fields are server-controlled"
+                    )
+                reject(child, f"{path}.{key}")
+            return
+        if isinstance(item, (list, tuple)):
+            for index, child in enumerate(item):
+                reject(child, f"{path}[{index}]")
+            return
+        if isinstance(item, str) and _SECRET_VALUE.search(item):
+            raise ValueError(f"mission payload contains credential material at {path}")
+    reject(value)
     try:
         assert_opaque_credentials(value, context="mission public payload")
     except Exception as exc:
         raise ValueError("mission payload contains credential material") from exc
     return dict(value)
+
+
+def normalize_budget(value: Mapping[str, Any] | None) -> dict[str, int]:
+    """Validate the small V0 execution-budget contract without coercion."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("Mission budget must be an object")
+    unknown = set(value) - MISSION_BUDGET_KEYS
+    if unknown:
+        raise ValueError("Mission budget supports only max_steps and wall_timeout_seconds")
+    normalized: dict[str, int] = {}
+    limits = {
+        "max_steps": MISSION_MAX_STEPS,
+        "wall_timeout_seconds": MISSION_MAX_WALL_TIMEOUT_SECONDS,
+    }
+    for key, maximum in limits.items():
+        if key not in value:
+            continue
+        item = value[key]
+        if isinstance(item, bool) or not isinstance(item, int) or not 1 <= item <= maximum:
+            raise ValueError(f"Mission budget {key} must be an integer from 1 to {maximum}")
+        normalized[key] = item
+    return normalized
+
+
+def effective_budget(mission_budget: Mapping[str, Any] | None, agent_budget: Mapping[str, Any] | None) -> dict[str, int]:
+    """Resolve immutable turn limits as the most restrictive allowed values."""
+    mission = normalize_budget(mission_budget)
+    agent = normalize_budget(agent_budget)
+    return {
+        "max_steps": min(MISSION_MAX_STEPS, mission.get("max_steps", MISSION_MAX_STEPS), agent.get("max_steps", MISSION_MAX_STEPS)),
+        "wall_timeout_seconds": min(
+            MISSION_MAX_WALL_TIMEOUT_SECONDS,
+            mission.get("wall_timeout_seconds", MISSION_MAX_WALL_TIMEOUT_SECONDS),
+            agent.get("wall_timeout_seconds", MISSION_MAX_WALL_TIMEOUT_SECONDS),
+        ),
+    }
 
 
 @dataclass(slots=True)
@@ -111,6 +172,7 @@ class Mission:
         validate_scope_id(self.project_id, "project_id")
         if self.status not in MISSION_STATUSES:
             raise ValueError("invalid mission status")
+        self.budget = normalize_budget(self.budget)
 
     def to_dict(self):
         return asdict(self)
@@ -147,6 +209,7 @@ class AgentDefinition:
         validate_scope_id(self.id, "agent_id")
         if self.autonomy not in AUTONOMIES:
             raise ValueError("invalid agent autonomy")
+        self.budget = normalize_budget(self.budget)
 
     def to_dict(self):
         return asdict(self)
@@ -173,6 +236,19 @@ class MissionRun:
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
     occurrence_key: str | None = None
+    next_agent_position: int = 0
+    completed_agent_ids: list[str] = field(default_factory=list)
+    current_agent_id: str | None = None
+    lease_owner: str | None = None
+    lease_until: str | None = None
+    invocation_id: str | None = None
+    invocation_started_at: str | None = None
+    session_ids: dict[str, str] = field(default_factory=dict)
+    active_approval_id: str | None = None
+    # Recorded atomically with the durable invocation marker.  It prevents a
+    # later request from quietly changing the approved graph, prompt, agent
+    # capability, or execution profile that this exact turn was admitted for.
+    execution_binding: dict[str, Any] | None = None
     revision: int = 1
     created_at: str = field(default_factory=now)
     updated_at: str = field(default_factory=now)
@@ -187,7 +263,8 @@ class MissionRun:
 
     @classmethod
     def from_dict(cls, data):
-        return cls(**dict(data))
+        allowed = set(cls.__dataclass_fields__)
+        return cls(**{key: value for key, value in dict(data).items() if key in allowed})
 
 
 @dataclass(slots=True)

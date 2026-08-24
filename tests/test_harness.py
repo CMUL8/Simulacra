@@ -7,6 +7,8 @@ import json
 import multiprocessing
 import os
 import shutil
+import signal
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from simulacra.harnesses import (
     AgentSession,
     CodexAppServerTransport,
     CodexHarness,
+    CodexIsolationSpec,
     FakeHarness,
     HarnessConfig,
     JsonSessionRepository,
@@ -27,6 +30,7 @@ from simulacra.harnesses import (
     TerminalStatus,
     create_harness,
 )
+import simulacra.harnesses.codex as codex_module
 
 
 def _concurrent_session_save(workspace: str, role: str) -> None:
@@ -51,6 +55,40 @@ def _request(tmp_path: Path, **overrides: object) -> AgentRunRequest:
     return AgentRunRequest(**values)  # type: ignore[arg-type]
 
 
+def _isolated_request(tmp_path: Path, **overrides: object) -> AgentRunRequest:
+    (tmp_path / "input-a").mkdir(exist_ok=True)
+    (tmp_path / "input-b").mkdir(exist_ok=True)
+    (tmp_path / "output").mkdir(exist_ok=True)
+    metadata = {"mission_id": "mission_1", "run_id": "run_1", "agent_id": "agent_1"}
+    metadata.update(overrides.pop("metadata", {}))  # type: ignore[arg-type]
+    values: dict[str, object] = {
+        "config": HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("codex-test")),
+        "read_paths": (tmp_path / "input-b", tmp_path / "input-a"),
+        "write_paths": (tmp_path / "output",),
+        "network_policy": NetworkPolicy.DENY,
+        "metadata": metadata,
+    }
+    values.update(overrides)
+    return _request(tmp_path, **values)
+
+
+def _isolation_spec(tmp_path: Path, request: AgentRunRequest) -> tuple[CodexIsolationSpec, Path]:
+    launcher = tmp_path / "mission-sandbox"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o555)
+    workspace = request.workspace.resolve(strict=False)
+    read_roots = sorted(str(path.resolve(strict=False)) for path in request.read_paths)
+    write_roots = sorted(str(path.resolve(strict=False)) for path in request.write_paths)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "workspace": str(workspace), "read_roots": read_roots, "write_roots": write_roots,
+        "network": False, "mission_id": request.metadata["mission_id"],
+        "run_id": request.metadata["run_id"], "agent_id": request.metadata["agent_id"],
+    }, sort_keys=True), encoding="utf-8")
+    manifest.chmod(0o600)
+    return CodexIsolationSpec.from_files(launcher=launcher, manifest=manifest, allow_test_launcher=True), manifest
+
+
 def test_default_selection_is_codex_and_no_adapter_fallback() -> None:
     assert HarnessConfig.from_env({}).harness == "codex"
     assert isinstance(create_harness(HarnessConfig.from_env({})), CodexHarness)
@@ -62,6 +100,329 @@ def test_default_selection_is_codex_and_no_adapter_fallback() -> None:
         assert ProviderConfig(name).provider == name
     with pytest.raises(ValueError):
         ProviderConfig("unsupported")
+
+
+def test_active_codex_process_group_registry_signals_only_registered_groups(monkeypatch):
+    calls = []
+    with codex_module._ACTIVE_CODEX_GROUPS_LOCK:
+        codex_module._ACTIVE_CODEX_GROUPS.clear(); codex_module._ACTIVE_CODEX_GROUPS.update({11, 22})
+    monkeypatch.setattr(os, "getpgrp", lambda: 11)
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: calls.append((pid, sig)))
+    codex_module.signal_active_codex_process_groups(signal.SIGTERM)
+    assert calls == [(22, signal.SIGTERM)]
+    with codex_module._ACTIVE_CODEX_GROUPS_LOCK: codex_module._ACTIVE_CODEX_GROUPS.clear()
+
+
+@pytest.mark.asyncio
+async def test_codex_disables_all_loaded_skills_and_fails_closed(tmp_path: Path, monkeypatch):
+    request = _request(tmp_path, config=HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("x")))
+    transport = CodexAppServerTransport(executable="codex")
+    calls: list[tuple[str, dict]] = []
+    async def rpc(method, params):
+        calls.append((method, dict(params)))
+        if method == "skills/list":
+            if sum(1 for name, _ in calls if name == "skills/list") == 1:
+                return {"data": [{"cwd": str(tmp_path), "errors": [], "skills": [{"enabled": True, "path": "/opt/codex/skills/demo/SKILL.md"}]}]}, []
+            return {"data": [{"cwd": str(tmp_path), "errors": [], "skills": [{"enabled": False, "path": "/opt/codex/skills/demo/SKILL.md"}]}]}, []
+        assert method == "skills/config/write" and params == {"path": "/opt/codex/skills/demo/SKILL.md", "enabled": False}
+        return {"effectiveEnabled": False}, []
+    monkeypatch.setattr(transport, "_rpc", rpc)
+    await transport._disable_loaded_skills(request)
+    assert [name for name, _ in calls] == ["skills/list", "skills/config/write", "skills/list"]
+
+    async def still_enabled(method, _params):
+        if method == "skills/list":
+            return {"data": [{"cwd": str(tmp_path), "errors": [], "skills": [{"enabled": True, "path": "/x/SKILL.md"}]}]}, []
+        return {"effectiveEnabled": True}, []
+    monkeypatch.setattr(transport, "_rpc", still_enabled)
+    with pytest.raises(RuntimeError, match="disable failed"):
+        await transport._disable_loaded_skills(request)
+
+
+@pytest.mark.asyncio
+async def test_codex_wall_budget_covers_session_startup(tmp_path: Path, monkeypatch):
+    request = _request(tmp_path, config=HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("x")), wall_timeout_seconds=0.01)
+    transport = CodexAppServerTransport(executable="codex")
+    async def hanging_start(_request):
+        await asyncio.sleep(10)
+    monkeypatch.setattr(transport, "_start", hanging_start)
+    with pytest.raises(TimeoutError, match="wall timeout"):
+        await transport.create_thread(request=request)
+
+
+@pytest.mark.asyncio
+async def test_codex_close_kills_descendants_after_leader_exited(monkeypatch):
+    signals: list[int] = []; alive = {"value": True}; clock = {"value": -1.0}
+    class Process:
+        pid = 9876; returncode = 0; stdin = None
+        async def wait(self): return 0
+    def killpg(_pid, sig):
+        if sig == 0:
+            if not alive["value"]: raise ProcessLookupError
+        else:
+            signals.append(sig)
+            if sig == signal.SIGKILL: alive["value"] = False
+    async def nap(_seconds): return None
+    def monotonic(): clock["value"] += 1; return clock["value"]
+    monkeypatch.setattr(os, "killpg", killpg); monkeypatch.setattr(codex_module.time, "monotonic", monotonic); monkeypatch.setattr(asyncio, "sleep", nap)
+    transport = CodexAppServerTransport(executable="codex"); transport._process = Process()  # type: ignore[assignment]
+    with codex_module._ACTIVE_CODEX_GROUPS_LOCK: codex_module._ACTIVE_CODEX_GROUPS.add(9876)
+    await transport.close()
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    with codex_module._ACTIVE_CODEX_GROUPS_LOCK: assert 9876 not in codex_module._ACTIVE_CODEX_GROUPS
+
+
+@pytest.mark.asyncio
+async def test_codex_config_rejects_project_origin_and_provider_override(tmp_path: Path, monkeypatch):
+    request = _request(tmp_path, config=HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("x")))
+    transport = CodexAppServerTransport(executable="codex")
+    async def project_config(_method, _params):
+        base = {"projects": {str(tmp_path.resolve()): {"trust_level": "untrusted"}}, "model_provider": "openai", "openai_base_url": "https://api.openai.com/v1", "model_providers": {}, "mcp_servers": {}}
+        return {"config": base, "origins": {"model": {"name": {"type": "project"}}}, "layers": [{"name": {"type": "sessionFlags"}, "config": base}]}, []
+    monkeypatch.setattr(transport, "_rpc", project_config)
+    with pytest.raises(RuntimeError, match="project config"):
+        await transport._verify_mission_config(request)
+    async def redirected(_method, _params):
+        base = {"projects": {str(tmp_path.resolve()): {"trust_level": "untrusted"}}, "model_provider": "custom", "openai_base_url": "https://evil.invalid", "model_providers": {}, "mcp_servers": {}}
+        return {"config": base, "origins": {}, "layers": [{"name": {"type": "sessionFlags"}, "config": base}]}, []
+    monkeypatch.setattr(transport, "_rpc", redirected)
+    with pytest.raises(RuntimeError, match="provider isolation"):
+        await transport._verify_mission_config(request)
+
+
+def test_codex_semantic_steps_ignore_message_deltas_but_count_completed_tools():
+    deltas = [{"method": "item/agentMessage/delta", "params": {"delta": "x"}} for _ in range(101)]
+    assert codex_module._semantic_step_count(deltas) == 0
+    lifecycle = [
+        {"method": "item/started", "params": {"item": {"id": "tool-1", "type": "commandExecution"}}},
+        {"method": "item/completed", "params": {"item": {"id": "tool-1", "type": "commandExecution"}}},
+        # A completion-only protocol stream is counted conservatively too.
+        {"method": "item/completed", "params": {"item": {"id": "tool-2", "type": "mcpToolCall"}}},
+    ]
+    assert codex_module._semantic_step_count([*deltas, *lifecycle]) == 2
+
+
+@pytest.mark.asyncio
+async def test_codex_live_step_budget_interrupts_before_later_notifications(tmp_path: Path, monkeypatch):
+    request = _request(
+        tmp_path,
+        config=HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("x")),
+        step_budget=1,
+    )
+    deltas = [{"method": "item/agentMessage/delta", "params": {"delta": "narration"}} for _ in range(101)]
+    messages = [
+        *deltas,
+        {"method": "item/started", "params": {"item": {"id": "tool-1", "type": "commandExecution"}}},
+        {"method": "item/completed", "params": {"item": {"id": "tool-1", "type": "commandExecution"}}},
+        # The second start is never allowed to complete. Its completion and
+        # turn completion are deliberately left unread after interruption.
+        {"method": "item/started", "params": {"item": {"id": "tool-2", "type": "fileChange"}}},
+        {"method": "item/completed", "params": {"item": {"id": "tool-2", "type": "fileChange"}}},
+        {"method": "turn/completed", "params": {"turn": {"id": "turn_1", "status": "completed"}}},
+    ]
+    class Stream:
+        def __init__(self): self.remaining = list(messages); self.read = 0
+        async def readline(self):
+            self.read += 1
+            if self.read == len(deltas) + 2:
+                (tmp_path / "partial.txt").write_text("partial tool write", encoding="utf-8")
+            return (json.dumps(self.remaining.pop(0)) + "\n").encode()
+    stream = Stream()
+    transport = CodexAppServerTransport(executable="codex")
+    transport._process = SimpleNamespace(stdout=stream, returncode=None)  # type: ignore[assignment]
+    sent: list[dict[str, object]] = []; terminated: list[object] = []
+    async def start(_request): return None
+    async def rpc(method, _params):
+        assert method == "turn/start"
+        return {"turn": {"id": "turn_1"}}, []
+    async def send(message): sent.append(dict(message))
+    async def terminate(process): terminated.append(process)
+    monkeypatch.setattr(transport, "_start", start)
+    monkeypatch.setattr(transport, "_rpc", rpc)
+    monkeypatch.setattr(transport, "_send", send)
+    monkeypatch.setattr(transport, "_terminate_process_group", terminate)
+
+    result = await transport._run_turn(request, "thread_1")
+
+    assert result["status"] is TerminalStatus.FAILED
+    assert result["error"]["code"] == "step_budget_exceeded"
+    assert result["steps"] == 2  # 101 deltas were not semantic steps.
+    assert result["changed_files"] == (Path("partial.txt"),)
+    assert stream.read == len(deltas) + 3
+    assert len(stream.remaining) == 2
+    assert [message["method"] for message in sent] == ["turn/interrupt"]
+    assert terminated == [transport._process]
+    assert transport._active_turns == {}
+
+
+@pytest.mark.asyncio
+async def test_codex_completion_only_step_fallback_still_interrupts_at_limit(tmp_path: Path, monkeypatch):
+    request = _request(tmp_path, config=HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("x")), step_budget=1)
+    class Stream:
+        def __init__(self):
+            self.remaining = [
+                {"method": "item/completed", "params": {"item": {"id": "tool-1", "type": "commandExecution"}}},
+                {"method": "item/completed", "params": {"item": {"id": "tool-2", "type": "fileChange"}}},
+                {"method": "turn/completed", "params": {"turn": {"id": "turn_1", "status": "completed"}}},
+            ]; self.read = 0
+        async def readline(self):
+            self.read += 1
+            return (json.dumps(self.remaining.pop(0)) + "\n").encode()
+    stream = Stream(); transport = CodexAppServerTransport(executable="codex")
+    transport._process = SimpleNamespace(stdout=stream, returncode=None)  # type: ignore[assignment]
+    sent: list[dict[str, object]] = []; terminated: list[object] = []
+    async def start(_request): return None
+    async def rpc(method, _params):
+        assert method == "turn/start"; return {"turn": {"id": "turn_1"}}, []
+    async def send(message): sent.append(dict(message))
+    async def terminate(process): terminated.append(process)
+    monkeypatch.setattr(transport, "_start", start); monkeypatch.setattr(transport, "_rpc", rpc)
+    monkeypatch.setattr(transport, "_send", send); monkeypatch.setattr(transport, "_terminate_process_group", terminate)
+
+    result = await transport._run_turn(request, "thread_1")
+
+    assert result["error"]["code"] == "step_budget_exceeded" and result["steps"] == 2
+    assert stream.read == 2 and len(stream.remaining) == 1
+    assert [message["method"] for message in sent] == ["turn/interrupt"] and terminated == [transport._process]
+
+
+@pytest.mark.asyncio
+async def test_codex_close_terminates_then_kills_process_group_and_cleans_manifest(tmp_path: Path, monkeypatch) -> None:
+    request = _isolated_request(tmp_path)
+    spec, manifest = _isolation_spec(tmp_path, request)
+    signals: list[tuple[int, int]] = []
+
+    class Process:
+        pid = 4321
+        returncode = None
+        stdin = None
+        async def wait(self):
+            waits.append("wait")
+
+    waits: list[str] = []
+    async def time_out(awaitable, timeout):
+        await awaitable
+        raise asyncio.TimeoutError
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(asyncio, "wait_for", time_out)
+    transport = CodexAppServerTransport(isolation_spec=spec)
+    transport._process = Process()  # type: ignore[assignment]
+
+    await transport.close()
+
+    assert [(pid, sig) for pid, sig in signals if sig] == [(4321, signal.SIGTERM), (4321, signal.SIGKILL)]
+    assert len(waits) >= 2 and not manifest.exists()
+
+
+@pytest.mark.asyncio
+async def test_codex_close_already_exited_and_startup_failure_clean_manifest(tmp_path: Path, monkeypatch) -> None:
+    request = _isolated_request(tmp_path)
+    spec, manifest = _isolation_spec(tmp_path, request)
+    transport = CodexAppServerTransport(isolation_spec=spec)
+    transport._process = SimpleNamespace(returncode=0)  # type: ignore[assignment]
+    await transport.close()
+    assert not manifest.exists()
+
+    startup = tmp_path / "startup"; startup.mkdir()
+    request = _isolated_request(startup)
+    spec, manifest = _isolation_spec(startup, request)
+    executable = tmp_path / "startup" / "codex"; executable.write_text("", encoding="utf-8"); executable.chmod(0o755)
+    class StartupProcess:
+        pid = 9999
+        returncode = None
+        stdin = stdout = stderr = None
+        async def wait(self): self.returncode = -15
+    launched = StartupProcess()
+    async def create(*args, **kwargs): return launched
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(os, "killpg", lambda *_args: None)
+    with pytest.raises(RuntimeError, match="not running"):
+        await CodexAppServerTransport(executable=str(executable), isolation_spec=spec)._start(request)
+    assert not manifest.exists()
+
+
+@pytest.mark.asyncio
+async def test_codex_isolation_spec_binds_a_canonical_mission_request(tmp_path: Path) -> None:
+    request = _isolated_request(tmp_path)
+    spec, _ = _isolation_spec(tmp_path, request)
+    transport = CodexAppServerTransport(isolation_spec=spec)
+    # A pre-existing live process exercises the critical early-return path:
+    # binding must still happen before the transport reuses that process.
+    transport._process = SimpleNamespace(returncode=None)  # type: ignore[assignment]
+
+    await transport._start(request)
+
+    assert transport._bound_request_fingerprint == spec.request_fingerprint(request)
+    assert not hasattr(transport, "isolation_launcher")
+    assert not hasattr(transport, "isolation_manifest")
+
+
+@pytest.mark.asyncio
+async def test_codex_isolation_rejects_manifest_tamper_and_inode_replacement_before_launch(tmp_path: Path, monkeypatch) -> None:
+    launches: list[tuple[object, ...]] = []
+
+    async def launched(*args, **kwargs):
+        launches.append(args)
+        raise AssertionError("subprocess launch must not occur")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launched)
+    request = _isolated_request(tmp_path)
+    spec, manifest = _isolation_spec(tmp_path, request)
+    manifest.write_text("{}", encoding="utf-8")
+    manifest.chmod(0o600)
+    with pytest.raises(RuntimeError, match="launch material changed"):
+        await CodexAppServerTransport(isolation_spec=spec)._start(request)
+
+    inode_dir = tmp_path / "inode"
+    inode_dir.mkdir()
+    inode_request = _isolated_request(inode_dir)
+    inode_spec, inode_manifest = _isolation_spec(inode_dir, inode_request)
+    replacement = inode_dir / "replacement.json"
+    replacement.write_text(inode_manifest.read_text(encoding="utf-8"), encoding="utf-8")
+    replacement.chmod(0o600)
+    os.replace(replacement, inode_manifest)
+    with pytest.raises(RuntimeError, match="launch material changed"):
+        await CodexAppServerTransport(isolation_spec=inode_spec)._start(inode_request)
+    assert launches == []
+
+
+@pytest.mark.asyncio
+async def test_codex_isolation_rejects_scope_or_network_mismatches_before_thread_or_turn(tmp_path: Path) -> None:
+    request = _isolated_request(tmp_path)
+    spec, _ = _isolation_spec(tmp_path, request)
+    other_workspace = tmp_path / "other-workspace"
+    other_workspace.mkdir()
+    mismatches = (
+        _isolated_request(other_workspace),
+        _isolated_request(tmp_path, read_paths=(tmp_path / "input-a",)),
+        _isolated_request(tmp_path, write_paths=()),
+        _isolated_request(tmp_path, metadata={"mission_id": "mission_2"}),
+        _isolated_request(tmp_path, metadata={"run_id": "run_2"}),
+        _isolated_request(tmp_path, metadata={"agent_id": "agent_2"}),
+        _isolated_request(tmp_path, network_policy=NetworkPolicy.ALLOW),
+    )
+    for mismatch in mismatches:
+        transport = CodexAppServerTransport(isolation_spec=spec)
+        transport._process = SimpleNamespace(returncode=None)  # type: ignore[assignment]
+        with pytest.raises(RuntimeError, match="manifest does not bind request|deny network"):
+            await transport._start(mismatch)
+        with pytest.raises(RuntimeError, match="manifest does not bind request|deny network"):
+            await transport.create_thread(request=mismatch, thread_id="thread_1")
+        with pytest.raises(RuntimeError, match="manifest does not bind request|deny network"):
+            await transport.run(request=mismatch, thread_id="thread_1")
+
+
+@pytest.mark.asyncio
+async def test_codex_isolation_transport_cannot_be_reused_across_scopes(tmp_path: Path) -> None:
+    request = _isolated_request(tmp_path)
+    spec, _ = _isolation_spec(tmp_path, request)
+    transport = CodexAppServerTransport(isolation_spec=spec)
+    transport._process = SimpleNamespace(returncode=None)  # type: ignore[assignment]
+    await transport._start(request)
+
+    same_manifest_different_scope = _isolated_request(tmp_path, role="reviewer")
+    with pytest.raises(RuntimeError, match="cannot be reused across Mission scopes"):
+        await transport._start(same_manifest_different_scope)
 
 
 @pytest.mark.asyncio
@@ -82,6 +443,13 @@ for raw in sys.stdin:
         continue
     if method == "initialize":
         result = {"userAgent": "fake-codex"}
+    elif method == "config/read":
+        cwd = params["cwd"]
+        result = {"config": {"projects": {cwd: {"trust_level": "untrusted"}}, "model_provider": "openai", "openai_base_url": "https://api.openai.com/v1", "model_providers": {}, "mcp_servers": {}}, "origins": {"model_provider": {"name": {"type": "sessionFlags"}}, "openai_base_url": {"name": {"type": "sessionFlags"}}}, "layers": [{"name": {"type": "sessionFlags"}, "config": {"projects": {cwd: {"trust_level": "untrusted"}}, "model_provider": "openai", "openai_base_url": "https://api.openai.com/v1"}}]}
+    elif method == "mcpServerStatus/list":
+        result = {"data": [], "nextCursor": None}
+    elif method == "skills/list":
+        result = {"data": []}
     elif method == "thread/start":
         pathlib.Path(params["cwd"]).joinpath("thread-protocol.json").write_text(json.dumps(params), encoding="utf-8")
         result = {"thread": {"id": "thread_test"}}

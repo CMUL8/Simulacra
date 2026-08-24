@@ -7,7 +7,10 @@
     "CMUL8_TENANT_ID",
     "CMUL8_ENVIRONMENT",
     "CMUL8_POSTGRES_URL",
-	"CMUL8_REDIS_URL"
+	"CMUL8_REDIS_URL",
+    "CMUL8_MISSION_ISOLATION_LAUNCHER",
+    "CMUL8_MISSION_RUNTIME_ROOT",
+    "CMUL8_CODEX_BIN"
   ],
   "properties": {
     "CMUL8_DEPLOYMENT_MODE": {"enum": ["cmul8_cloud", "dedicated_cloud", "private_cloud"]},
@@ -15,6 +18,9 @@
     "CMUL8_ENVIRONMENT": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,62}$"},
     "CMUL8_POSTGRES_URL": {"type": "string"},
     "CMUL8_REDIS_URL": {"type": "string"},
+    "CMUL8_MISSION_ISOLATION_LAUNCHER": {"const": "/opt/cmul8/bin/cmul8-mission-sandbox", "default": "/opt/cmul8/bin/cmul8-mission-sandbox"},
+    "CMUL8_MISSION_RUNTIME_ROOT": {"type": "string", "pattern": "^/app/data/mission-runtime$", "default": "/app/data/mission-runtime"},
+    "CMUL8_CODEX_BIN": {"type": "string", "pattern": "^/opt/codex/", "default": "/opt/codex/bin/codex"},
     "CMUL8_OBJECT_STORAGE_URL": {"type": "string"},
     "CMUL8_SECRET_PROVIDER": {"type": "string"},
     "CMUL8_IMAGE_REGISTRY": {"type": "string"},

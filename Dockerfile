@@ -29,9 +29,11 @@ COPY templates ./templates
 COPY schemas ./schemas
 COPY scripts ./scripts
 COPY deploy/bin/cmul8-entrypoint /opt/cmul8/bin/cmul8-entrypoint
+COPY deploy/bin/cmul8-mission-sandbox /opt/cmul8/bin/cmul8-mission-sandbox
 COPY --from=console-build /src/apps/console/dist ./apps/console/dist
 RUN pip install --no-cache-dir -e ".[demo]" \
 	&& chmod 0555 /opt/cmul8/bin/cmul8-entrypoint \
+		/opt/cmul8/bin/cmul8-mission-sandbox \
 	&& for process in api web worker worker-health preflight migrate smoke; do \
 		ln -s /opt/cmul8/bin/cmul8-entrypoint "/opt/cmul8/bin/cmul8-${process}"; \
 	done \
@@ -42,7 +44,9 @@ RUN pip install --no-cache-dir -e ".[demo]" \
 ENV SIMULACRA_AUTH_REQUIRED=1
 ENV CMUL8_AGENT_HARNESS=codex
 ENV CMUL8_MODEL_PROVIDER=openai
+ENV CMUL8_CODEX_BIN=/opt/codex/bin/codex
 ENV CODEX_HOME=/app/data/codex
+ENV CMUL8_MISSION_RUNTIME_ROOT=/app/data/mission-runtime
 ENV SIMULACRA_SANDBOX=worktree
 ENV PYTHONPATH=/app
 ENV PORT=8000

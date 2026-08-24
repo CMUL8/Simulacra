@@ -372,9 +372,12 @@ export type MissionOverview = {
   runs: Record<string, unknown>[];
   triggers: Record<string, unknown>[];
   deliverables: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+  approvals: Record<string, unknown>[];
   runtime: "codex";
 };
-export type MissionAgentInput = { name: string; role: string; mandate: string; responsibilities: string[]; data_scope: string[]; tools: string[]; autonomy: "assist" | "execute_safely" | "operate_with_checkpoints"; escalation_actor_id?: string | null; budget: Record<string, unknown> };
+export type MissionBudget = { max_steps?: number; wall_timeout_seconds?: number };
+export type MissionAgentInput = { name: string; role: string; mandate: string; responsibilities: string[]; data_scope: string[]; tools: string[]; autonomy: "assist" | "execute_safely" | "operate_with_checkpoints"; escalation_actor_id?: string | null; budget: MissionBudget };
 export type MissionTriggerInput = { type: "manual" | "cron" | "condition"; cron?: string; condition?: { fact: string; operator: string; value: string | number | boolean }; timezone?: string; concurrency_policy?: "queue" | "skip" | "replace" | "merge"; enabled?: boolean };
 export type MissionDeliverable = { id: string; name: string; version: number; content_hash: string; state: string; revision: number; producer_id: string };
 
@@ -400,6 +403,15 @@ export async function verifyMissionDeliverable(projectId: string, deliverableId:
 
 export async function createMissionRun(projectId: string, triggerNote = "") {
   return json<Record<string, unknown>>(`/projects/${projectId}/mission/runs`, { method: "POST", body: JSON.stringify({ trigger_note: triggerNote }) });
+}
+export async function retryMissionRun(projectId: string, runId: string, expectedRevision: number) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission/runs/${encodeURIComponent(runId)}/retry`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) });
+}
+export async function cancelMissionRun(projectId: string, runId: string, expectedRevision: number) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) });
+}
+export async function decideMissionCheckpoint(projectId: string, approvalId: string, decision: "approve" | "reject", expectedRevision: number, expectedRunRevision: number) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission/approvals/${encodeURIComponent(approvalId)}`, { method: "POST", body: JSON.stringify({ decision, expected_revision: expectedRevision, expected_run_revision: expectedRunRevision }) });
 }
 
 export async function listProjectFiles(id: string): Promise<DataRoomFile[]> {

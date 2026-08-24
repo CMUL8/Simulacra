@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 import os
+import hashlib
 import stat
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from apps.api.security import audit_request, require_project_access
 from simulacra.collaboration import JsonCollaborationRepository
 from simulacra.collaboration.errors import CollaborationError
@@ -20,6 +22,7 @@ from simulacra.missions import (
     MissionNotFoundError,
     MissionService,
 )
+from simulacra.missions.artifacts import artifact_bytes
 from simulacra.operation_graph import OperationGraphStore
 
 router = APIRouter(prefix="/projects/{project_id}/mission", tags=["missions-v0"])
@@ -74,39 +77,66 @@ def _approved_contract_revision(project_id: str, tenant_id: str) -> str | None:
 
 
 def _artifact_bytes(project_id: str, artifact_ref: str) -> bytes:
-    relative = Path(artifact_ref)
-    if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
-        raise ValueError("artifact_ref must be a relative project path")
-    root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    root_fd = os.open(project_dir(project_id), root_flags)
+    return artifact_bytes(project_dir(project_id), artifact_ref)
+
+
+def _staged_code_target(item) -> str | None:
+    for evidence in item.validation_evidence:
+        if isinstance(evidence, dict) and evidence.get("staged_artifact_ref") == item.artifact_ref:
+            target = evidence.get("intended_target")
+            if isinstance(target, str):
+                return target
+    return None
+
+
+def _promote_staged_code(project_id: str, staged_ref: str, target_ref: str, expected_hash: str) -> None:
+    """Descriptor-safe, single-file promotion after exact human verification."""
+    source = _artifact_bytes(project_id, staged_ref)
+    if hashlib.sha256(source).hexdigest() != expected_hash:
+        raise MissionConflictError("staged code changed; register a new deliverable version before verification")
+    target = Path(target_ref)
+    if (
+        target.is_absolute() or len(target.parts) < 2 or target.parts[0] != "app"
+        or "\\" in target_ref or any(part in {"", ".", ".."} or any(ord(char) < 32 for char in part) for part in target.parts)
+    ):
+        raise MissionConflictError("invalid staged code promotion target")
+    workspace = project_dir(project_id).resolve(strict=True)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    root_fd = os.open(workspace, flags)
     current_fd = root_fd
     try:
-        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        for component in relative.parts[:-1]:
-            child_fd = os.open(component, directory_flags, dir_fd=current_fd)
+        for part in target.parts[:-1]:
+            try:
+                os.mkdir(part, 0o755, dir_fd=current_fd)
+            except FileExistsError:
+                pass
+            child_fd = os.open(part, flags, dir_fd=current_fd)
+            info = os.fstat(child_fd)
+            if not stat.S_ISDIR(info.st_mode):
+                os.close(child_fd)
+                raise MissionConflictError("unsafe staged code promotion target")
             if current_fd != root_fd:
                 os.close(current_fd)
             current_fd = child_fd
-        descriptor = os.open(relative.parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=current_fd)
+        temporary = f".{target.name}.{uuid.uuid4().hex}.tmp"
+        file_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=current_fd)
         try:
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 16 * 1024 * 1024:
-                raise ValueError("artifact must be a regular file no larger than 16 MiB")
-            chunks: list[bytes] = []
-            remaining = metadata.st_size
-            while remaining:
-                chunk = os.read(descriptor, min(64 * 1024, remaining))
-                if not chunk:
-                    raise ValueError("artifact changed while being read")
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            if os.read(descriptor, 1):
-                raise ValueError("artifact changed while being read")
-            return b"".join(chunks)
+            view = memoryview(source)
+            while view:
+                written = os.write(file_fd, view)
+                view = view[written:]
+            os.fsync(file_fd)
         finally:
-            os.close(descriptor)
+            os.close(file_fd)
+        try:
+            os.replace(temporary, target.name, src_dir_fd=current_fd, dst_dir_fd=current_fd)
+            os.fsync(current_fd)
+        except Exception:
+            try: os.unlink(temporary, dir_fd=current_fd)
+            except FileNotFoundError: pass
+            raise
     except OSError as exc:
-        raise ValueError("artifact_ref must name a regular non-symlink project file") from exc
+        raise MissionConflictError("unsafe staged code promotion target") from exc
     finally:
         if current_fd != root_fd:
             os.close(current_fd)
@@ -115,6 +145,12 @@ def _artifact_bytes(project_id: str, artifact_ref: str) -> bytes:
 
 class PublicBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class BudgetBody(PublicBody):
+    """Only bounded, server-enforced execution limits are public in V0."""
+    max_steps: StrictInt | None = Field(default=None, ge=1, le=100)
+    wall_timeout_seconds: StrictInt | None = Field(default=None, ge=1, le=600)
 
 
 class BootstrapBody(PublicBody):
@@ -126,7 +162,7 @@ class BootstrapBody(PublicBody):
     priority: str = "normal"
     risk_level: str = "medium"
     deadline: str | None = None
-    budget: dict[str, Any] = Field(default_factory=dict)
+    budget: BudgetBody = Field(default_factory=BudgetBody)
 
 
 class MissionPatch(PublicBody):
@@ -140,7 +176,7 @@ class MissionPatch(PublicBody):
     priority: str | None = None
     risk_level: str | None = None
     deadline: str | None = None
-    budget: dict[str, Any] | None = None
+    budget: BudgetBody | None = None
 
 
 class AgentBody(PublicBody):
@@ -152,7 +188,7 @@ class AgentBody(PublicBody):
     tools: list[str] = Field(default_factory=list)
     autonomy: str = "assist"
     escalation_actor_id: str | None = None
-    budget: dict[str, Any] = Field(default_factory=dict)
+    budget: BudgetBody = Field(default_factory=BudgetBody)
 
 
 class RunBody(PublicBody):
@@ -187,6 +223,16 @@ class VerifyBody(PublicBody):
     expected_revision: int = Field(ge=1)
 
 
+class RunActionBody(PublicBody):
+    expected_revision: int = Field(ge=1)
+
+
+class ApprovalDecisionBody(PublicBody):
+    decision: str = Field(pattern="^(approve|reject)$")
+    expected_revision: int = Field(ge=1)
+    expected_run_revision: int = Field(ge=1)
+
+
 @router.get("")
 def overview(
     project_id: str,
@@ -203,6 +249,7 @@ def overview(
             "runs": [],
             "triggers": [],
             "deliverables": [],
+            "events": [], "approvals": [],
             "runtime": "codex",
         }
     return {
@@ -213,6 +260,8 @@ def overview(
         "deliverables": [
             x.to_dict() for x in svc.deliverables(ctx.tenant_id, project_id)
         ],
+        "events": svc.events(ctx.tenant_id, project_id, 100),
+        "approvals": svc.approvals(ctx.tenant_id, project_id),
         "runtime": "codex",
     }
 
@@ -227,7 +276,7 @@ def bootstrap(
     _mutator(ctx, project_id)
     try:
         result = _service().bootstrap(
-            ctx.tenant_id, project_id, ctx.user.id, body.model_dump()
+            ctx.tenant_id, project_id, ctx.user.id, body.model_dump(exclude_none=True)
         )
     except Exception as exc:
         raise _err(exc)
@@ -265,7 +314,7 @@ def add_agent(
 ):
     _mutator(ctx, project_id)
     try:
-        result = _service().add_agent(ctx.tenant_id, project_id, body.model_dump())
+        result = _service().add_agent(ctx.tenant_id, project_id, body.model_dump(exclude_none=True))
     except Exception as exc:
         raise _err(exc)
     audit_request(
@@ -296,6 +345,49 @@ def create_run(
     audit_request(
         request, ctx, "mission.run.manual", project_id=project_id, run_id=result.id
     )
+    return result.to_dict()
+
+
+@router.get("/trajectory")
+def trajectory(project_id: str, ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))], cursor: str | None = None, limit: int = Query(100, ge=1, le=500)):
+    _member(ctx, project_id)
+    try:
+        export = _service().trajectory_export(ctx.tenant_id, project_id, include_events=False)
+        page = _service().trajectory_page(ctx.tenant_id, project_id, cursor, limit)
+    except ValueError as exc: raise HTTPException(400, str(exc))
+    export["events"] = page["events"]; export["next_cursor"] = page["next_cursor"]; export["retention"] = page["retention"]
+    return export
+
+
+@router.post("/runs/{run_id}/retry")
+def retry_run(project_id: str, run_id: str, body: RunActionBody, request: Request,
+              ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))]):
+    _mutator(ctx, project_id)
+    try:
+        result = _service().retry_run(ctx.tenant_id, project_id, run_id, body.expected_revision,
+            _approved_contract_revision(project_id, ctx.tenant_id))
+    except Exception as exc: raise _err(exc)
+    audit_request(request, ctx, "mission.run.retry", project_id=project_id, run_id=run_id)
+    return result.to_dict()
+
+
+@router.post("/runs/{run_id}/cancel")
+def cancel_run(project_id: str, run_id: str, body: RunActionBody, request: Request,
+               ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))]):
+    _mutator(ctx, project_id)
+    try: result = _service().cancel_run(ctx.tenant_id, project_id, run_id, body.expected_revision)
+    except Exception as exc: raise _err(exc)
+    audit_request(request, ctx, "mission.run.cancel", project_id=project_id, run_id=run_id)
+    return result.to_dict()
+
+
+@router.post("/approvals/{approval_id}")
+def decide_checkpoint(project_id: str, approval_id: str, body: ApprovalDecisionBody, request: Request,
+                      ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))]):
+    _mutator(ctx, project_id)
+    try: result = _service().checkpoint_decision(ctx.tenant_id, project_id, approval_id, ctx.user.id, body.decision, body.expected_revision, body.expected_run_revision)
+    except Exception as exc: raise _err(exc)
+    audit_request(request, ctx, "mission.checkpoint.decision", project_id=project_id, approval_id=approval_id)
     return result.to_dict()
 
 
@@ -400,6 +492,10 @@ def verify_deliverable(
             raise MissionConflictError(
                 "artifact changed; register a new deliverable version before verification"
             )
+        target = _staged_code_target(item)
+        promote = None
+        if target is not None:
+            promote = lambda deliverable: _promote_staged_code(project_id, str(deliverable.artifact_ref), target, deliverable.content_hash)
         result = service.verify_deliverable(
             ctx.tenant_id,
             project_id,
@@ -407,6 +503,7 @@ def verify_deliverable(
             ctx.user.id,
             body.content_hash,
             body.expected_revision,
+            promote,
         )
     except Exception as exc:
         raise _err(exc)

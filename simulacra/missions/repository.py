@@ -13,7 +13,7 @@ from typing import Any, Callable, TypeVar
 from simulacra.collaboration.models import validate_scope_id
 
 T = TypeVar("T")
-_COLLECTIONS = ("agents", "runs", "triggers", "deliverables")
+_COLLECTIONS = ("agents", "runs", "triggers", "deliverables", "events", "approvals")
 
 
 class MissionNotFoundError(Exception):
@@ -56,7 +56,7 @@ class JsonMissionRepository:
 
     @staticmethod
     def _empty() -> dict[str, Any]:
-        return {"mission": None, **{name: {} for name in _COLLECTIONS}}
+        return {"mission": None, "retention": {"dropped_events": 0}, **{name: {} for name in _COLLECTIONS}}
 
     def _load(self, tenant_id: str, project_id: str) -> dict[str, Any]:
         directory = self._dir(tenant_id, project_id)
@@ -66,7 +66,14 @@ class JsonMissionRepository:
                 state = json.loads(state_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise ValueError("invalid mission state") from exc
-            if not isinstance(state, dict) or any(name not in state for name in ("mission", *_COLLECTIONS)):
+            if not isinstance(state, dict) or "mission" not in state:
+                raise ValueError("invalid mission state")
+            for name in _COLLECTIONS:
+                state.setdefault(name, {})
+                if not isinstance(state[name], dict):
+                    raise ValueError("invalid mission state")
+            state.setdefault("retention", {"dropped_events": 0})
+            if not isinstance(state["retention"], dict) or not isinstance(state["retention"].get("dropped_events", 0), int):
                 raise ValueError("invalid mission state")
             return state
         # One-time, read-only compatibility import of the first split-file state.
@@ -114,3 +121,19 @@ class JsonMissionRepository:
         if name not in _COLLECTIONS:
             raise ValueError("unknown mission collection")
         return self._load(tenant_id, project_id)[name]
+
+    def get_collection_item(self, tenant_id: str, project_id: str, name: str, item_id: str) -> dict[str, Any] | None:
+        """Read one durable collection record without applying an overview cap."""
+        if name not in _COLLECTIONS:
+            raise ValueError("unknown mission collection")
+        if not isinstance(item_id, str) or not item_id:
+            raise ValueError("collection item id is required")
+        value = self._load(tenant_id, project_id)[name].get(item_id)
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("invalid mission state")
+        return dict(value)
+
+    def retention(self, tenant_id: str, project_id: str) -> dict[str, Any]:
+        return dict(self._load(tenant_id, project_id).get("retention", {}))

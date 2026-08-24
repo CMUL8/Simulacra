@@ -187,6 +187,56 @@ def test_handled_condition_merge_replay_is_inert(tmp_path):
     assert replay.id == original.id and len(service.runs("tenant_1", "project_1")) == 2 and replay.id != other.id
 
 
+@pytest.mark.parametrize("policy", ["replace", "merge"])
+def test_live_trigger_never_mutates_or_overlaps_invocation(tmp_path, policy):
+    service = MissionService(JsonMissionRepository(tmp_path / "control")); service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    agent = service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    original = service.create_run("tenant_1", "project_1", {"type": "manual"})
+    service.claim_next("tenant_1", "project_1", "worker"); started = service.mark_agent_started("tenant_1", "project_1", original.id, agent.id, "worker")
+    before, binding = started.trigger_snapshot.copy(), dict(started.execution_binding or {})
+    service.add_trigger("tenant_1", "project_1", {"type": "condition", "concurrency_policy": policy, "condition": {"fact": "ready", "operator": "eq", "value": True}})
+    outcome = service.evaluate_due("tenant_1", "project_1", {"ready": True, "nonce": 1}); runs = service.runs("tenant_1", "project_1")
+    live = next(run for run in runs if run.id == original.id)
+    assert live.status == "running" and live.trigger_snapshot == before and live.execution_binding == binding
+    assert len(outcome) == 1 and outcome[0].id != original.id and outcome[0].status == "queued" and len(runs) == 2
+    assert outcome[0].trigger_snapshot["facts"] == {"ready": True, "nonce": 1}
+    handled = service.triggers("tenant_1", "project_1")[0].handled_occurrences
+    assert next(iter(handled.values())) == {
+        "outcome": "queued_after_live" if policy == "replace" else "deferred_live_run",
+        "run_id": outcome[0].id,
+    }
+    assert service.evaluate_due("tenant_1", "project_1", {"ready": True, "nonce": 1})[0].id == outcome[0].id and len(service.runs("tenant_1", "project_1")) == 2
+
+
+@pytest.mark.parametrize("policy", ["replace", "merge"])
+def test_queued_trigger_retains_replace_and_merge_behavior(tmp_path, policy):
+    service = MissionService(JsonMissionRepository(tmp_path / "control")); service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    original = service.create_run("tenant_1", "project_1", {"type": "manual"})
+    service.add_trigger("tenant_1", "project_1", {"type": "condition", "concurrency_policy": policy, "condition": {"fact": "ready", "operator": "eq", "value": True}})
+    outcome = service.evaluate_due("tenant_1", "project_1", {"ready": True, "nonce": 1}); runs = service.runs("tenant_1", "project_1")
+    if policy == "replace":
+        assert len(outcome) == 1 and len(runs) == 2 and next(run for run in runs if run.id == original.id).status == "cancelled"
+    else:
+        assert outcome[0].id == original.id and len(runs) == 1 and outcome[0].trigger_snapshot.get("merged_occurrences")
+
+
+def test_claim_next_allows_only_one_live_mission_run_across_workers(tmp_path):
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    first = service.create_run("tenant_1", "project_1", {"type": "manual"})
+    second = service.create_run("tenant_1", "project_1", {"type": "manual"})
+
+    claimed = service.claim_next("tenant_1", "project_1", "worker_1")
+    assert claimed is not None and claimed.id in {first.id, second.id} and claimed.lease_owner == "worker_1"
+    assert service.claim_next("tenant_1", "project_1", "worker_2") is None
+
+    # A checkpoint/release ends the worker-owned live execution, allowing the
+    # other queued run to be claimed by another replica.
+    service.gate("tenant_1", "project_1", claimed.id, "needs_human", "release", lease_owner="worker_1")
+    next_run = service.claim_next("tenant_1", "project_1", "worker_2")
+    assert next_run is not None and next_run.id in {first.id, second.id} - {claimed.id} and next_run.lease_owner == "worker_2"
+
+
 def test_numeric_cron_forms_and_invalid_inputs():
     from simulacra.missions.models import next_cron_due
     start = datetime(2025, 1, 1, tzinfo=UTC)

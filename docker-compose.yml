@@ -1,6 +1,8 @@
 name: cmul8
 
 x-cmul8-environment: &cmul8-environment
+
+  CMUL8_MISSION_ISOLATION_LAUNCHER: /opt/cmul8/bin/cmul8-mission-sandbox
   CMUL8_DEPLOYMENT_MODE: private_cloud
   CMUL8_TENANT_ID: ${CMUL8_TENANT_ID:-default}
   CMUL8_ENVIRONMENT: ${CMUL8_ENVIRONMENT:-production}
@@ -13,7 +15,10 @@ x-cmul8-environment: &cmul8-environment
   CMUL8_AGENT_HARNESS: ${CMUL8_AGENT_HARNESS:-codex}
   CMUL8_MODEL_PROVIDER: ${CMUL8_MODEL_PROVIDER:-openai}
   CMUL8_MODEL: ${CMUL8_MODEL:-default}
+  CMUL8_CODEX_BIN: /opt/codex/bin/codex
   CODEX_HOME: /app/data/codex
+  # One-shot manifests and private per-Mission-agent Codex homes live outside /app/runs.
+  CMUL8_MISSION_RUNTIME_ROOT: /app/data/mission-runtime
   SIMULACRA_SANDBOX: worktree
   SIMULACRA_DATA_DIR: /app/data
   SIMULACRA_RUNS_DIR: /app/runs

@@ -1,7 +1,7 @@
 """Provider-neutral CMUL8 agent-harness foundation."""
 
 from .base import AgentHarness
-from .codex import CodexAppServerTransport, CodexHarness, CodexTransport
+from .codex import CodexAppServerTransport, CodexHarness, CodexIsolationSpec, CodexTransport, signal_active_codex_process_groups
 from .contracts import (
     AgentEvent,
     AgentRunRequest,
@@ -21,7 +21,7 @@ from .sessions import JsonSessionRepository, SessionRepository
 
 __all__ = [
     "AgentEvent", "AgentHarness", "AgentRunRequest", "AgentRunResult", "AgentSession",
-    "CodexAppServerTransport", "CodexHarness", "CodexTransport", "FakeHarness", "HarnessConfig", "JsonSessionRepository",
+    "CodexAppServerTransport", "CodexHarness", "CodexIsolationSpec", "CodexTransport", "FakeHarness", "HarnessConfig", "JsonSessionRepository", "signal_active_codex_process_groups",
     "ModelCapability", "NetworkPolicy", "PrimeHarness", "ProviderConfig", "SessionRepository",
     "TaskType", "TerminalStatus", "create_harness",
 ]
