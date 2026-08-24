@@ -2,7 +2,10 @@ import {
   ArrowRight,
   Activity,
   Copy,
+  FileText,
   Globe,
+  ListChecks,
+  MessageSquare,
   MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
@@ -896,9 +899,10 @@ export function AgentShell({
   const stickToBottom = useRef(true);
   const prevBusy = useRef(busy);
   const [lastThought, setLastThought] = useState<ThoughtSnapshot | null>(null);
-  const [roomOpen, setRoomOpen] = useState(false);
   const [observabilityOpen, setObservabilityOpen] = useState(false);
   const [missionOpen, setMissionOpen] = useState(false);
+  const [missionFocus, setMissionFocus] = useState<"summary" | "crew">("summary");
+  const [workspaceTab, setWorkspaceTab] = useState<"chat" | "tasks" | "files">("chat");
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
@@ -980,17 +984,23 @@ export function AgentShell({
           <span className="project-name">{project.app_config.title}</span>
         </div>
         <div className="agent-topbar-actions">
-          <button type="button" className="icon-btn mission-nav-button" onClick={() => { setRoomOpen(false); setObservabilityOpen(false); setMissionOpen((value) => !value); }} title={missionOpen ? "Return to conversation" : "Open Mission"} aria-pressed={missionOpen}>
+          <button type="button" className="icon-btn mission-nav-button" onClick={() => { setMissionFocus("summary"); setMissionOpen(true); }} title="Mission details" aria-pressed={missionOpen}>
             <Flag size={16} strokeWidth={1.5} /><span>Mission</span>
           </button>
-          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen(false); setRoomOpen((value) => !value); }} title={roomOpen ? "Return to conversation" : "Open Project Room"} aria-pressed={roomOpen}>
+          <button type="button" className="icon-btn" onClick={() => { setMissionFocus("crew"); setMissionOpen(true); }} title="Mission crew" aria-pressed={missionOpen && missionFocus === "crew"}>
             <Users size={16} strokeWidth={1.5} />
           </button>
-          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setRoomOpen(false); setObservabilityOpen((value) => !value); }} title={observabilityOpen ? "Return to conversation" : "Open Observability"} aria-pressed={observabilityOpen}>
+          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen((value) => !value); }} title={observabilityOpen ? "Return to workspace" : "Open Observability"} aria-pressed={observabilityOpen}>
             <Activity size={16} strokeWidth={1.5} />
           </button>
         </div>
       </header>
+
+      {!observabilityOpen ? <nav className="agent-workspace-tabs" aria-label="Mission workspace">
+        <button type="button" className={workspaceTab === "chat" ? "active" : ""} onClick={() => setWorkspaceTab("chat")}><MessageSquare size={14} /> Chat</button>
+        <button type="button" className={workspaceTab === "tasks" ? "active" : ""} onClick={() => setWorkspaceTab("tasks")}><ListChecks size={14} /> Tasks</button>
+        <button type="button" className={workspaceTab === "files" ? "active" : ""} onClick={() => setWorkspaceTab("files")}><FileText size={14} /> Files{userFacingFiles(files).length ? <em>{userFacingFiles(files).length}</em> : null}</button>
+      </nav> : null}
 
       {error && (
         <div className="toast error-toast agent-toast" role="alert">
@@ -1001,13 +1011,13 @@ export function AgentShell({
         </div>
       )}
 
-      <div className="agent-center">
-        {missionOpen ? (
-          <MissionPod projectId={project.id} projectTitle={project.app_config.title} projectPrompt={project.prompt} artifactKind={project.artifact_kind} onClose={() => setMissionOpen(false)} />
-        ) : observabilityOpen ? (
+      <div className={`agent-center${workspaceTab !== "chat" || observabilityOpen ? " agent-center-surface" : ""}`}>
+        {observabilityOpen ? (
           <ObservabilityContainer projectId={project.id} />
-        ) : roomOpen ? (
+        ) : workspaceTab === "tasks" ? (
           <ProjectRoomContainer projectId={project.id} />
+        ) : workspaceTab === "files" ? (
+          <MissionFiles files={files} onBack={() => setWorkspaceTab("chat")} />
         ) : (
           <>
         <div
@@ -1198,6 +1208,15 @@ export function AgentShell({
           </>
         )}
       </div>
+      {missionOpen ? <MissionPod projectId={project.id} projectTitle={project.app_config.title} projectPrompt={project.prompt} artifactKind={project.artifact_kind} focus={missionFocus} onClose={() => setMissionOpen(false)} onOpenTasks={() => { setMissionOpen(false); setWorkspaceTab("tasks"); }} onOpenFiles={() => { setMissionOpen(false); setWorkspaceTab("files"); }} /> : null}
     </div>
   );
+}
+
+function MissionFiles({ files, onBack }: { files: DataRoomFile[]; onBack: () => void }) {
+  const visible = userFacingFiles(files);
+  return <section className="mission-files-view" aria-labelledby="mission-files-title">
+    <header><div><span>MISSION FILES</span><h1 id="mission-files-title">Shared evidence</h1><p>Files attached to this Mission stay available to its human-and-agent team.</p></div><button type="button" onClick={onBack}>Back to chat</button></header>
+    {visible.length ? <div className="mission-files-grid">{visible.map((file) => <article key={file.name}><FileText size={18} /><div><strong>{file.name}</strong><span>{file.type} · {file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`}</span>{file.detail ? <p>{file.detail}</p> : null}</div></article>)}</div> : <div className="mission-files-empty"><FileText size={24} /><h2>No files yet</h2><p>Return to chat and attach the source material this Mission should work from.</p><button type="button" onClick={onBack}>Add files in chat</button></div>}
+  </section>;
 }
