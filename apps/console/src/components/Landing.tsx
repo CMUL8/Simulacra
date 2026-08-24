@@ -195,7 +195,6 @@ export function Landing({
   onGuestGateDismiss,
   onDismissError,
 }: Props) {
-  const [formatTouched, setFormatTouched] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const landingRef = useRef<HTMLDivElement>(null);
@@ -205,16 +204,16 @@ export function Landing({
   const canBuild = prompt.trim().length >= 3 && !busy && !guestGateOpen;
   const recent = projects.slice(0, 12);
   const pills = useMemo(() => pillsForDay(utcDayIndex()), []);
-  const activeFormat = FORMAT_OPTIONS.find((f) => f.kind === artifactKind) || FORMAT_OPTIONS[0]!;
   const gated = !authed && guestGateOpen;
 
   useEffect(() => {
     if (!gated) promptRef.current?.focus();
   }, [gated]);
 
-  // Soft-switch format from prompt language unless the user already picked one.
+  // Infer the initial deliverable behind the scenes. A Mission can evolve into
+  // multiple artifacts, so this implementation detail does not belong in the
+  // primary creation decision.
   useEffect(() => {
-    if (formatTouched) return;
     const lower = prompt.toLowerCase();
     let next: ArtifactKind | null = null;
     if (/\b(slide deck|board deck|presentation|powerpoint|keynote|slides)\b/.test(lower)) next = "slides";
@@ -222,7 +221,7 @@ export function Landing({
     else if (/\b(report|memo|write-up|long-form|narrative brief)\b/.test(lower)) next = "report";
     else if (/\b(dashboard|command center|explorer|ops console|data app)\b/.test(lower)) next = "data_app";
     if (next && next !== artifactKind) onArtifactKind(next);
-  }, [prompt, formatTouched, artifactKind, onArtifactKind]);
+  }, [prompt, artifactKind, onArtifactKind]);
 
   function scrollToProjects() {
     const root = landingRef.current;
@@ -263,9 +262,12 @@ export function Landing({
       </header>
 
       <div className="landing-content" id="start">
-        <h1 className="brand-mark">Mission control</h1>
+        <div className="landing-product-lockup">
+          <span className="landing-product-eyebrow">A HUMAN + AGENT OPERATING SYSTEM</span>
+          <h1 className="brand-mark">Missions</h1>
+        </div>
         <p className="landing-sub">
-          Give a human-and-agent team an outcome. CMUL8 plans the work, asks for permission, and delivers evidence you can verify.
+          Turn an outcome into a governed, long-running collaboration between people and Codex agents—grounded in your data, shaped by your judgment, and verified before it ships.
         </p>
 
         {error && (
@@ -277,30 +279,12 @@ export function Landing({
           </div>
         )}
 
-        <div className="format-strip" role="group" aria-label="Output format">
-          {FORMAT_OPTIONS.map((f) => (
-            <button
-              key={f.kind}
-              type="button"
-              className={f.kind === artifactKind ? "format-chip on" : "format-chip"}
-              disabled={busy || gated}
-              title={f.hint}
-              onClick={() => {
-                setFormatTouched(true);
-                onArtifactKind(f.kind);
-              }}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-
         <div className={`anything-prompt${gated ? " gated" : ""}`}>
           <textarea
             ref={promptRef}
             value={prompt}
             onChange={(e) => onPrompt(e.target.value)}
-            placeholder={activeFormat.hint}
+            placeholder="Describe the outcome, the evidence it should use, and where human judgment belongs…"
             rows={4}
             disabled={busy || gated}
             onKeyDown={(e) => {

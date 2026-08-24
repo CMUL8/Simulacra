@@ -753,26 +753,48 @@ body {
   }
 }
 .brand-mark {
-  margin: 0 0 16px;
+  margin: 7px 0 18px;
   font-family: var(--font-display);
-  font-size: clamp(56px, 11vw, 88px);
+  font-size: clamp(68px, 13vw, 108px);
   font-weight: 400;
-  line-height: 0.9;
+  line-height: 0.82;
   color: #f6f1e8;
-  letter-spacing: -0.04em;
-  text-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+  letter-spacing: -0.055em;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.16),
+    0 22px 70px rgba(0, 0, 0, 0.5);
 }
 .brand-mark em { font-style: italic; font-weight: 400; }
+.landing-product-lockup {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  margin-bottom: 4px;
+}
+.landing-product-lockup::after {
+  content: "";
+  width: 118px;
+  height: 1px;
+  margin-top: 8px;
+  background: linear-gradient(90deg, transparent, rgba(240, 235, 227, 0.62), transparent);
+}
+.landing-product-eyebrow {
+  color: rgba(244, 240, 232, 0.46);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+}
 .landing-sub {
-  margin: 0 auto 32px;
-  max-width: 460px;
-  color: rgba(244, 240, 232, 0.52);
+  margin: 0 auto 34px;
+  max-width: 590px;
+  color: rgba(244, 240, 232, 0.58);
   font-family: var(--font-ui);
   font-style: normal;
   font-size: clamp(15px, 1.7vw, 16.5px);
-  line-height: 1.5;
+  line-height: 1.62;
   font-weight: 400;
-  letter-spacing: -0.018em;
+  letter-spacing: -0.012em;
   text-shadow: none;
 }
 .landing-error {
@@ -810,36 +832,6 @@ body {
   overflow: hidden;
   padding: 20px 20px 14px;
 }
-.format-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-  margin: 0 0 18px;
-  width: min(640px, 100%);
-}
-.format-chip {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(244, 240, 232, 0.7);
-  border-radius: 999px;
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: none;
-  font-family: var(--font-ui);
-}
-.format-chip:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-  color: #f4f0e8;
-}
-.format-chip.on {
-  background: #f0ebe3;
-  color: #161412;
-  border-color: transparent;
-}
-.format-chip:disabled { opacity: 0.45; cursor: not-allowed; }
 .anything-prompt textarea {
   width: 100%;
   border: none;
