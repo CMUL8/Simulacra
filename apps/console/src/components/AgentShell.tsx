@@ -11,6 +11,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Users,
+  Flag,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import type { AgentEvent, ChatMessage, Checkpoint, DataRoomFile, Snapshot } from "../api";
@@ -31,6 +32,7 @@ import { VersionsMenu } from "./VersionsMenu";
 import { WaitStage } from "./WaitStage";
 import { ProjectRoomContainer } from "../features/project-room";
 import { ObservabilityContainer } from "../features/observability";
+import { MissionPod } from "../features/missions";
 
 type Props = {
   variant: "plan" | "workspace";
@@ -896,6 +898,7 @@ export function AgentShell({
   const [lastThought, setLastThought] = useState<ThoughtSnapshot | null>(null);
   const [roomOpen, setRoomOpen] = useState(false);
   const [observabilityOpen, setObservabilityOpen] = useState(false);
+  const [missionOpen, setMissionOpen] = useState(false);
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
@@ -977,10 +980,13 @@ export function AgentShell({
           <span className="project-name">{project.app_config.title}</span>
         </div>
         <div className="agent-topbar-actions">
-          <button type="button" className="icon-btn" onClick={() => { setObservabilityOpen(false); setRoomOpen((value) => !value); }} title={roomOpen ? "Return to conversation" : "Open Project Room"} aria-pressed={roomOpen}>
+          <button type="button" className="icon-btn" onClick={() => { setRoomOpen(false); setObservabilityOpen(false); setMissionOpen((value) => !value); }} title={missionOpen ? "Return to conversation" : "Open Mission Pod"} aria-pressed={missionOpen}>
+            <Flag size={16} strokeWidth={1.5} />
+          </button>
+          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen(false); setRoomOpen((value) => !value); }} title={roomOpen ? "Return to conversation" : "Open Project Room"} aria-pressed={roomOpen}>
             <Users size={16} strokeWidth={1.5} />
           </button>
-          <button type="button" className="icon-btn" onClick={() => { setRoomOpen(false); setObservabilityOpen((value) => !value); }} title={observabilityOpen ? "Return to conversation" : "Open Observability"} aria-pressed={observabilityOpen}>
+          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setRoomOpen(false); setObservabilityOpen((value) => !value); }} title={observabilityOpen ? "Return to conversation" : "Open Observability"} aria-pressed={observabilityOpen}>
             <Activity size={16} strokeWidth={1.5} />
           </button>
         </div>
@@ -996,7 +1002,9 @@ export function AgentShell({
       )}
 
       <div className="agent-center">
-        {observabilityOpen ? (
+        {missionOpen ? (
+          <MissionPod projectId={project.id} projectTitle={project.app_config.title} onClose={() => setMissionOpen(false)} />
+        ) : observabilityOpen ? (
           <ObservabilityContainer projectId={project.id} />
         ) : roomOpen ? (
           <ProjectRoomContainer projectId={project.id} />

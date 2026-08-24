@@ -366,6 +366,42 @@ export async function listProjects(): Promise<Project[]> {
   return data.projects;
 }
 
+export type MissionOverview = {
+  mission: Record<string, unknown> | null;
+  agents: Record<string, unknown>[];
+  runs: Record<string, unknown>[];
+  triggers: Record<string, unknown>[];
+  deliverables: Record<string, unknown>[];
+  runtime: "codex";
+};
+export type MissionAgentInput = { name: string; role: string; mandate: string; responsibilities: string[]; data_scope: string[]; tools: string[]; autonomy: "assist" | "execute_safely" | "operate_with_checkpoints"; escalation_actor_id?: string | null; budget: Record<string, unknown> };
+export type MissionTriggerInput = { type: "manual" | "cron" | "condition"; cron?: string; condition?: { fact: string; operator: string; value: string | number | boolean }; timezone?: string; concurrency_policy?: "queue" | "skip" | "replace" | "merge"; enabled?: boolean };
+export type MissionDeliverable = { id: string; name: string; version: number; content_hash: string; state: string; revision: number; producer_id: string };
+
+export async function getMission(projectId: string): Promise<MissionOverview> {
+  return json(`/projects/${projectId}/mission`);
+}
+
+export async function bootstrapMission(projectId: string, body: Record<string, unknown>) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function createMissionAgent(projectId: string, body: MissionAgentInput) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission/agents`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function createMissionTrigger(projectId: string, body: MissionTriggerInput) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission/automation`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function verifyMissionDeliverable(projectId: string, deliverableId: string, contentHash: string, expectedRevision: number) {
+  return json<MissionDeliverable>(`/projects/${projectId}/mission/deliverables/${deliverableId}/verify`, { method: "POST", body: JSON.stringify({ content_hash: contentHash, expected_revision: expectedRevision }) });
+}
+
+export async function createMissionRun(projectId: string, triggerNote = "") {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission/runs`, { method: "POST", body: JSON.stringify({ trigger_note: triggerNote }) });
+}
+
 export async function listProjectFiles(id: string): Promise<DataRoomFile[]> {
   const data = await json<{ files: DataRoomFile[] }>(`/projects/${id}/files`);
   return data.files;

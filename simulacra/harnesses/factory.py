@@ -11,6 +11,12 @@ from .prime import PrimeHarness
 
 
 def create_harness(config: HarnessConfig | None = None, **adapters: Any):
+    """Create a harness.
+
+    ``HarnessConfig.from_env`` admits only Codex/OpenAI.  Explicit fake/Prime
+    configurations are the intentional internal deterministic-test seam and
+    are retained for existing adapter contracts.
+    """
     selected = config or HarnessConfig.from_env()
     if selected.harness == "codex":
         transport = adapters.get("codex_transport")

@@ -81,6 +81,7 @@ from simulacra.operation_graph import OperationGraphStore
 from simulacra.operation_graph.errors import OperationGraphError, UnapprovedRevisionError
 from simulacra.collaboration.errors import CollaborationError
 from apps.api.cmul8_routes import router as cmul8_router
+from apps.api.mission_routes import router as mission_router
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -132,6 +133,7 @@ def _job_conflict_http(exc: Exception) -> HTTPException:
 
 app = FastAPI(title="Simulacra API", version="0.8.0")
 app.include_router(cmul8_router)
+app.include_router(mission_router)
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],

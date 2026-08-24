@@ -207,6 +207,13 @@ class HarnessConfig:
         credential = setting("CMUL8_MODEL_API_KEY_ENV", "CMUL8_AGENT_CREDENTIAL_ENV") or None
         reasoning = setting("CMUL8_MODEL_REASONING_EFFORT", None) or None
         profile = setting("CMUL8_CODEX_PROFILE", None) or None
+        # Environment configuration is production configuration. Alternate
+        # harnesses remain constructible in-process for deterministic adapters.
+        # An explicitly supplied mapping is likewise an internal test seam;
+        # a process environment only admits it while pytest is executing.
+        test_seam = environ is not None or bool(env.get("PYTEST_CURRENT_TEST"))
+        if (harness != "codex" or provider != "openai") and not test_seam:
+            raise ValueError("production harness configuration supports Codex/OpenAI only")
         return cls(
             harness=harness,
             provider=ProviderConfig(provider, endpoint=endpoint, credential_env_var=credential),

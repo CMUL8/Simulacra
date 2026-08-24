@@ -5822,3 +5822,9 @@ select:focus-visible {
   }
   .thread-first { padding-left: var(--thread-pad, 20px); padding-right: var(--thread-pad, 20px); }
 }
+/* Mission V0: the pod is intentionally data-first and reuses the console shell. */
+.mission-pod { height: 100%; overflow: auto; padding: 28px; background: var(--bg, #101114); color: var(--text, #eee); }
+.mission-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 1px solid rgba(255,255,255,.1); padding-bottom: 18px; }
+.mission-header h2 { margin: 4px 0 0; font-size: 22px; }.mission-kicker { color: #8da6ff; font-size: 11px; letter-spacing: .12em; }.mission-header button,.mission-empty button,.mission-list > button { border: 1px solid #596a9b; border-radius: 6px; background: #405bb5; color: white; padding: 7px 10px; cursor: pointer; margin-left: 8px; }.mission-header .mission-quiet { background: transparent; border-color: #555; }
+.mission-tabs { display:flex; gap:4px; overflow:auto; margin:18px 0; }.mission-tabs button { background:transparent; border:0; color:#a9a9ae; padding:8px 10px; cursor:pointer; border-bottom:2px solid transparent; }.mission-tabs button.active { color:#fff; border-bottom-color:#8da6ff; }
+.mission-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }.mission-grid article,.mission-list article { border:1px solid rgba(255,255,255,.1); border-radius:8px; padding:14px; background:rgba(255,255,255,.025); }.mission-grid label { color:#999; font-size:12px; }.mission-grid p { margin:8px 0 0; }.mission-list { display:grid; gap:10px; max-width:760px; }.mission-list article { display:grid; gap:4px; }.mission-list span { color:#9ba2b7; font-size:13px; }.mission-list p { margin:4px 0 0; }.mission-empty { color:#a9a9ae; padding:32px 0; }.mission-error { color:#ff9e9e; }
