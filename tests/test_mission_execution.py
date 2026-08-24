@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -30,6 +31,107 @@ def _approved_workspace(path: Path) -> str:
     graph["metadata"]["tenant_id"] = "tenant_1"; graph["metadata"]["project_id"] = "project_1"
     revision = store.create_revision(graph, expected_revision_hash=None); store.approve_revision(revision.revision_hash, actor_id="owner")
     return revision.revision_hash
+
+
+def _unapproved_workspace(path: Path) -> tuple[OperationGraphStore, str]:
+    store = OperationGraphStore(path, tenant_id="tenant_1", project_id="project_1")
+    graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+    graph["metadata"]["tenant_id"] = "tenant_1"; graph["metadata"]["project_id"] = "project_1"
+    revision = store.create_revision(graph, expected_revision_hash=None)
+    return store, revision.revision_hash
+
+
+def _record_mission_contract(service: MissionService, revision: str) -> None:
+    def mutate(records):
+        records["mission"]["approved_contract_revision"] = revision
+    service.repository.mutate("tenant_1", "project_1", mutate)
+
+
+def _force_trigger_due(service: MissionService, trigger_id: str, due_at: str) -> None:
+    service.repository.mutate(
+        "tenant_1", "project_1",
+        lambda records: records["triggers"][trigger_id].update({"next_due_at": due_at}),
+    )
+
+
+def test_automatic_cron_is_once_only_across_ticks_and_worker_replicas(tmp_path: Path):
+    revision = _approved_workspace(tmp_path)
+    root = tmp_path / "control"
+    first_service = MissionService(JsonMissionRepository(root))
+    first_service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    _record_mission_contract(first_service, revision)
+    cron = first_service.add_trigger(
+        "tenant_1", "project_1", {"type": "cron", "cron": "*/5 * * * *"},
+    )
+    condition = first_service.add_trigger(
+        "tenant_1", "project_1",
+        {"type": "condition", "condition": {"fact": "ready", "operator": "ne", "value": True}},
+    )
+    _force_trigger_due(first_service, cron.id, "2020-01-01T00:00:00+00:00")
+
+    second_service = MissionService(JsonMissionRepository(root))
+    first_worker = MissionWorker(first_service, tmp_path, "cron-1")
+    second_worker = MissionWorker(second_service, tmp_path, "cron-2")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(
+            lambda worker: worker.schedule_due_cron("tenant_1", "project_1"),
+            (first_worker, second_worker),
+        ))
+    assert sorted(len(outcome) for outcome in outcomes) == [0, 1]
+    assert first_worker.schedule_due_cron("tenant_1", "project_1") == []
+
+    runs = first_service.runs("tenant_1", "project_1")
+    assert len(runs) == 1 and runs[0].contract_revision == revision
+    triggers = {item.id: item for item in first_service.triggers("tenant_1", "project_1")}
+    assert len(triggers[cron.id].handled_occurrences) == 1
+    assert triggers[condition.id].handled_occurrences == {}
+
+
+def test_automatic_cron_defers_disabled_not_due_and_unapproved_without_consuming(tmp_path: Path):
+    graph_store, revision = _unapproved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    due = service.add_trigger(
+        "tenant_1", "project_1", {"type": "cron", "cron": "*/5 * * * *"},
+    )
+    disabled = service.add_trigger(
+        "tenant_1", "project_1", {"type": "cron", "cron": "*/5 * * * *", "enabled": False},
+    )
+    future = service.add_trigger(
+        "tenant_1", "project_1", {"type": "cron", "cron": "*/5 * * * *"},
+    )
+    _force_trigger_due(service, due.id, "2020-01-01T00:00:00+00:00")
+    _force_trigger_due(service, disabled.id, "2020-01-01T00:00:00+00:00")
+    _force_trigger_due(service, future.id, "2099-01-01T00:00:00+00:00")
+    before = {item.id: item.next_due_at for item in service.triggers("tenant_1", "project_1")}
+    worker = MissionWorker(service, tmp_path, "cron")
+
+    # A current but unapproved graph cannot consume the due occurrence.
+    assert worker.schedule_due_cron("tenant_1", "project_1") == []
+    deferred = {item.id: item for item in service.triggers("tenant_1", "project_1")}
+    assert deferred[due.id].next_due_at == before[due.id]
+    assert deferred[due.id].handled_occurrences == {}
+
+    graph_store.approve_revision(revision, actor_id="owner")
+    assert len(worker.schedule_due_cron("tenant_1", "project_1")) == 1
+    assert service.mission("tenant_1", "project_1").approved_contract_revision == revision
+    after = {item.id: item for item in service.triggers("tenant_1", "project_1")}
+    assert after[disabled.id].next_due_at == before[disabled.id]
+    assert after[disabled.id].handled_occurrences == {}
+    assert after[future.id].next_due_at == before[future.id]
+    assert after[future.id].handled_occurrences == {}
+
+
+def test_condition_evaluation_requires_nonempty_fact_event(tmp_path: Path):
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    service.add_trigger(
+        "tenant_1", "project_1",
+        {"type": "condition", "condition": {"fact": "ready", "operator": "ne", "value": True}},
+    )
+    assert service.evaluate_due("tenant_1", "project_1", {}) == []
+    assert service.evaluate_due("tenant_1", "project_1", {"other": False}) == []
+    assert len(service.evaluate_due("tenant_1", "project_1", {"ready": False})) == 1
 
 
 def test_worker_advances_agents_and_screens_response(tmp_path: Path):

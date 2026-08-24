@@ -68,6 +68,13 @@ class JsonMissionRepository:
                 raise ValueError("invalid mission state") from exc
             if not isinstance(state, dict) or "mission" not in state:
                 raise ValueError("invalid mission state")
+            mission = state.get("mission")
+            if mission is not None and (
+                not isinstance(mission, dict)
+                or mission.get("tenant_id") != tenant_id
+                or mission.get("project_id") != project_id
+            ):
+                raise ValueError("invalid mission scope")
             for name in _COLLECTIONS:
                 state.setdefault(name, {})
                 if not isinstance(state[name], dict):
@@ -90,6 +97,27 @@ class JsonMissionRepository:
 
     def _replace_state(self, tenant_id: str, project_id: str, state: dict[str, Any]) -> None:
         directory = self._dir(tenant_id, project_id, create=True)
+        mission = state.get("mission")
+        if not isinstance(mission, dict) or mission.get("tenant_id") != tenant_id or mission.get("project_id") != project_id:
+            raise ValueError("invalid mission scope")
+        discovery = directory / "discovery.json"
+        discovery_temporary = discovery.with_name(f".{discovery.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        with discovery_temporary.open("w", encoding="utf-8") as handle:
+            json.dump({
+                "schema_version": 1,
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "mission_id": mission.get("id"),
+            }, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(discovery_temporary, discovery)
+        discovery_directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(discovery_directory_fd)
+        finally:
+            os.close(discovery_directory_fd)
         target = directory / "state.json"
         temporary = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         with temporary.open("w", encoding="utf-8") as handle:

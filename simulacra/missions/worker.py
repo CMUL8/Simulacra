@@ -86,6 +86,33 @@ class MissionWorker:
         except Exception:
             return False, "operation_graph_required", None
 
+    def schedule_due_cron(self, tenant_id: str, project_id: str) -> list[MissionRun]:
+        """Atomically enqueue due cron occurrences against the exact approved graph.
+
+        The graph store and Mission store are separate durable boundaries. We
+        prove that the workspace's current revision is itself approved and pin
+        that head until the Mission transaction records the same hash on both
+        the Mission and Run. A missing approval therefore leaves the occurrence
+        unhandled for a later scheduler tick.
+        """
+        try:
+            store = OperationGraphStore(
+                self.workspace, tenant_id=tenant_id, project_id=project_id,
+            )
+            # Keep the graph head pinned until the Mission repository commits
+            # its occurrence/run mutation. Graph creation and rollback share
+            # this lock, closing the otherwise unavoidable cross-store race.
+            with store.locked_current_approved_revision() as current:
+                if current is None:
+                    return []
+                return self.service.evaluate_cron_due(
+                    tenant_id,
+                    project_id,
+                    verified_contract_revision=current.revision_hash,
+                )
+        except Exception:
+            return []
+
     def _paths(self, agent: AgentDefinition, run: MissionRun) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
         if any(not isinstance(item, str) or item not in _TOOLS for item in agent.tools):
             raise ValueError("Mission agent requested an unsupported tool")

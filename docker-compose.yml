@@ -19,6 +19,7 @@ x-cmul8-environment: &cmul8-environment
   CODEX_HOME: /app/data/codex
   # One-shot manifests and private per-Mission-agent Codex homes live outside /app/runs.
   CMUL8_MISSION_RUNTIME_ROOT: /app/data/mission-runtime
+  CMUL8_MISSION_CRON_INTERVAL_SECONDS: ${CMUL8_MISSION_CRON_INTERVAL_SECONDS:-15}
   SIMULACRA_SANDBOX: worktree
   SIMULACRA_DATA_DIR: /app/data
   SIMULACRA_RUNS_DIR: /app/runs

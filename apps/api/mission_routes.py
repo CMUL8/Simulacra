@@ -76,6 +76,29 @@ def _approved_contract_revision(project_id: str, tenant_id: str) -> str | None:
     return store.require_approved_revision(current.revision_hash).revision_hash
 
 
+def _evaluate_condition_event(
+    service: MissionService,
+    project_id: str,
+    tenant_id: str,
+    facts: dict[str, Any],
+    at: datetime | None,
+):
+    """Pin exact graph admission through the condition occurrence transaction."""
+    store = OperationGraphStore(
+        project_dir(project_id), tenant_id=tenant_id, project_id=project_id,
+    )
+    with store.locked_current_approved_revision() as current:
+        if current is None:
+            return []
+        return service.evaluate_condition_due(
+            tenant_id,
+            project_id,
+            facts,
+            at=at,
+            verified_contract_revision=current.revision_hash,
+        )
+
+
 def _artifact_bytes(project_id: str, artifact_ref: str) -> bytes:
     return artifact_bytes(project_dir(project_id), artifact_ref)
 
@@ -423,12 +446,8 @@ def evaluate_due(
     _mutator(ctx, project_id)
     try:
         at = datetime.fromisoformat(body.at) if body.at else None
-        result = _service().evaluate_due(
-            ctx.tenant_id,
-            project_id,
-            body.facts,
-            at,
-            _approved_contract_revision(project_id, ctx.tenant_id),
+        result = _evaluate_condition_event(
+            _service(), project_id, ctx.tenant_id, body.facts, at,
         )
     except Exception as exc:
         raise _err(exc)

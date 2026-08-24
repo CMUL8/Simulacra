@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 import yaml
@@ -34,6 +35,56 @@ def test_preflight_accepts_explicit_external_services(monkeypatch):
 	for key, value in values.items():
 		monkeypatch.setenv(key, value)
 	assert deploy_process.preflight() == 0
+
+
+def test_mission_cron_cadence_is_bounded_and_scheduler_failures_are_contained(monkeypatch):
+	for configured, expected in (("1", 5.0), ("45", 45.0), ("900", 300.0), ("invalid", 15.0)):
+		monkeypatch.setenv("CMUL8_MISSION_CRON_INTERVAL_SECONDS", configured)
+		assert deploy_process._mission_cron_interval_seconds() == expected
+
+	class BrokenScheduler:
+		def schedule_due_cron(self, tenant_id, project_id):
+			assert (tenant_id, project_id) == ("tenant", "project")
+			raise RuntimeError("one Mission must not kill readiness")
+
+	assert deploy_process._evaluate_mission_cron(BrokenScheduler(), "tenant", "project") is None
+
+
+def test_mission_cron_scheduler_ticks_and_stops_while_runtime_work_is_blocked():
+	stop = threading.Event()
+	ticks = threading.Event()
+	runtime_release = threading.Event()
+	calls: list[tuple[str | None, str | None]] = []
+
+	class Scheduler:
+		def schedule_due_cron(self, _tenant, _project):
+			if len(calls) >= 2:
+				ticks.set()
+
+	def discover(*, project_only=None, tenant_only=None):
+		calls.append((project_only, tenant_only))
+		return [(Scheduler(), "tenant", "project")]
+
+	runtime_thread = threading.Thread(target=lambda: runtime_release.wait(2), daemon=True)
+	scheduler_thread = threading.Thread(
+		target=deploy_process._mission_cron_scheduler,
+		kwargs={
+			"stop_event": stop,
+			"project_only": "project",
+			"tenant_only": "tenant",
+			"discover": discover,
+			"interval_seconds": 0.01,
+		},
+		daemon=True,
+	)
+	runtime_thread.start(); scheduler_thread.start()
+	try:
+		assert ticks.wait(1) and runtime_thread.is_alive()
+		assert len(calls) >= 2 and set(calls) == {("project", "tenant")}
+	finally:
+		stop.set(); scheduler_thread.join(1)
+		runtime_release.set(); runtime_thread.join(1)
+	assert not scheduler_thread.is_alive()
 
 
 def test_worker_health_probes_a_running_worker_socket(monkeypatch, tmp_path):
@@ -390,10 +441,10 @@ def test_mission_discovery_refuses_links_mismatches_and_honors_project_filter(mo
 	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
 	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one"), ("tenant_one", "project_two")}
 	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers(project_only="project_one")} == {("tenant_one", "project_one")}
-	state = control / "tenant_one" / "project_two" / "missions" / "state.json"
-	state.write_text('{"mission":{"tenant_id":"wrong","project_id":"project_two"}}')
+	state = control / "tenant_one" / "project_two" / "missions" / "discovery.json"
+	state.write_text('{"schema_version":1,"mission_id":"mission_x","tenant_id":"wrong","project_id":"project_two"}')
 	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one")}
-	state.unlink(); state.symlink_to(control / "tenant_one" / "project_one" / "missions" / "state.json")
+	state.unlink(); state.symlink_to(control / "tenant_one" / "project_one" / "missions" / "discovery.json")
 	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one")}
 	workspace_state = runs / "project_one" / "state.json"
 	valid = json.dumps({"id": "project_one", "tenant_id": "tenant_one"})
@@ -407,6 +458,39 @@ def test_mission_discovery_refuses_links_mismatches_and_honors_project_filter(mo
 		assert deploy_process._discovered_mission_workers() == []
 	workspace_state.write_text(valid)
 	assert {(tenant, project) for _, tenant, project in deploy_process._discovered_mission_workers()} == {("tenant_one", "project_one")}
+
+
+def test_mission_discovery_index_survives_evidence_state_beyond_read_cap(monkeypatch, tmp_path):
+	runs = tmp_path / "runs"; runs.mkdir(); control = runs / ".mission-control"
+	workspace = runs / "project_large"; workspace.mkdir()
+	(workspace / "state.json").write_text(json.dumps({"id": "project_large", "tenant_id": "tenant_one"}))
+	service = MissionService(JsonMissionRepository(control))
+	service.bootstrap("tenant_one", "project_large", "owner", {"title": "large evidence"})
+	trigger = service.add_trigger("tenant_one", "project_large", {"type": "cron", "cron": "*/5 * * * *"})
+	service.repository.mutate(
+		"tenant_one", "project_large",
+		lambda records: records["triggers"][trigger.id].update({"next_due_at": "2020-01-01T00:00:00+00:00"}),
+	)
+	graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+	graph["metadata"]["tenant_id"] = "tenant_one"; graph["metadata"]["project_id"] = "project_large"
+	store = OperationGraphStore(workspace, tenant_id="tenant_one", project_id="project_large")
+	revision = store.create_revision(graph, expected_revision_hash=None)
+	store.approve_revision(revision.revision_hash, actor_id="owner")
+	service.repository.mutate(
+		"tenant_one", "project_large",
+		lambda records: records["deliverables"].update({
+			"preserved_evidence": {"validation_evidence": [{"evidence": "x" * (deploy_process._MAX_DISCOVERY_STATE_BYTES + 1)}]},
+		}),
+	)
+	directory = control / "tenant_one" / "project_large" / "missions"
+	assert (directory / "state.json").stat().st_size > deploy_process._MAX_DISCOVERY_STATE_BYTES
+	assert (directory / "discovery.json").stat().st_size < 1024
+	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
+	discovered = deploy_process._discovered_mission_workers()
+	assert [(tenant, project) for _, tenant, project in discovered] == [("tenant_one", "project_large")]
+	worker, tenant, project = discovered[0]
+	assert worker.service.mission(tenant, project).title == "large evidence"
+	assert len(worker.schedule_due_cron(tenant, project)) == 1
 
 
 def test_mission_discovery_explicit_tenant_filter_excludes_same_project_other_tenant(monkeypatch, tmp_path):

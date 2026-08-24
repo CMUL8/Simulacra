@@ -265,6 +265,23 @@ class OperationGraphStore:
 		head = self._head()
 		return self.load_revision(head["revision_hash"]) if head else None
 
+	@contextmanager
+	def locked_current_approved_revision(self) -> Iterator[GraphRevision | None]:
+		"""Pin the current head while a downstream admission is committed.
+
+		Callers that durably enqueue work can keep this context open through
+		their own transaction. Revision creation and rollback use the same lock,
+		so the admitted hash cannot stop being current in the cross-store gap.
+		"""
+		with self._locked():
+			current = self.current_revision()
+			if current is not None:
+				try:
+					current = self.require_approved_revision(current.revision_hash)
+				except UnapprovedRevisionError:
+					current = None
+			yield current
+
 	def approve_revision(self, revision_hash: str, *, actor_id: str) -> ApprovalRecord:
 		if not actor_id.strip():
 			raise ValueError("approval actor_id must be explicit")

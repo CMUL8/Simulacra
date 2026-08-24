@@ -17,6 +17,54 @@ from urllib.parse import urlparse
 
 WORKER_SOCKET = Path(os.environ.get("CMUL8_WORKER_SOCKET", "/tmp/cmul8-worker.sock"))
 _MAX_DISCOVERY_STATE_BYTES = 8 * 1024 * 1024
+_DEFAULT_MISSION_CRON_INTERVAL_SECONDS = 15.0
+
+
+def _mission_cron_interval_seconds() -> float:
+	"""Return a bounded scheduler cadence even for malformed configuration."""
+	try:
+		configured = float(os.environ.get("CMUL8_MISSION_CRON_INTERVAL_SECONDS", "15"))
+	except (TypeError, ValueError):
+		configured = _DEFAULT_MISSION_CRON_INTERVAL_SECONDS
+	return min(300.0, max(5.0, configured))
+
+
+def _evaluate_mission_cron(mission_worker: object, tenant_id: str, project_id: str) -> None:
+	"""Keep scheduler/graph failures from affecting worker liveness/readiness."""
+	try:
+		mission_worker.schedule_due_cron(tenant_id, project_id)  # type: ignore[attr-defined]
+	except Exception:
+		pass
+
+
+def _mission_cron_scheduler(
+	stop_event: threading.Event,
+	*,
+	project_only: str | None = None,
+	tenant_only: str | None = None,
+	discover: object | None = None,
+	interval_seconds: float | None = None,
+) -> None:
+	"""Run cron discovery independently from job consumption and health probes."""
+	discover_workers = discover or _discovered_mission_workers
+	interval = _mission_cron_interval_seconds() if interval_seconds is None else max(0.01, interval_seconds)
+	while not stop_event.is_set():
+		try:
+			workers = discover_workers(  # type: ignore[operator]
+				project_only=project_only,
+				tenant_only=tenant_only,
+			)
+		except Exception:
+			workers = []
+		for mission_worker, tenant_id, project_id in workers:
+			if stop_event.is_set():
+				break
+			_evaluate_mission_cron(mission_worker, tenant_id, project_id)
+		# Always wait after a sweep, including failed/slow sweeps. This prevents
+		# malformed state from producing a retry hot loop while remaining promptly
+		# stoppable on SIGTERM/SIGINT.
+		if stop_event.wait(interval):
+			break
 
 
 def _read_discovery_json(root: Path, parts: tuple[str, ...]) -> Mapping[str, object]:
@@ -203,7 +251,12 @@ def _discovered_mission_workers(*, project_only: str | None = None, tenant_only:
     control_root = runs_root / ".mission-control"
     output: list[tuple[object, str, str]] = []
     if control_root.is_symlink() or not control_root.is_dir(): return output
-    for state_path in sorted(control_root.glob("*/*/missions/state.json")):
+    indexes = list(control_root.glob("*/*/missions/discovery.json"))
+    legacy_states = [
+        path for path in control_root.glob("*/*/missions/state.json")
+        if not (path.parent / "discovery.json").exists()
+    ]
+    for state_path in sorted([*indexes, *legacy_states]):
         try:
             # Validate lexical components before any JSON read; discovery never grants
             # authority through a followed link.
@@ -211,7 +264,7 @@ def _discovered_mission_workers(*, project_only: str | None = None, tenant_only:
             relative = state_path.relative_to(control_root)
             if len(relative.parts) != 4: continue
             tenant_id, project_id, missions, filename = relative.parts
-            if missions != "missions" or filename != "state.json" or (project_only and project_id != project_only) or (tenant_only and tenant_id != tenant_only): continue
+            if missions != "missions" or filename not in {"discovery.json", "state.json"} or (project_only and project_id != project_only) or (tenant_only and tenant_id != tenant_only): continue
             lexical = control_root
             for component in (tenant_id, project_id, missions):
                 lexical = lexical / component
@@ -219,9 +272,18 @@ def _discovered_mission_workers(*, project_only: str | None = None, tenant_only:
             if state_path.resolve(strict=True).parent != lexical.resolve(strict=True): raise ValueError("Mission state escapes control root")
             validate_scope_id(tenant_id, "tenant_id"); validate_scope_id(project_id, "project_id")
             state = _read_discovery_json(control_root, tuple(relative.parts))
-            if not isinstance(state.get("mission"), Mapping): continue
-            mission = state["mission"]
-            if (mission.get("tenant_id"), mission.get("project_id")) != (tenant_id, project_id): continue
+            if filename == "discovery.json":
+                if (state.get("tenant_id"), state.get("project_id")) != (tenant_id, project_id): continue
+                if state.get("schema_version") != 1 or not isinstance(state.get("mission_id"), str): continue
+                full_state = lexical / "state.json"
+                if full_state.is_symlink() or not full_state.is_file(): continue
+            else:
+                # One-release migration path. Legacy bounded states can be
+                # discovered once; their next repository mutation publishes
+                # the permanent tiny index. Oversized state is never read here.
+                if not isinstance(state.get("mission"), Mapping): continue
+                mission = state["mission"]
+                if (mission.get("tenant_id"), mission.get("project_id")) != (tenant_id, project_id): continue
             workspace_path = runs_root / project_id
             if workspace_path.is_symlink() or not workspace_path.is_dir(): continue
             workspace = workspace_path.resolve(strict=True)
@@ -259,9 +321,24 @@ def worker() -> int:
 		except (OSError, ValueError, OperationGraphError, RuntimePlaneError):
 			# Explicit confinement must not silently fall back to unrelated projects.
 			pass
+	configured_project = os.environ.get("CMUL8_PROJECT_ID", "").strip() or None
+	configured_tenant = os.environ.get("CMUL8_TENANT_ID", "").strip() or None
+	cron_stop = threading.Event()
+	cron_thread = threading.Thread(
+		target=_mission_cron_scheduler,
+		kwargs={
+			"stop_event": cron_stop,
+			"project_only": configured_project if explicit_requested else None,
+			"tenant_only": configured_tenant if explicit_requested else None,
+		},
+		daemon=True,
+		name="mission-cron-scheduler",
+	)
+	cron_thread.start()
 	def stop(_signum: int, _frame: object) -> None:
 		nonlocal running
 		running = False
+		cron_stop.set()
 		signal_active_codex_process_groups(signal.SIGTERM)
 	signal.signal(signal.SIGTERM, stop)
 	signal.signal(signal.SIGINT, stop)
@@ -280,12 +357,11 @@ def worker() -> int:
 					pass
 			# Mission state is its own durable queue. Explicit project mode remains
 			# confined to the configured project rather than discovering neighbors.
-			configured_project = os.environ.get("CMUL8_PROJECT_ID", "").strip() or None
-			configured_tenant = os.environ.get("CMUL8_TENANT_ID", "").strip() or None
-			for mission_worker, tenant_id, project_id in _discovered_mission_workers(
+			mission_workers = _discovered_mission_workers(
 				project_only=configured_project if explicit_requested else None,
 				tenant_only=configured_tenant if explicit_requested else None,
-			):
+			)
+			for mission_worker, tenant_id, project_id in mission_workers:
 				key = (tenant_id, project_id)
 				thread = mission_threads.get(key)
 				if (thread is None or not thread.is_alive()) and len([item for item in mission_threads.values() if item.is_alive()]) < 2:
@@ -311,6 +387,8 @@ def worker() -> int:
 				# cannot be allowed to kill the durable worker process.
 				continue
 	finally:
+		cron_stop.set()
+		cron_thread.join(timeout=2)
 		signal_active_codex_process_groups(signal.SIGKILL)
 		server.close()
 		WORKER_SOCKET.unlink(missing_ok=True)

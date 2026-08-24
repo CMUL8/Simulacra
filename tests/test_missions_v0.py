@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 
 import pytest
 
 from simulacra.missions import JsonMissionRepository, MissionConflictError, MissionService
+import simulacra.missions.service as mission_service_module
 
 
 def test_mission_vertical_slice_is_durable_and_deterministic(tmp_path):
@@ -51,6 +52,18 @@ def test_mission_rejects_runtime_control_fields(tmp_path):
         service.add_agent("tenant_1", "project_1", {
             "name": "Nope", "role": "Engineer", "mandate": "Nope", "model": "user-choice",
         })
+
+
+def test_repository_rejects_mission_scope_tampering_on_full_state_load(tmp_path):
+    root = tmp_path / "control"
+    service = MissionService(JsonMissionRepository(root))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    state_path = root / "tenant_1" / "project_1" / "missions" / "state.json"
+    state = json.loads(state_path.read_text())
+    state["mission"]["tenant_id"] = "tenant_other"
+    state_path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="mission scope"):
+        service.mission("tenant_1", "project_1")
 
 
 def test_mission_transactions_screen_secrets_and_do_not_lose_agents(tmp_path):
@@ -102,6 +115,77 @@ def test_cron_uses_sunday_zero_and_advances_revision(tmp_path):
     advanced = service.triggers("tenant_1", "project_1")[0]
     assert advanced.revision == 2
     assert datetime.fromisoformat(advanced.next_due_at).weekday() == 6
+
+
+def test_automatic_cron_history_is_bounded_and_continues_past_retention(tmp_path, monkeypatch):
+    occurrence_bound, run_bound = 8, 12
+    monkeypatch.setattr(mission_service_module, "TRIGGER_OCCURRENCE_RETENTION", occurrence_bound)
+    monkeypatch.setattr(mission_service_module, "RUN_HISTORY_RETENTION", run_bound)
+    root = tmp_path / "control"
+    service = MissionService(JsonMissionRepository(root))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "bounded"})
+    trigger = service.add_trigger("tenant_1", "project_1", {"type": "cron", "cron": "* * * * *"})
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    service.repository.mutate(
+        "tenant_1", "project_1",
+        lambda records: records["triggers"][trigger.id].update({"next_due_at": start.isoformat()}),
+    )
+    iterations = occurrence_bound + run_bound + 12
+    referenced_run_ids: list[str] = []
+    for index in range(iterations):
+        created = service.evaluate_cron_due(
+            "tenant_1", "project_1", at=start.replace() + timedelta(minutes=index),
+            verified_contract_revision="approved_graph",
+        )
+        assert len(created) == 1
+        def finish(records, run_id=created[0].id, position=index):
+            records["runs"][run_id].update({
+                "status": "succeeded", "completed_at": datetime.now(UTC).isoformat(),
+            })
+            if position == 0:
+                records["events"]["audit_reference"] = {"run_id": run_id}
+                referenced_run_ids.append(run_id)
+            elif position == 1:
+                records["approvals"]["approval_reference"] = {"run_id": run_id, "status": "closed"}
+                referenced_run_ids.append(run_id)
+            elif position == 2:
+                records["deliverables"]["deliverable_reference"] = {
+                    "validation_evidence": [{"run_id": run_id}],
+                }
+                referenced_run_ids.append(run_id)
+        service.repository.mutate("tenant_1", "project_1", finish)
+    retained_trigger = service.triggers("tenant_1", "project_1")[0]
+    assert len(retained_trigger.handled_occurrences) == occurrence_bound
+    retained_runs = service.runs("tenant_1", "project_1")
+    assert len(retained_runs) <= occurrence_bound + run_bound + len(referenced_run_ids)
+    assert set(referenced_run_ids) <= {run.id for run in retained_runs}
+    state_path = root / "tenant_1" / "project_1" / "missions" / "state.json"
+    assert state_path.stat().st_size < 8 * 1024 * 1024
+    assert len(service.evaluate_cron_due(
+        "tenant_1", "project_1", at=start + timedelta(minutes=iterations),
+        verified_contract_revision="approved_graph",
+    )) == 1
+
+
+def test_automatic_cron_applies_queue_backpressure_without_consuming_due_slot(tmp_path, monkeypatch):
+    monkeypatch.setattr(mission_service_module, "AUTOMATIC_ACTIVE_RUN_LIMIT", 2)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "bounded queue"})
+    trigger = service.add_trigger("tenant_1", "project_1", {"type": "cron", "cron": "* * * * *"})
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    service.repository.mutate(
+        "tenant_1", "project_1",
+        lambda records: records["triggers"][trigger.id].update({"next_due_at": start.isoformat()}),
+    )
+    assert len(service.evaluate_cron_due("tenant_1", "project_1", at=start, verified_contract_revision="graph")) == 1
+    assert len(service.evaluate_cron_due("tenant_1", "project_1", at=start + timedelta(minutes=1), verified_contract_revision="graph")) == 1
+    blocked_due = service.triggers("tenant_1", "project_1")[0].next_due_at
+    assert service.evaluate_cron_due("tenant_1", "project_1", at=start + timedelta(minutes=2), verified_contract_revision="graph") == []
+    deferred = service.triggers("tenant_1", "project_1")[0]
+    assert deferred.next_due_at == blocked_due and len(deferred.handled_occurrences) == 2
+    first = service.runs("tenant_1", "project_1")[0]
+    service.repository.mutate("tenant_1", "project_1", lambda records: records["runs"][first.id].update({"status": "succeeded"}))
+    assert len(service.evaluate_cron_due("tenant_1", "project_1", at=start + timedelta(minutes=2), verified_contract_revision="graph")) == 1
 
 
 def test_skip_due_cron_advances_without_creating_stale_run(tmp_path):
@@ -201,10 +285,9 @@ def test_live_trigger_never_mutates_or_overlaps_invocation(tmp_path, policy):
     assert len(outcome) == 1 and outcome[0].id != original.id and outcome[0].status == "queued" and len(runs) == 2
     assert outcome[0].trigger_snapshot["facts"] == {"ready": True, "nonce": 1}
     handled = service.triggers("tenant_1", "project_1")[0].handled_occurrences
-    assert next(iter(handled.values())) == {
-        "outcome": "queued_after_live" if policy == "replace" else "deferred_live_run",
-        "run_id": outcome[0].id,
-    }
+    handled_value = next(iter(handled.values()))
+    assert handled_value["outcome"] == ("queued_after_live" if policy == "replace" else "deferred_live_run")
+    assert handled_value["run_id"] == outcome[0].id and handled_value["handled_at"]
     assert service.evaluate_due("tenant_1", "project_1", {"ready": True, "nonce": 1})[0].id == outcome[0].id and len(service.runs("tenant_1", "project_1")) == 2
 
 

@@ -202,6 +202,52 @@ def test_actual_approved_graph_revisions_bind_manual_and_due_runs(monkeypatch, t
     assert due["contract_revision"] == mission_routes._service().mission("tenant_api", "project_api").approved_contract_revision == b.revision_hash
 
 
+def test_fact_event_endpoint_never_consumes_cron_and_defers_until_graph_approval(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(mission_routes, "_root", tmp_path / "missions")
+    monkeypatch.setattr(mission_routes, "_rooms", tmp_path / "rooms")
+    monkeypatch.setattr(mission_routes, "audit_request", lambda *args, **kwargs: None)
+    workspace = tmp_path / "project"; workspace.mkdir()
+    monkeypatch.setattr(mission_routes, "project_dir", lambda _id: workspace)
+    owner = _context("owner", "owner"); request = SimpleNamespace(url=SimpleNamespace(path="/test"))
+    CollaborationService(JsonCollaborationRepository(mission_routes._rooms)).create_room(
+        tenant_id="tenant_api", project_id="project_api", creator_id="owner",
+    )
+    mission_routes.bootstrap("project_api", mission_routes.BootstrapBody(title="Launch"), request, owner)
+    cron = mission_routes.create_trigger(
+        "project_api", mission_routes.TriggerBody(type="cron", cron="*/5 * * * *"), request, owner,
+    )
+    condition = mission_routes.create_trigger(
+        "project_api", mission_routes.TriggerBody(type="condition", condition={"fact": "ready", "operator": "eq", "value": True}), request, owner,
+    )
+    service = mission_routes._service()
+    service.repository.mutate(
+        "tenant_api", "project_api",
+        lambda records: records["triggers"][cron["id"]].update({"next_due_at": "2020-01-01T00:00:00+00:00"}),
+    )
+    graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+    graph["metadata"]["tenant_id"] = "tenant_api"; graph["metadata"]["project_id"] = "project_api"
+    store = OperationGraphStore(workspace, tenant_id="tenant_api", project_id="project_api")
+    revision = store.create_revision(graph, expected_revision_hash=None)
+
+    assert mission_routes.evaluate_due(
+        "project_api", mission_routes.DueBody(facts={"ready": True}), request, owner,
+    ) == {"runs": []}
+    before = {item.id: item for item in service.triggers("tenant_api", "project_api")}
+    assert before[cron["id"]].next_due_at == "2020-01-01T00:00:00+00:00"
+    assert before[cron["id"]].handled_occurrences == {}
+    assert before[condition["id"]].handled_occurrences == {}
+
+    store.approve_revision(revision.revision_hash, actor_id="owner")
+    fired = mission_routes.evaluate_due(
+        "project_api", mission_routes.DueBody(facts={"ready": True}), request, owner,
+    )["runs"]
+    assert len(fired) == 1 and fired[0]["trigger_snapshot"]["type"] == "condition"
+    after = {item.id: item for item in service.triggers("tenant_api", "project_api")}
+    assert after[cron["id"]].next_due_at == "2020-01-01T00:00:00+00:00"
+    assert after[cron["id"]].handled_occurrences == {}
+    assert len(after[condition["id"]].handled_occurrences) == 1
+
+
 def test_artifact_descriptor_confinement_cases(monkeypatch, tmp_path: Path):
     workspace = tmp_path / "project"; workspace.mkdir()
     nested = workspace / "nested"; nested.mkdir(); payload = nested / "ok.bin"; payload.write_bytes(b"exact")
@@ -236,10 +282,11 @@ def test_graph_admission_rejects_unapproved_and_corrupt_without_mutation(monkeyp
     store = OperationGraphStore(workspace, tenant_id="tenant_api", project_id="project_api")
     revision = store.create_revision(graph, expected_revision_hash=None)
     before = mission_routes._service().mission("tenant_api", "project_api"); count = len(mission_routes._service().runs("tenant_api", "project_api"))
-    for invoke in (lambda: mission_routes.create_run("project_api", mission_routes.RunBody(), request, owner), lambda: mission_routes.evaluate_due("project_api", mission_routes.DueBody(facts={"ready": True}), request, owner)):
-        with pytest.raises(HTTPException): invoke()
-        after = mission_routes._service().mission("tenant_api", "project_api")
-        assert len(mission_routes._service().runs("tenant_api", "project_api")) == count and after.revision == before.revision and after.approved_contract_revision is None
+    with pytest.raises(HTTPException):
+        mission_routes.create_run("project_api", mission_routes.RunBody(), request, owner)
+    assert mission_routes.evaluate_due("project_api", mission_routes.DueBody(facts={"ready": True}), request, owner) == {"runs": []}
+    after = mission_routes._service().mission("tenant_api", "project_api")
+    assert len(mission_routes._service().runs("tenant_api", "project_api")) == count and after.revision == before.revision and after.approved_contract_revision is None
     (store._revisions / f"{revision.revision_hash}.json").write_text("{")
     with pytest.raises(HTTPException):
         mission_routes.create_run("project_api", mission_routes.RunBody(), request, owner)

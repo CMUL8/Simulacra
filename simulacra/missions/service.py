@@ -40,6 +40,9 @@ _MISSION_TOOLS = frozenset({"document.read", "code.read", "artifact.write", "cod
 EVENT_RETENTION = 2000
 APPROVAL_RETENTION = 500
 OVERVIEW_RETENTION = 100
+TRIGGER_OCCURRENCE_RETENTION = 128
+RUN_HISTORY_RETENTION = 256
+AUTOMATIC_ACTIVE_RUN_LIMIT = 128
 
 
 def _safe_value(value: Any, depth: int = 0) -> Any:
@@ -527,6 +530,51 @@ class MissionService:
         return f"{trigger.id}:{hash_artifact(payload)}"
 
     @staticmethod
+    def _cap_trigger_occurrences(records: dict[str, Any], trigger: AutomationTrigger) -> None:
+        stale = sorted(
+            trigger.handled_occurrences.items(),
+            key=lambda item: (str(item[1].get("handled_at", "")), item[0]),
+        )[:-TRIGGER_OCCURRENCE_RETENTION]
+        for key, _ in stale:
+            trigger.handled_occurrences.pop(key, None)
+        if stale:
+            retention = records.setdefault("retention", {})
+            retention["dropped_occurrences"] = int(retention.get("dropped_occurrences", 0)) + len(stale)
+
+    @staticmethod
+    def _prune_terminal_runs(records: dict[str, Any]) -> None:
+        """Bound unreferenced history while retaining every live/evidenced Run."""
+        referenced: set[str] = set()
+        for approval in records["approvals"].values():
+            if isinstance(approval.get("run_id"), str):
+                referenced.add(approval["run_id"])
+        for event in records["events"].values():
+            if isinstance(event.get("run_id"), str):
+                referenced.add(event["run_id"])
+        for trigger in records["triggers"].values():
+            for handled in trigger.get("handled_occurrences", {}).values():
+                if isinstance(handled.get("run_id"), str):
+                    referenced.add(handled["run_id"])
+        for deliverable in records["deliverables"].values():
+            for evidence in deliverable.get("validation_evidence", []):
+                if isinstance(evidence, Mapping) and isinstance(evidence.get("run_id"), str):
+                    referenced.add(evidence["run_id"])
+        terminal = sorted(
+            (
+                (run_id, raw) for run_id, raw in records["runs"].items()
+                if raw.get("status") in {"succeeded", "failed", "cancelled", "expired"}
+                and run_id not in referenced
+            ),
+            key=lambda item: (str(item[1].get("completed_at") or item[1].get("updated_at") or ""), item[0]),
+        )
+        stale = terminal[:-RUN_HISTORY_RETENTION]
+        for run_id, _ in stale:
+            records["runs"].pop(run_id, None)
+        if stale:
+            retention = records.setdefault("retention", {})
+            retention["dropped_runs"] = int(retention.get("dropped_runs", 0)) + len(stale)
+
+    @staticmethod
     def _trigger_time(trigger: AutomationTrigger, at: datetime | None) -> datetime:
         from zoneinfo import ZoneInfo
         zone = ZoneInfo(trigger.timezone)
@@ -536,18 +584,47 @@ class MissionService:
             return at.replace(tzinfo=zone)
         return at.astimezone(zone)
 
-    def evaluate_due(self, tenant_id: str, project_id: str, facts: Mapping[str, Any] | None = None, at: datetime | None = None, verified_contract_revision: str | None = None) -> list[MissionRun]:
+    def evaluate_due(
+        self,
+        tenant_id: str,
+        project_id: str,
+        facts: Mapping[str, Any] | None = None,
+        at: datetime | None = None,
+        verified_contract_revision: str | None = None,
+        *,
+        trigger_types: frozenset[str] | None = None,
+        require_verified_contract: bool = False,
+        active_run_limit: int | None = None,
+    ) -> list[MissionRun]:
         facts = facts or {}
         clean_public_mapping(facts)
 
         def mutate(records: dict[str, Any]) -> list[MissionRun]:
-            self._mission(records)
+            mission = self._mission(records)
+            # Automatic scheduling must present a non-empty revision that its
+            # caller has verified against the graph store. The worker pins that
+            # exact approved head through this mutation; _create_run_locked then
+            # records it on the Mission and Run as one atomic state change.
+            if require_verified_contract and not verified_contract_revision:
+                return []
             outcome: list[MissionRun] = []
             for raw in records["triggers"].values():
                 trigger = AutomationTrigger.from_dict(raw)
+                occurrence_count = len(trigger.handled_occurrences)
+                self._cap_trigger_occurrences(records, trigger)
+                if len(trigger.handled_occurrences) != occurrence_count:
+                    trigger.revision += 1
+                    trigger.updated_at = now()
+                    records["triggers"][trigger.id] = trigger.to_dict()
+                if trigger_types is not None and trigger.type not in trigger_types:
+                    continue
                 due_at = self._trigger_time(trigger, at)
                 is_due = trigger.enabled and (
-                    trigger.type == "condition" and condition_matches(trigger.condition or {}, facts)
+                    # Empty fact sets are not events. In particular, `ne` must
+                    # not turn a scheduler poll into a synthetic condition hit.
+                    trigger.type == "condition" and bool(facts)
+                    and str((trigger.condition or {}).get("fact", "")) in facts
+                    and condition_matches(trigger.condition or {}, facts)
                     or trigger.type == "cron" and trigger.next_due_at is not None and datetime.fromisoformat(trigger.next_due_at) <= due_at
                 )
                 if not is_due:
@@ -570,8 +647,17 @@ class MissionService:
                 active = [MissionRun.from_dict(row) for row in records["runs"].values() if row["status"] in ACTIVE_RUN_STATUSES]
                 owned = [run for run in active if run.mission_id == trigger.mission_id]
                 live = [run for run in owned if run.status == "running" or run.lease_owner or run.invocation_started_at]
+                would_create = not (
+                    trigger.concurrency_policy == "skip" and owned
+                    or trigger.concurrency_policy == "merge" and owned and not live
+                )
+                if would_create and active_run_limit is not None and len(active) >= active_run_limit:
+                    # Automatic scheduling applies durable backpressure. Do not
+                    # consume or advance this occurrence until queue capacity exists.
+                    continue
                 if trigger.concurrency_policy == "skip" and owned:
-                    trigger.handled_occurrences[key] = {"outcome": "skipped"}
+                    trigger.handled_occurrences[key] = {"outcome": "skipped", "handled_at": now()}
+                    self._cap_trigger_occurrences(records, trigger)
                     if trigger.type == "cron":
                         trigger.next_due_at = next_cron_due(trigger.cron or "", trigger.timezone, due_at).isoformat()
                         trigger.revision += 1
@@ -607,11 +693,12 @@ class MissionService:
                         run.updated_at = now()
                         records["runs"][run.id] = run.to_dict()
                     outcome.append(run)
-                    trigger.handled_occurrences[key] = {"outcome": "merged", "run_id": run.id}
+                    trigger.handled_occurrences[key] = {"outcome": "merged", "run_id": run.id, "handled_at": now()}
                 else:
                     created = self._create_run_locked(records, tenant_id, project_id, {"type": trigger.type, "trigger_id": trigger.id, "facts": facts}, "balanced", key, verified_contract_revision)
                     outcome.append(created)
-                    trigger.handled_occurrences[key] = {"outcome": "deferred_live_run" if trigger.concurrency_policy == "merge" and live else replacement_outcome, "run_id": created.id}
+                    trigger.handled_occurrences[key] = {"outcome": "deferred_live_run" if trigger.concurrency_policy == "merge" and live else replacement_outcome, "run_id": created.id, "handled_at": now()}
+                self._cap_trigger_occurrences(records, trigger)
                 if trigger.type == "cron":
                     trigger.next_due_at = next_cron_due(trigger.cron or "", trigger.timezone, due_at).isoformat()
                     trigger.revision += 1
@@ -621,9 +708,54 @@ class MissionService:
                     trigger.revision += 1
                     trigger.updated_at = now()
                     records["triggers"][trigger.id] = trigger.to_dict()
+            self._prune_terminal_runs(records)
             return outcome
 
         return self.repository.mutate(tenant_id, project_id, mutate)
+
+    def evaluate_cron_due(
+        self,
+        tenant_id: str,
+        project_id: str,
+        *,
+        at: datetime | None = None,
+        verified_contract_revision: str | None,
+    ) -> list[MissionRun]:
+        """Evaluate only durable cron occurrences for the automatic worker.
+
+        Condition triggers intentionally remain fact/event-driven through
+        :meth:`evaluate_due`; an empty scheduler fact set can never fire them.
+        """
+        return self.evaluate_due(
+            tenant_id,
+            project_id,
+            {},
+            at,
+            verified_contract_revision,
+            trigger_types=frozenset({"cron"}),
+            require_verified_contract=True,
+            active_run_limit=AUTOMATIC_ACTIVE_RUN_LIMIT,
+        )
+
+    def evaluate_condition_due(
+        self,
+        tenant_id: str,
+        project_id: str,
+        facts: Mapping[str, Any],
+        *,
+        at: datetime | None = None,
+        verified_contract_revision: str | None,
+    ) -> list[MissionRun]:
+        """Evaluate only fact/event conditions against a verified graph head."""
+        return self.evaluate_due(
+            tenant_id,
+            project_id,
+            facts,
+            at,
+            verified_contract_revision,
+            trigger_types=frozenset({"condition"}),
+            require_verified_contract=True,
+        )
 
     def deliverables(self, tenant_id: str, project_id: str) -> list[Deliverable]:
         return self._records(tenant_id, project_id, "deliverables", Deliverable)

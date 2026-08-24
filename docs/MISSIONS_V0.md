@@ -20,10 +20,33 @@ Codex enforces the tool cap at the N+1 lifecycle start notification, before
 that tool can complete; completion-only protocol streams are bounded
 conservatively as a fail-closed fallback.
 
-Automation is explicit in V0: clients call `POST .../automation/evaluate-due` with
-typed facts. Cron expressions are evaluated deterministically; conditions are a bounded
-`fact`/`operator`/`value` comparison and never execute code or invoke a model. Repeating
-an occurrence creates no duplicate Run.
+Cron automation is evaluated automatically by the durable worker on a bounded cadence
+(15 seconds by default, configurable from 5–300 seconds). A due occurrence is enqueued
+only when the workspace's current Operation Graph revision has an exact approval. The
+worker pins that graph head while atomically recording the same contract hash on the
+Mission and Run. If approval is missing, the occurrence remains unhandled and is retried
+after approval. Repository locking plus the durable occurrence ledger prevents duplicate
+Runs across repeated ticks or multiple worker replicas.
+
+The scheduler runs in its own stoppable worker thread, so a long runtime job or health
+probe cannot delay cron discovery. Automatic queues apply bounded backpressure at 128
+active Runs. Each trigger retains its latest 128 handled occurrences, and unreferenced
+terminal Run history retains the latest 256 records. Active Runs and terminal Runs still
+referenced by approvals, deliverables, trajectory events, or the retained occurrence
+ledger are never pruned.
+
+Worker discovery reads a separate atomic, scope-only `discovery.json` index rather than
+the evidence-bearing `state.json`. The index remains tiny and descriptor-safe even when
+human-verification evidence and deliverables must be retained beyond 8 MiB; the full
+repository still validates its tenant/project scope before scheduler or consumer use.
+Legacy bounded state without an index is accepted for one migration cycle; its next
+repository mutation publishes the index. Oversized evidence state is never used as a
+discovery document.
+
+Condition automation remains explicitly fact/event-driven in V0: clients call
+`POST .../automation/evaluate-due` with typed facts. Conditions are a bounded
+`fact`/`operator`/`value` comparison and never execute code or invoke a model. Empty
+facts never fire a condition. Repeating an occurrence creates no duplicate Run.
 Cron uses numeric five-field expressions: wildcards, numbers, lists, ranges, and
 steps (`*/N` or `A-B/N`); day-of-week accepts both `0` and `7` for Sunday.
 
