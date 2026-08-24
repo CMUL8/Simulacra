@@ -7,8 +7,11 @@ export interface RoomMember { id: string; name: string; role: string; kind?: "hu
 export interface RoomTask extends ProjectTask { durableState: DurableTaskState; revision: number; }
 export interface ProjectRoomPermissions { manageTasks: boolean; reviewTasks: boolean; reviewGraph: boolean; handoff: boolean; invite: boolean; comment: boolean; }
 export interface ProjectRoomFeatureAdapter {
+  addMember(memberId: string, role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver", expectedRevision: number): Promise<void>;
+  claimTask(taskId: string, expectedRevision: number): Promise<void>;
   transitionTask(taskId: string, state: DurableTaskState, expectedRevision: number): Promise<void>;
   submitTaskReview(taskId: string, decision: ReviewDecision, note: string | undefined, expectedRevision: number): Promise<void>;
+  markInboxRead(eventId?: string): Promise<void>;
   reconnect(): Promise<void>;
   approveGraph(revisionHash: string): Promise<void>;
   addComment(revisionId: string, body: string, section?: string): Promise<GraphComment>;
@@ -17,9 +20,9 @@ export interface ProjectRoomFeatureAdapter {
 }
 
 export interface ProjectRoomModel {
-  id: string; name: string; context: ConversationContext; members: RoomMember[]; tasks: RoomTask[]; graph?: OperationGraphRevision;
+  id: string; name: string; revision: number; context: ConversationContext; members: RoomMember[]; tasks: RoomTask[]; graph?: OperationGraphRevision;
   workEvents: WorkEvent[]; connectionState: "connected" | "disconnected" | "unknown"; deployments: DeploymentHealth[]; versions: VersionHandoff[]; selectedVersionId?: string;
-  activity?: ActivityItem[]; awaySummary?: AwaySummary;
+  activity?: ActivityItem[]; inbox?: ActivityItem[]; awaySummary?: AwaySummary;
 }
 export interface ProjectRoomProps {
   room?: ProjectRoomModel; state?: AsyncState; permissions?: ProjectRoomPermissions;

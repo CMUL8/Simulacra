@@ -26,6 +26,10 @@ class GraphParseError(OperationGraphError):
 	"""The serialized graph could not be parsed."""
 
 
+class CredentialPolicyError(OperationGraphError, ValueError):
+	"""Connector configuration includes a raw credential rather than a reference."""
+
+
 class RevisionConflictError(OperationGraphError):
 	"""The expected head revision does not match the persisted head."""
 

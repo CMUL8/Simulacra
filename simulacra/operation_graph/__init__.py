@@ -1,6 +1,7 @@
 from .codec import canonical_json_bytes, deterministic_json, load_operation_graph, parse_operation_graph
 from .diff import StructuralDiff, structural_diff
 from .errors import (
+	CredentialPolicyError,
 	GraphParseError,
 	GraphValidationError,
 	OperationGraphError,
@@ -18,6 +19,7 @@ __all__ = [
 	"AREAS",
 	"SCHEMA_ID",
 	"ApprovalRecord",
+	"CredentialPolicyError",
 	"GraphParseError",
 	"GraphRevision",
 	"GraphValidationError",

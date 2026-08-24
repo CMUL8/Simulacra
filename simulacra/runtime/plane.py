@@ -31,7 +31,7 @@ class RuntimePlane:
 	outages, while every service stays bound to the approved revision hash.
 	"""
 
-	def __init__(self, repository: JsonRuntimeRepository, approved_graph: ApprovedGraph, environment_id: str, *, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, RuntimeTool] | None = None):
+	def __init__(self, repository: JsonRuntimeRepository, approved_graph: ApprovedGraph, environment_id: str, *, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, RuntimeTool] | None = None, observability_repository: object | None = None):
 		if not isinstance(approved_graph, ApprovedGraph):
 			raise TypeError("runtime plane requires an ApprovedGraph")
 		approved_graph.assert_verified()
@@ -47,12 +47,12 @@ class RuntimePlane:
 		self.scheduler = Scheduler(repository, approved_graph, environment_id)
 		self.agents = RuntimeAgentSupervisor(approved_graph, agent_tools, action_gateway=self.actions)
 		self.audit = AuditService(repository, approved_graph, environment_id)
-		self.telemetry = TelemetryService(repository, approved_graph, environment_id)
+		self.telemetry = TelemetryService(repository, approved_graph, environment_id, observability_repository=observability_repository)
 		self.health = HealthService(repository, approved_graph, environment_id)
 
 	@classmethod
-	def from_approved_revision(cls, repository_root: str | Path, graph_store: OperationGraphStore, revision_hash: str, *, environment_id: str, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, RuntimeTool] | None = None) -> "RuntimePlane":
+	def from_approved_revision(cls, repository_root: str | Path, graph_store: OperationGraphStore, revision_hash: str, *, environment_id: str, connector_executors: Mapping[str, ConnectorExecutor] | None = None, agent_tools: Mapping[str, RuntimeTool] | None = None, observability_repository: object | None = None) -> "RuntimePlane":
 		approved = ApprovedGraph.from_store(graph_store, revision_hash)
-		return cls(JsonRuntimeRepository(repository_root), approved, environment_id, connector_executors=connector_executors, agent_tools=agent_tools)
+		return cls(JsonRuntimeRepository(repository_root), approved, environment_id, connector_executors=connector_executors, agent_tools=agent_tools, observability_repository=observability_repository)
 
 	bootstrap = from_approved_revision

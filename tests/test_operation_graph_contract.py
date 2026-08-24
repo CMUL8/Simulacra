@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from simulacra.operation_graph import (
+	CredentialPolicyError,
+	GraphRevision,
 	GraphParseError,
 	GraphValidationError,
 	METADATA_FIELDS,
@@ -159,6 +161,129 @@ def test_revision_hash_verification_detects_tampering(tmp_path: Path):
 	path.write_text(deterministic_json(record, indent=2))
 	with pytest.raises(ValueError, match="content hash verification"):
 		store.load_revision(revision.revision_hash)
+
+
+def test_raw_connector_credentials_are_rejected_before_any_immutable_write(tmp_path: Path):
+	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support")
+	sentinel = "sk-operation-graph-secret-sentinel"
+	for configuration in (
+		{"nested": [{"clientSecret": sentinel}]},
+		{"callback": f"https://connector.invalid/path?apiKey={sentinel}"},
+		{"headers": {"value": f"Bearer {sentinel}"}},
+	):
+		graph = example_graph()
+		graph["connectors"][0]["configuration"] = configuration
+		with pytest.raises(CredentialPolicyError) as raised:
+			store.create_revision(graph, expected_revision_hash=None)
+		assert sentinel not in str(raised.value)
+	storage = tmp_path / ".simulacra" / "operation-graph"
+	assert list((storage / "revisions").glob("*.json")) == []
+	assert not (storage / "head.json").exists()
+	assert list((storage / "approvals").glob("*.json")) == []
+
+
+def test_opaque_connector_credential_references_are_accepted(tmp_path: Path):
+	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support")
+	graph = example_graph()
+	graph["connectors"][0]["configuration"] = {
+		"credential_ref": "vault-connector",
+		"nested": {"tokenRef": "vault-token", "api_key_ref": "vault-api-key", "secret_ref": "vault-secret"},
+		"headers": [
+			{"name": "Content-Type", "value": "application/json"},
+			{"name": "Authorization", "value_ref": "vault-authorization"},
+		],
+		"query": [{"key": "apiKey", "value": {"api_key_ref": "vault-query-api-key"}}],
+	}
+
+	revision = store.create_revision(graph, expected_revision_hash=None)
+	approval = store.approve_revision(revision.revision_hash, actor_id="reviewer")
+
+	assert approval.revision_hash == revision.revision_hash
+	assert store.require_approved_revision(revision.revision_hash).graph == graph
+
+
+@pytest.mark.parametrize("configuration", [
+	{"headers": [{"name": "Authorization", "value": "opaque-looking-raw-secret"}]},
+	{"query": [{"key": "api_key", "value": "opaque-looking-raw-secret"}]},
+	{"nested": [{"headerName": "Authorization", "headerValue": "opaque-looking-raw-secret"}]},
+	{"headers": [{"name": "Authorization", "value": "opaque-looking-raw-secret", "value_ref": "vault-auth"}]},
+	{"headers": [{"name": "Authorization", "value": "opaque-looking-raw-secret", "header_value": {"value_ref": "vault-decoy"}}]},
+	{"headers": [{"name": "Authorization", "headerValue": "opaque-looking-raw-secret", "header_value": {"value_ref": "vault-decoy"}}]},
+	{"headers": [{"name": "Authorization", "queryValue": "opaque-looking-raw-secret", "parameterValue": {"value_ref": "vault-decoy"}}]},
+])
+def test_contextual_connector_credentials_are_rejected_before_writes(tmp_path: Path, configuration: dict):
+	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support")
+	graph = example_graph()
+	graph["connectors"][0]["configuration"] = configuration
+	with pytest.raises(CredentialPolicyError, match="credential-like") as raised:
+		store.create_revision(graph, expected_revision_hash=None)
+	assert "opaque-looking-raw-secret" not in str(raised.value)
+	storage = tmp_path / ".simulacra" / "operation-graph"
+	assert list((storage / "revisions").glob("*.json")) == []
+	assert not (storage / "head.json").exists()
+
+
+@pytest.mark.parametrize("configuration", [
+	{"headers": [{"name": "Authorization", "value": "opaque-looking-raw-secret"}]},
+	{"query": [{"key": "api_key", "value": "opaque-looking-raw-secret"}]},
+	{"nested": [{"parameterName": "apiKey", "parameterValue": "opaque-looking-raw-secret"}]},
+])
+def test_legacy_contextual_connector_credentials_are_rejected_on_load(tmp_path: Path, configuration: dict):
+	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support")
+	unsafe = example_graph()
+	unsafe["connectors"][0]["configuration"] = configuration
+	revision_hash = hashlib.sha256(canonical_json_bytes(unsafe)).hexdigest()
+	store._write_immutable(store._revisions / f"{revision_hash}.json", {
+		"schema_version": "cmul8.operation-graph.store.v0",
+		"tenant_id": "tenant_acme", "project_id": "project_support", "revision": 1,
+		"revision_hash": revision_hash, "created_at": "2026-08-23T00:00:00Z",
+		"updated_at": "2026-08-23T00:00:00Z", "graph": unsafe,
+	})
+	with pytest.raises(CredentialPolicyError, match="credential-like") as raised:
+		store.load_revision(revision_hash)
+	assert "opaque-looking-raw-secret" not in str(raised.value)
+
+
+def test_legacy_unsafe_revision_is_rejected_on_every_graph_read_boundary(tmp_path: Path):
+	store = OperationGraphStore(tmp_path, tenant_id="tenant_acme", project_id="project_support")
+	unsafe = example_graph()
+	sentinel = "sk-legacy-unsafe-graph-sentinel"
+	unsafe["connectors"][0]["configuration"] = {"nested": {"apiKey": sentinel}}
+	revision_hash = hashlib.sha256(canonical_json_bytes(unsafe)).hexdigest()
+	record = GraphRevision(
+		schema_version="cmul8.operation-graph.store.v0",
+		tenant_id="tenant_acme",
+		project_id="project_support",
+		revision=1,
+		revision_hash=revision_hash,
+		created_at="2026-08-23T00:00:00Z",
+		updated_at="2026-08-23T00:00:00Z",
+		graph=unsafe,
+	)
+	store._write_immutable(store._revisions / f"{revision_hash}.json", record.__dict__)
+	store._atomic_write(store._root / "head.json", {
+		"schema_version": "cmul8.operation-graph.store.v0",
+		"tenant_id": "tenant_acme",
+		"project_id": "project_support",
+		"revision": 1,
+		"revision_hash": revision_hash,
+		"created_at": record.created_at,
+		"updated_at": record.updated_at,
+	})
+
+	for read in (
+		lambda: store.load_revision(revision_hash),
+		lambda: store.current_revision(),
+		lambda: store.list_revisions(),
+		lambda: store.approve_revision(revision_hash, actor_id="reviewer"),
+		lambda: store.require_approved_revision(revision_hash),
+		lambda: store.rollback_to(revision_hash, expected_revision_hash=revision_hash, actor_id="reviewer", reason="legacy"),
+	):
+		with pytest.raises(CredentialPolicyError) as raised:
+			read()
+		assert sentinel not in str(raised.value)
+	assert list((store._approvals).glob("*.json")) == []
+	assert list((store._rollbacks).glob("*.json")) == []
 
 
 def test_historical_content_requires_audited_rollback_instead_of_create(tmp_path: Path):

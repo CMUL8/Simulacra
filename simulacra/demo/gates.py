@@ -25,7 +25,9 @@ def run_gates(project_id: str, *, min_rows: int = 1) -> dict[str, Any]:
 		record("manifest_present", True, "manifest.json found")
 		manifest = json.loads(manifest_path.read_text())
 		schema = manifest.get("artifacts", [{}])[0].get("schema", [])
-		record("schema_match", bool(schema), f"{len(schema)} columns declared")
+		schema_ok = bool(schema) or min_rows == 0
+		detail = f"{len(schema)} columns declared" if schema else "empty dataset; schema comes from approved Operation Graph"
+		record("schema_match", schema_ok, detail)
 
 	# row_count_bounds
 	parquet = root / "outputs" / "table.parquet"
@@ -43,7 +45,7 @@ def run_gates(project_id: str, *, min_rows: int = 1) -> dict[str, Any]:
 		if path.is_file() and path.suffix in {".parquet", ".json", ".md"}:
 			rel = path.relative_to(root)
 			parts = rel.parts
-			if parts[0] not in ("outputs", "app", "audit", "work") and rel.name not in (
+			if parts[0] not in ("outputs", "app", "audit", "work", ".simulacra", ".cmul8") and rel.name not in (
 				"state.json",
 				"simulacra.yaml",
 			):

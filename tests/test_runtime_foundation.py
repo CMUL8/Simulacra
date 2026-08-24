@@ -95,15 +95,17 @@ def test_approved_graph_requires_auditable_factory_and_is_deeply_immutable(tmp_p
 		{"nested": {"clientSecret": "raw"}},
 	],
 )
-def test_nested_connector_credentials_are_rejected_after_graph_approval(tmp_path: Path, configuration: dict):
+def test_nested_connector_credentials_are_rejected_before_graph_persistence(tmp_path: Path, configuration: dict):
 	project = tmp_path / "project"; project.mkdir()
 	store = OperationGraphStore(project, tenant_id="tenant_acme", project_id="project_support")
 	configured = graph()
 	configured["connectors"][0]["configuration"] = configuration
-	revision = store.create_revision(configured, expected_revision_hash=None)
-	store.approve_revision(revision.revision_hash, actor_id="reviewer")
-	with pytest.raises(CredentialPolicyError, match="connector.*configuration"):
-		RuntimePlane.from_approved_revision(tmp_path / "runtime", store, revision.revision_hash, environment_id="env_prod")
+	with pytest.raises(ValueError, match="credential-like"):
+		store.create_revision(configured, expected_revision_hash=None)
+	storage = project / ".simulacra" / "operation-graph"
+	assert list((storage / "revisions").glob("*.json")) == []
+	assert not (storage / "head.json").exists()
+	assert list((storage / "approvals").glob("*.json")) == []
 
 
 @pytest.mark.parametrize(
@@ -115,6 +117,8 @@ def test_nested_connector_credentials_are_rejected_after_graph_approval(tmp_path
 		{"callback": "https://user:password@example.invalid/path"},
 		{"nested": {"private_key": "-----BEGIN PRIVATE KEY-----"}},
 		{"nested": {"accessToken": "raw"}},
+		{"headers": [{"name": "Authorization", "value": "opaque-looking-raw-secret"}]},
+		{"query": [{"key": "api_key", "value": "opaque-looking-raw-secret"}]},
 	],
 )
 def test_nested_action_credentials_fail_before_durable_persistence(tmp_path: Path, payload: dict):
@@ -177,6 +181,45 @@ def test_action_retry_backoff_and_dead_letter(tmp_path: Path):
 	current += timedelta(seconds=1)
 	with pytest.raises(Exception): plane.actions.retry(action.id)
 	assert plane.actions.dead_letters()[0].status == "dead_letter"
+
+
+@pytest.mark.parametrize("mode", ["exception", "result"])
+def test_connector_secrets_never_persist_from_errors_or_results(tmp_path: Path, mode: str):
+	secret = "sk-super-secret-connector-value"
+	def connector(connector, operation, payload, idempotency_key):
+		if mode == "exception":
+			raise OSError(f"upstream rejected {secret}")
+		return {"accessToken": secret}
+	plane = approved_plane(tmp_path / mode, executors={"connector_support": connector})
+
+	with pytest.raises(Exception, match="connector execution failed"):
+		plane.actions.submit(
+			"connector_support", "read", {}, requester_id="alice",
+			idempotency_key=f"secret-{mode}", max_attempts=1,
+		)
+
+	action = plane.repository.list_actions("tenant_acme", "env_prod", "project_support")[0]
+	assert action.status == "dead_letter" and action.error == "connector execution failed"
+	assert secret not in (plane.repository.root / "tenant_acme/env_prod/project_support/runtime/state.json").read_text()
+
+
+def test_contextual_connector_result_credentials_never_persist(tmp_path: Path):
+	secret = "opaque-looking-raw-secret"
+	def connector(connector, operation, payload, idempotency_key):
+		return {"headers": [{
+			"name": "Authorization",
+			"value": secret,
+			"header_value": {"value_ref": "vault-decoy"},
+		}]}
+	plane = approved_plane(tmp_path, executors={"connector_support": connector})
+
+	with pytest.raises(Exception, match="connector execution failed") as raised:
+		plane.actions.submit("connector_support", "read", {}, requester_id="alice", idempotency_key="contextual-result", max_attempts=1)
+	assert secret not in str(raised.value)
+
+	action = plane.repository.list_actions("tenant_acme", "env_prod", "project_support")[0]
+	assert action.status == "dead_letter" and action.result is None
+	assert secret not in (plane.repository.root / "tenant_acme/env_prod/project_support/runtime/state.json").read_text()
 
 
 def test_pending_action_and_approval_are_atomic_across_interruption(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -268,6 +311,23 @@ def test_scheduler_retry_backoff_dead_letter_and_restart(tmp_path: Path):
 	claimed = plane.scheduler.claim("worker"); assert claimed is not None
 	dead = plane.scheduler.fail(claimed.id, worker_id="worker", error="offline")
 	assert dead.status == "dead_letter" and plane.scheduler.dead_letters() == [dead]
+
+
+def test_scheduler_failure_text_is_not_persisted_from_direct_or_handler_errors(tmp_path: Path):
+	plane = approved_plane(tmp_path)
+	sentinel = "sk-scheduler-error-sentinel"
+	job = plane.scheduler.enqueue("direct", {}, max_attempts=1)
+	claimed = plane.scheduler.claim("worker")
+	assert claimed is not None and claimed.id == job.id
+	direct = plane.scheduler.fail(job.id, worker_id="worker", error=sentinel)
+	assert direct.last_error == "job execution failed"
+	assert sentinel not in (plane.repository.root / "tenant_acme/env_prod/project_support/runtime/state.json").read_text()
+
+	job = plane.scheduler.enqueue("handler", {}, max_attempts=1)
+	failed = plane.scheduler.run_once("worker", {"handler": lambda _payload: (_ for _ in ()).throw(RuntimeError(sentinel))})
+	assert failed is not None and failed.id == job.id and failed.last_error == "job execution failed"
+	state = (plane.repository.root / "tenant_acme/env_prod/project_support/runtime/state.json").read_text()
+	assert sentinel not in state
 
 
 def test_scheduler_expired_lease_crash_loops_consume_attempts_and_dead_letter(tmp_path: Path):

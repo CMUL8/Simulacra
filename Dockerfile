@@ -14,13 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 	&& curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 	&& apt-get install -y --no-install-recommends nodejs \
 	&& rm -rf /var/lib/apt/lists/*
-# Prime Agent needs a writable npm prefix (installer uses npm install -g)
-ENV NPM_CONFIG_PREFIX=/opt/prime
-ENV PATH="/opt/prime/bin:/usr/local/bin:${PATH}"
-RUN mkdir -p /opt/prime \
-	&& curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh \
-	&& command -v prime-agent \
-	&& prime-agent --version || true
+# The operational builder uses the official Codex app-server protocol.
+ENV NPM_CONFIG_PREFIX=/opt/codex
+ENV PATH="/opt/codex/bin:/usr/local/bin:${PATH}"
+RUN mkdir -p /opt/codex \
+	&& npm install -g @openai/codex@0.148.0 \
+	&& command -v codex \
+	&& codex --version
 COPY pyproject.toml README.md ./
 COPY simulacra ./simulacra
 COPY apps ./apps
@@ -37,13 +37,12 @@ RUN pip install --no-cache-dir -e ".[demo]" \
 	done \
 	&& groupadd --gid 65532 cmul8 \
 	&& useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin cmul8 \
-	&& mkdir -p /app/data /app/runs \
+	&& mkdir -p /app/data/codex /app/runs \
 	&& chown -R 65532:65532 /app/data /app/runs
 ENV SIMULACRA_AUTH_REQUIRED=1
-ENV SIMULACRA_USE_PRIME=1
-# OpenRouter model id (auth via OPENROUTER_API_KEY)
-ENV SIMULACRA_PRIME_PROVIDER=openrouter
-ENV SIMULACRA_PRIME_MODEL=deepseek/deepseek-v4-pro
+ENV CMUL8_AGENT_HARNESS=codex
+ENV CMUL8_MODEL_PROVIDER=openai
+ENV CODEX_HOME=/app/data/codex
 ENV SIMULACRA_SANDBOX=worktree
 ENV PYTHONPATH=/app
 ENV PORT=8000

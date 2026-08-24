@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from apps.api.security import audit_request, get_auth, require_perm, require_project_access
+from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
 from simulacra.demo.checkpoints import list_checkpoints
 from simulacra.demo.design_brief import merge_brief, update_project_brief
 from simulacra.demo.duckdb_engine import query
@@ -51,6 +52,7 @@ from simulacra.demo.pipeline import (
 	start_approve_build,
 	start_follow_up,
 )
+from simulacra.demo.operation_graph_builder import approved_graph_path, propose_operation_graph
 from simulacra.demo.runs import (
 	activate_chat,
 	chat_summaries,
@@ -59,6 +61,7 @@ from simulacra.demo.runs import (
 	delete_chat,
 	list_projects,
 	load_state,
+	ProjectState,
 	project_dir,
 	save_state,
 )
@@ -74,11 +77,46 @@ from simulacra.demo.tenants import (
 )
 from simulacra.env import load_dotenv
 from simulacra.resolve import resolve_prime_agent
+from simulacra.operation_graph import OperationGraphStore
+from simulacra.operation_graph.errors import OperationGraphError, UnapprovedRevisionError
+from simulacra.collaboration.errors import CollaborationError
 from apps.api.cmul8_routes import router as cmul8_router
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("simulacra.api")
+_collaboration_root = RUNS_DIR / ".cmul8-control"
+
+
+def _require_room_graph_authority(project_id: str, ctx: AuthContext) -> None:
+	"""Require current durable room ownership before graph approval or build."""
+	tenant_id = ctx.tenant_id if ctx.tenant_id != "*" else load_state(project_id).tenant_id
+	try:
+		room = JsonCollaborationRepository(_collaboration_root).get_room(tenant_id, project_id)
+	except CollaborationError as exc:
+		raise HTTPException(403, "project room owner or admin role required for Operation Graph mutations") from exc
+	if not any(member.actor_id == ctx.user.id and member.role in {"owner", "admin"} for member in room.members):
+		raise HTTPException(403, "project room owner or admin role required for Operation Graph mutations")
+
+
+def _bootstrap_project_room(state: ProjectState, ctx: AuthContext) -> None:
+	"""Create the initial durable room before starting any architect work."""
+	if ctx.role not in {"owner", "admin"} and not ctx.user.is_platform_admin:
+		raise HTTPException(403, "only tenant owners and admins can bootstrap a project")
+	repository = JsonCollaborationRepository(_collaboration_root)
+	service = CollaborationService(repository)
+	try:
+		service.create_room(
+			tenant_id=state.tenant_id, project_id=state.id,
+			creator_id=ctx.user.id, creator_role="owner",
+		)
+	except CollaborationError as exc:
+		# Project ids are normally fresh.  If a concurrent bootstrap already
+		# created the room, still require the caller to be an owner/admin.
+		try:
+			_require_room_graph_authority(state.id, ctx)
+		except HTTPException:
+			raise HTTPException(409, "could not establish Project Room ownership") from exc
 
 
 def _job_conflict_http(exc: Exception) -> HTTPException:
@@ -723,6 +761,8 @@ def post_project(
 	ctx: Annotated[AuthContext, Depends(require_perm("project:write"))],
 ) -> dict:
 	try:
+		if ctx.role not in {"owner", "admin"} and not ctx.user.is_platform_admin:
+			raise HTTPException(403, "only tenant owners and admins can bootstrap a project")
 		brief = merge_brief(None, body.design_brief) if body.design_brief else None
 		tid = body.tenant_id or ctx.tenant_id
 		if tid == "*":
@@ -736,7 +776,8 @@ def post_project(
 			tenant_id=tid,
 			artifact_kind=body.artifact_kind,
 		)
-		state = init_plan(state)
+		_bootstrap_project_room(state, ctx)
+		state = init_plan(state, actor_id=ctx.user.id)
 		audit_request(request, ctx, "project.create", project_id=state.id)
 		log.info("project_created id=%s tenant=%s user=%s", state.id, state.tenant_id, ctx.user.id)
 		from simulacra.demo.observe import duplicate_project_warnings
@@ -747,6 +788,8 @@ def post_project(
 		if warnings:
 			snap["warnings"] = warnings
 		return snap
+	except HTTPException:
+		raise
 	except PermissionError as exc:
 		raise HTTPException(403, str(exc)) from exc
 	except KeyError as exc:
@@ -759,11 +802,11 @@ def post_project(
 def post_plan(
 	project_id: str,
 	body: ChatBody,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	"""Compat alias — main chat is always Prime via /chat."""
+	"""Compat alias for the provider-neutral main chat."""
 	try:
-		return start_follow_up(project_id, body.message, chat_id=body.chat_id)
+		return start_follow_up(project_id, body.message, chat_id=body.chat_id, actor_id=ctx.user.id)
 	except ValueError as exc:
 		raise _job_conflict_http(exc) from exc
 	except Exception as exc:
@@ -819,14 +862,34 @@ def patch_design_brief(
 def post_approve(
 	project_id: str,
 	request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:approve"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
 	try:
-		result = start_approve_build(project_id)
+		_require_room_graph_authority(project_id, ctx)
+		state = load_state(project_id)
+		store = OperationGraphStore(
+			project_dir(project_id), tenant_id=state.tenant_id, project_id=project_id
+		)
+		current = store.current_revision()
+		if current is None:
+			propose_operation_graph(state, actor_id=ctx.user.id)
+			current = store.current_revision()
+		if current is None:
+			raise ValueError("Architect did not produce an Operation Graph")
+		try:
+			store.require_approved_revision(current.revision_hash)
+		except UnapprovedRevisionError:
+			store.approve_revision(current.revision_hash, actor_id=ctx.user.id)
+		approved_graph_path(load_state(project_id))
+		result = start_approve_build(project_id, actor_id=ctx.user.id)
 		audit_request(request, ctx, "project.approve", project_id=project_id, job_id=result.get("job_id"))
 		return result
+	except HTTPException:
+		raise
 	except ValueError as exc:
 		raise _job_conflict_http(exc) from exc
+	except (OperationGraphError, PermissionError) as exc:
+		raise HTTPException(409, str(exc)) from exc
 	except Exception as exc:
 		raise HTTPException(500, f"Build failed: {exc}") from exc
 
@@ -834,10 +897,15 @@ def post_approve(
 @app.post("/projects/{project_id}/build")
 def post_build(
 	project_id: str,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:approve"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
+	_require_room_graph_authority(project_id, ctx)
 	state = load_state(project_id)
-	build_project(state)
+	try:
+		approved_graph_path(state)
+	except (OperationGraphError, PermissionError) as exc:
+		raise HTTPException(409, str(exc)) from exc
+	build_project(state, actor_id=ctx.user.id)
 	return project_snapshot(project_id)
 
 
@@ -845,10 +913,10 @@ def post_build(
 def post_chat(
 	project_id: str,
 	body: ChatBody,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
 	try:
-		return start_follow_up(project_id, body.message, chat_id=body.chat_id)
+		return start_follow_up(project_id, body.message, chat_id=body.chat_id, actor_id=ctx.user.id)
 	except ValueError as exc:
 		raise _job_conflict_http(exc) from exc
 

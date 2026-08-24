@@ -78,10 +78,10 @@ function mapWorkEvent(event: Cmul8DomainEventRecord): WorkEvent | null {
   return { id: event.id, kind: rawKind as WorkEventKind, at: event.timestamp, phase, specialist: event.actor_id, message };
 }
 
-function eventActivity(event: Cmul8DomainEventRecord): ActivityItem {
+function eventActivity(event: Cmul8DomainEventRecord, readAt?: string): ActivityItem {
   const category = event.action.includes("deploy") ? "deployment" : event.action.includes("review") ? "review" : event.action.includes("claim") || event.action.includes("assign") ? "assignment" : "system";
   const detail = typeof event.payload?.message === "string" ? event.payload.message : event.result;
-  return { id: event.id, category, title: event.action.replaceAll(".", " "), detail, createdAt: event.timestamp, actor: event.actor_id, href: `?roomEvent=${encodeURIComponent(event.id)}` };
+  return { id: event.id, category, title: event.action.replaceAll(".", " "), detail, createdAt: event.timestamp, actor: event.actor_id, href: `?roomEvent=${encodeURIComponent(event.id)}`, readAt };
 }
 
 function commentActivity(item: Cmul8CommentRecord): ActivityItem {
@@ -92,13 +92,16 @@ function reviewActivity(item: Cmul8ReviewRecord): ActivityItem {
   return { id: item.id, category: "review", title: `Task review: ${item.decision.replaceAll("_", " ")}`, detail: item.body || `Reviewed task ${item.task_id}`, createdAt: item.created_at, actor: item.reviewer_id, href: `?roomTask=${encodeURIComponent(item.task_id)}` };
 }
 
-export function mapCmul8RoomPayload(payload: Cmul8RoomPayload): { room: ProjectRoomModel; permissions: ProjectRoomPermissions } {
+export function mapCmul8RoomPayload(payload: Cmul8RoomPayload, connectionState: ProjectRoomModel["connectionState"] = "connected"): { room: ProjectRoomModel; permissions: ProjectRoomPermissions } {
+  // The server intentionally returns only the unread, priority-ranked inbox
+  // highlights. Do not infer read state for the rest of the event log.
+  const inbox = payload.away.highlights.map((item) => eventActivity(item.event, item.unread ? undefined : item.event.timestamp));
   const activity = [
     ...payload.events.map(eventActivity), ...payload.comments.map(commentActivity), ...payload.reviews.map(reviewActivity),
   ].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   return {
     room: {
-      id: payload.room.id, name: payload.project.name,
+      id: payload.room.id, name: payload.project.name, revision: payload.room.revision,
       context: { objective: payload.project.objective, decisions: [], constraints: [] },
       members: payload.room.members.map((member) => {
         const live = payload.presence.find((item) => item.actor_id === member.actor_id);
@@ -110,7 +113,7 @@ export function mapCmul8RoomPayload(payload: Cmul8RoomPayload): { room: ProjectR
       }; }),
       tasks: payload.tasks.map((task) => mapTask(task, payload.reviews)), graph: mapGraph(payload),
       workEvents: payload.events.map(mapWorkEvent).filter((event): event is WorkEvent => event !== null),
-      connectionState: "unknown", deployments: [], versions: [], activity,
+      connectionState, deployments: [], versions: [], activity, inbox,
       awaySummary: payload.away.since ? {
         since: payload.away.since, assignments: payload.away.counts.assigned ?? 0, mentions: payload.away.counts.mentions ?? 0,
         reviews: (payload.away.counts.reviews ?? 0) + (payload.away.counts.approvals ?? 0), deployments: payload.away.counts.deployments ?? 0,
@@ -118,9 +121,9 @@ export function mapCmul8RoomPayload(payload: Cmul8RoomPayload): { room: ProjectR
       } : undefined,
     },
     permissions: {
-      manageTasks: payload.permissions.manage_tasks, reviewTasks: payload.permissions.review_tasks,
-      reviewGraph: payload.permissions.review_graph, handoff: false,
-      invite: payload.permissions.invite, comment: payload.permissions.manage_tasks,
+		manageTasks: payload.permissions.manage_tasks, reviewTasks: payload.permissions.review_tasks,
+		reviewGraph: payload.permissions.review_graph, handoff: false,
+		invite: payload.permissions.invite, comment: payload.permissions.comment,
     },
   };
 }

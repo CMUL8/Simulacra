@@ -39,6 +39,12 @@ def _parse_time(value: str) -> datetime:
 	return parsed.astimezone(UTC)
 
 
+def _require_policy_revision(record: Any, policy: ApprovedGraph, record_kind: str) -> None:
+	"""Reject durable records admitted under another approved graph revision."""
+	if getattr(record, "operation_graph_version", None) != policy.revision_hash:
+		raise RuntimeAuthorizationError(f"{record_kind} is bound to a different Operation Graph revision")
+
+
 class EntityService:
 	def __init__(self, repository: RuntimeRepository, policy: ApprovedGraph, environment_id: str, *, clock: Callable[[], str] = utc_now):
 		self.repository, self.policy, self.environment_id, self.clock = repository, policy, environment_id, clock
@@ -50,11 +56,14 @@ class EntityService:
 		return self.repository.create_entity(record)
 
 	def get(self, record_id: str) -> EntityRecord:
-		return self.repository.get_entity(self.policy.tenant_id, self.environment_id, self.policy.project_id, record_id)
+		record = self.repository.get_entity(self.policy.tenant_id, self.environment_id, self.policy.project_id, record_id)
+		_require_policy_revision(record, self.policy, "entity record")
+		return record
 
 	def query(self, entity_type: str | None = None, *, filters: dict[str, Any] | None = None) -> list[EntityRecord]:
 		if entity_type is not None: self.policy.require_entity(entity_type)
-		return self.repository.query_entities(self.policy.tenant_id, self.environment_id, self.policy.project_id, entity_type=entity_type, filters=filters)
+		rows = self.repository.query_entities(self.policy.tenant_id, self.environment_id, self.policy.project_id, entity_type=entity_type, filters=filters)
+		return [row for row in rows if row.operation_graph_version == self.policy.revision_hash]
 
 	def update(self, record_id: str, data: Mapping[str, Any], *, expected_revision: int) -> EntityRecord:
 		current = self.get(record_id)
@@ -63,6 +72,7 @@ class EntityService:
 		return self.repository.save_entity(updated, expected_revision)
 
 	def delete(self, record_id: str, *, expected_revision: int) -> None:
+		self.get(record_id)
 		self.repository.delete_entity(self.policy.tenant_id, self.environment_id, self.policy.project_id, record_id, expected_revision=expected_revision)
 
 
@@ -77,19 +87,22 @@ class WorkflowService:
 		return self.repository.create_workflow(instance)
 
 	def get(self, instance_id: str) -> WorkflowInstance:
-		return self.repository.get_workflow(self.policy.tenant_id, self.environment_id, self.policy.project_id, instance_id)
+		record = self.repository.get_workflow(self.policy.tenant_id, self.environment_id, self.policy.project_id, instance_id)
+		_require_policy_revision(record, self.policy, "workflow instance")
+		return record
 
 	def transition(self, instance_id: str, target_state: str, *, expected_state: str, expected_revision: int, idempotency_key: str | None = None) -> WorkflowInstance:
 		if idempotency_key:
 			def change(state: dict[str, Any]) -> WorkflowInstance:
+				row = state["workflows"].get(instance_id)
+				if row is None: raise RuntimeNotFoundError("workflow instance not found")
+				current = WorkflowInstance.from_dict(row)
+				_require_policy_revision(current, self.policy, "workflow instance")
 				command = state.setdefault("workflow_commands", {}).get(idempotency_key)
 				fingerprint = {"instance_id": instance_id, "target_state": target_state, "expected_state": expected_state, "expected_revision": expected_revision}
 				if command is not None:
 					if command["fingerprint"] != fingerprint: raise RuntimeConflictError("workflow idempotency key reused for another command")
-					return WorkflowInstance.from_dict(state["workflows"][instance_id])
-				row = state["workflows"].get(instance_id)
-				if row is None: raise RuntimeNotFoundError("workflow instance not found")
-				current = WorkflowInstance.from_dict(row)
+					return current
 				if current.state != expected_state or current.revision != expected_revision: raise RuntimeConflictError("stale workflow state or revision")
 				self.policy.assert_transition(current.workflow_id, current.state, target_state)
 				updated = current if target_state == current.state else replace(current, state=target_state, revision=current.revision + 1, updated_at=self.clock())
@@ -117,14 +130,23 @@ class HumanTaskService:
 
 	def create(self, title: str, *, assignee_id: str | None = None, payload: Mapping[str, Any] | None = None) -> HumanTask:
 		now = self.clock()
-		return self.repository.create_human_task(HumanTask(new_id("htask"), self.policy.tenant_id, self.environment_id, self.policy.project_id, title, assignee_id=assignee_id, payload=copy.deepcopy(dict(payload or {})), created_at=now, updated_at=now))
+		return self.repository.create_human_task(HumanTask(new_id("htask"), self.policy.tenant_id, self.environment_id, self.policy.project_id, title, assignee_id=assignee_id, payload=copy.deepcopy(dict(payload or {})), created_at=now, updated_at=now, operation_graph_version=self.policy.revision_hash))
+
+	def get(self, task_id: str) -> HumanTask:
+		record = self.repository.get_human_task(self.policy.tenant_id, self.environment_id, self.policy.project_id, task_id)
+		_require_policy_revision(record, self.policy, "human task")
+		return record
 
 	def queue(self, *, assignee_id: str | None = None, status: str = "open") -> list[HumanTask]:
 		rows = self.repository.list_human_tasks(self.policy.tenant_id, self.environment_id, self.policy.project_id)
-		return [row for row in rows if row.status == status and (assignee_id is None or row.assignee_id == assignee_id)]
+		return [
+			row for row in rows
+			if row.operation_graph_version == self.policy.revision_hash
+			and row.status == status and (assignee_id is None or row.assignee_id == assignee_id)
+		]
 
 	def complete(self, task_id: str, *, expected_revision: int) -> HumanTask:
-		current = self.repository.get_human_task(self.policy.tenant_id, self.environment_id, self.policy.project_id, task_id)
+		current = self.get(task_id)
 		updated = replace(current, status="completed", revision=current.revision + 1, updated_at=self.clock())
 		return self.repository.save_human_task(updated, expected_revision)
 
@@ -138,13 +160,15 @@ class ApprovalService:
 		count = approvals_required if approvals_required is not None else count
 		self_allowed = allow_self_approval if allow_self_approval is not None else self_allowed
 		now = self.clock()
-		return ApprovalRequest(new_id("approval"), self.policy.tenant_id, self.environment_id, self.policy.project_id, action, requester_id, approvals_required=max(1, count), allow_self_approval=self_allowed, payload=copy.deepcopy(dict(payload or {})), expires_at=expires_at, created_at=now, updated_at=now)
+		return ApprovalRequest(new_id("approval"), self.policy.tenant_id, self.environment_id, self.policy.project_id, action, requester_id, approvals_required=max(1, count), allow_self_approval=self_allowed, payload=copy.deepcopy(dict(payload or {})), expires_at=expires_at, created_at=now, updated_at=now, operation_graph_version=self.policy.revision_hash)
 
 	def request(self, action: str, requester_id: str, *, payload: Mapping[str, Any] | None = None, expires_at: str | None = None, approvals_required: int | None = None, allow_self_approval: bool | None = None) -> ApprovalRequest:
 		return self.repository.create_approval(self.new_request(action, requester_id, payload=payload, expires_at=expires_at, approvals_required=approvals_required, allow_self_approval=allow_self_approval))
 
 	def get(self, approval_id: str) -> ApprovalRequest:
-		return self.repository.get_approval(self.policy.tenant_id, self.environment_id, self.policy.project_id, approval_id)
+		record = self.repository.get_approval(self.policy.tenant_id, self.environment_id, self.policy.project_id, approval_id)
+		_require_policy_revision(record, self.policy, "approval request")
+		return record
 
 	def decide(self, approval_id: str, *, actor_id: str, decision: str, actor_roles: tuple[str, ...] | list[str] | set[str] = (), reason: str = "", expected_revision: int | None = None) -> ApprovalRequest:
 		if decision not in {"approved", "rejected"}: raise ValueError("decision must be approved or rejected")
@@ -206,19 +230,24 @@ class ActionGateway:
 		is_consequential = operation.lower() not in self._READ_OPERATIONS or consequential is True
 		needs_approval = rule_required or is_consequential
 		now = self.clock()
-		record = ActionRecord(new_id("action"), self.policy.tenant_id, self.environment_id, self.policy.project_id, connector_id, operation, idempotency_key, requester_id, copy.deepcopy(dict(payload)), "pending_approval" if needs_approval else "queued", is_consequential, max_attempts=max_attempts, created_at=now, updated_at=now)
+		record = ActionRecord(new_id("action"), self.policy.tenant_id, self.environment_id, self.policy.project_id, connector_id, operation, idempotency_key, requester_id, copy.deepcopy(dict(payload)), "pending_approval" if needs_approval else "queued", is_consequential, max_attempts=max_attempts, created_at=now, updated_at=now, operation_graph_version=self.policy.revision_hash)
 		if needs_approval:
 			approval = self.approvals.new_request(action_name, requester_id, payload={"action_id": record.id})
 			record = replace(record, approval_id=approval.id)
-			created, _ = self.repository.create_action_with_approval(record, approval)
+			created, created_approval = self.repository.create_action_with_approval(record, approval)
+			_require_policy_revision(created, self.policy, "action record")
+			_require_policy_revision(created_approval, self.policy, "approval request")
 			return created
 		created = self.repository.create_action(record)
-		if created.id != record.id: return created
+		if created.id != record.id:
+			_require_policy_revision(created, self.policy, "action record")
+			return created
 		return self._execute(record)
 
 	def _execute(self, record: ActionRecord) -> ActionRecord:
 		def claim(state: dict[str, Any]) -> tuple[ActionRecord, bool]:
 			current = ActionRecord.from_dict(state["actions"][record.id])
+			_require_policy_revision(current, self.policy, "action record")
 			if current.status in {"succeeded", "running"}: return current, False
 			if current.status != "queued": raise RuntimeConflictError(f"action is not executable from {current.status}")
 			now = self.clock()
@@ -231,24 +260,28 @@ class ActionGateway:
 		connector = self.policy.require_connector_operation(record.connector_id, record.operation)
 		try:
 			result = self.connectors._execute(connector, record.operation, record.input, record.idempotency_key)
+			assert_opaque_credentials(result, context="connector result")
 		except Exception as exc:
 			attempts = record.attempts
 			now = self.clock()
 			dead = attempts >= record.max_attempts
 			next_attempt = None if dead else (datetime.fromisoformat(now.replace("Z", "+00:00")) + timedelta(seconds=self.base_backoff_seconds * (2 ** (attempts - 1)))).astimezone(UTC).isoformat().replace("+00:00", "Z")
-			failed = replace(record, status="dead_letter" if dead else "retry_wait", error=str(exc), next_attempt_at=next_attempt, lease_owner=None, lease_until=None, revision=record.revision + 1, updated_at=now)
+			failed = replace(record, status="dead_letter" if dead else "retry_wait", error="connector execution failed", next_attempt_at=next_attempt, lease_owner=None, lease_until=None, revision=record.revision + 1, updated_at=now)
 			self.repository.save_action(failed, record.revision)
-			raise ActionExecutionError(str(exc)) from exc
+			raise ActionExecutionError("connector execution failed") from None
 		completed = replace(record, status="succeeded", result=copy.deepcopy(result), error=None, next_attempt_at=None, lease_owner=None, lease_until=None, revision=record.revision + 1, updated_at=self.clock())
 		return self.repository.save_action(completed, record.revision)
 
 	def execute_approved(self, action_id: str) -> ActionRecord:
 		record = self.repository.get_action(self.policy.tenant_id, self.environment_id, self.policy.project_id, action_id)
+		_require_policy_revision(record, self.policy, "action record")
 		if record.status == "succeeded": return record
 		if record.status == "retry_wait": return self.retry(action_id)
 		if record.status in {"running", "dead_letter"}: return record
 		if record.approval_id is None: raise ApprovalRequiredError("consequential action has no approval")
 		approval = self.approvals.get(record.approval_id)
+		if approval.operation_graph_version != record.operation_graph_version or approval.payload.get("action_id") != record.id:
+			raise RuntimeAuthorizationError("action approval does not match its approved Operation Graph revision")
 		if approval.status != "approved": raise ApprovalRequiredError(f"action approval is {approval.status}")
 		queued = replace(record, status="queued", revision=record.revision + 1, updated_at=self.clock())
 		queued = self.repository.save_action(queued, record.revision)
@@ -256,6 +289,7 @@ class ActionGateway:
 
 	def retry(self, action_id: str) -> ActionRecord:
 		record = self.repository.get_action(self.policy.tenant_id, self.environment_id, self.policy.project_id, action_id)
+		_require_policy_revision(record, self.policy, "action record")
 		if record.status == "dead_letter": return record
 		if record.status != "retry_wait": raise RuntimeConflictError(f"action is not awaiting retry: {record.status}")
 		now = self.clock()
@@ -271,6 +305,7 @@ class ActionGateway:
 			row = state["actions"].get(action_id)
 			if row is None: raise RuntimeNotFoundError("action record not found")
 			current = ActionRecord.from_dict(row)
+			_require_policy_revision(current, self.policy, "action record")
 			if current.status != "running": raise RuntimeConflictError("action is not running")
 			if current.lease_until is None or _parse_time(current.lease_until) > now:
 				raise RuntimeConflictError("action lease has not expired")
@@ -290,6 +325,9 @@ class ActionGateway:
 		return self.repository.mutate_project(self.policy.tenant_id, self.environment_id, self.policy.project_id, change)
 
 	def dead_letters(self) -> list[ActionRecord]:
-		return [record for record in self.repository.list_actions(self.policy.tenant_id, self.environment_id, self.policy.project_id) if record.status == "dead_letter"]
+		return [
+			record for record in self.repository.list_actions(self.policy.tenant_id, self.environment_id, self.policy.project_id)
+			if record.status == "dead_letter" and record.operation_graph_version == self.policy.revision_hash
+		]
 
 	execute = submit

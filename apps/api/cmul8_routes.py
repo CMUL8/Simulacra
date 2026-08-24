@@ -6,6 +6,7 @@ contracts instead of manufacturing multiplayer state in the browser.
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -24,6 +25,7 @@ from simulacra.harnesses import HarnessConfig, create_harness
 from simulacra.operation_graph import OperationGraphStore
 from simulacra.operation_graph.errors import OperationGraphError
 from simulacra.runtime.security import assert_opaque_credentials
+from simulacra.runtime import RuntimePlane, SUPPORTED_JOB_KINDS
 from simulacra.observability import (
 	EntityKind, EventStatus, JsonlTelemetryRepository, ObservabilityQueries,
 	TelemetryEvent, TelemetryQuery,
@@ -31,7 +33,10 @@ from simulacra.observability import (
 
 router = APIRouter(prefix="/projects/{project_id}/cmul8", tags=["cmul8-v0"])
 _collaboration_root = RUNS_DIR / ".cmul8-control"
-_telemetry_root = RUNS_DIR / ".cmul8-telemetry"
+# Deployment processes use the same explicit roots; local development retains
+# isolated project fixtures without requiring environment configuration.
+_telemetry_root = Path(os.environ.get("CMUL8_TELEMETRY_ROOT", str(RUNS_DIR / ".cmul8-telemetry")))
+_runtime_root = Path(os.environ.get("CMUL8_RUNTIME_ROOT", str(RUNS_DIR / ".cmul8-runtime")))
 _presence = PresenceRegistry(ttl_seconds=60)
 
 
@@ -42,6 +47,17 @@ def _collaboration() -> tuple[JsonCollaborationRepository, CollaborationService]
 
 def _graph_store(project_id: str, tenant_id: str) -> OperationGraphStore:
 	return OperationGraphStore(project_dir(project_id), tenant_id=tenant_id, project_id=project_id)
+
+
+def _room_role(room: Any, actor_id: str) -> str | None:
+	return next((member.role for member in room.members if member.actor_id == actor_id), None)
+
+
+def _require_graph_mutator(project_id: str, ctx: AuthContext) -> None:
+	repository, _ = _collaboration()
+	room = repository.get_room(ctx.tenant_id, project_id)
+	if _room_role(room, ctx.user.id) not in {"owner", "admin"}:
+		raise HTTPException(403, "project room owner or admin role required for Operation Graph mutations")
 
 
 def _translate(exc: Exception) -> HTTPException:
@@ -123,6 +139,16 @@ class TelemetryEventBody(BaseModel):
 	attributes: dict[str, Any] = Field(default_factory=dict)
 
 
+class RuntimeJobBody(BaseModel):
+	"""Admission request for one graph-confined durable runtime job."""
+	revision_hash: str = Field(min_length=1, max_length=200)
+	environment_id: str = Field(default="production", min_length=1, max_length=128)
+	kind: str = Field(min_length=1, max_length=120)
+	payload: dict[str, Any] = Field(default_factory=dict)
+	idempotency_key: str | None = Field(default=None, max_length=256)
+	max_attempts: int = Field(default=3, ge=1, le=20)
+
+
 class _ProjectTelemetryRepository:
 	"""Narrow a tenant repository to one application/project before aggregation."""
 
@@ -132,6 +158,15 @@ class _ProjectTelemetryRepository:
 
 	def query(self, query: TelemetryQuery) -> list[TelemetryEvent]:
 		return [event for event in self.repository.query(query) if event.application_id == self.project_id]
+
+
+def _runtime_plane(project_id: str, tenant_id: str, environment_id: str, revision_hash: str) -> RuntimePlane:
+	"""Construct only from the caller's exact approved graph revision."""
+	return RuntimePlane.from_approved_revision(
+		_runtime_root, _graph_store(project_id, tenant_id), revision_hash,
+		environment_id=environment_id,
+		observability_repository=JsonlTelemetryRepository(_telemetry_root),
+	)
 
 
 def _room_payload(project_id: str, ctx: AuthContext) -> dict[str, Any]:
@@ -145,6 +180,7 @@ def _room_payload(project_id: str, ctx: AuthContext) -> dict[str, Any]:
 	graph_store = _graph_store(project_id, ctx.tenant_id)
 	graph = graph_store.current_revision()
 	approvals = graph_store.list_approvals(graph.revision_hash) if graph else []
+	role = _room_role(room, ctx.user.id)
 	inbox = ActivityInbox(repository)
 	away = inbox.while_you_were_away(
 		tenant_id=ctx.tenant_id, project_id=project_id, actor_id=ctx.user.id
@@ -169,10 +205,11 @@ def _room_payload(project_id: str, ctx: AuthContext) -> dict[str, Any]:
 		},
 		"presence": [asdict(item) for item in _presence.list_active(tenant_id=ctx.tenant_id, project_id=project_id)],
 		"permissions": {
-			"manage_tasks": ctx.role in {"owner", "admin", "member"} or ctx.user.is_platform_admin,
-			"review_tasks": ctx.role in {"owner", "admin"} or ctx.user.is_platform_admin,
-			"review_graph": ctx.role in {"owner", "admin"} or ctx.user.is_platform_admin,
-			"invite": ctx.role in {"owner", "admin"} or ctx.user.is_platform_admin,
+			"manage_tasks": role in {"owner", "admin", "member", "reviewer", "approver"},
+			"review_tasks": role in {"owner", "admin", "reviewer", "approver"},
+			"review_graph": role in {"owner", "admin"},
+			"invite": role in {"owner", "admin"},
+			"comment": role in {"owner", "admin", "member", "reviewer", "approver"},
 		},
 	}
 
@@ -180,13 +217,17 @@ def _room_payload(project_id: str, ctx: AuthContext) -> dict[str, Any]:
 @router.post("/room")
 def create_room(
 	project_id: str, body: RoomCreateBody, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:approve"))],
 ) -> dict[str, Any]:
+	if ctx.role not in {"owner", "admin"} and not ctx.user.is_platform_admin:
+		raise HTTPException(403, "only project owners and admins can create a Project Room")
 	_, service = _collaboration()
 	try:
 		service.create_room(
 			tenant_id=ctx.tenant_id, project_id=project_id, creator_id=ctx.user.id,
-			creator_role="owner" if ctx.role == "owner" else "admin" if ctx.role == "admin" else "member",
+			# A bootstrapper is the initial room authority.  Seeding an owner avoids
+			# an admin-created room that no member can administrate as its owner.
+			creator_role="owner",
 		)
 	except CollaborationError as exc:
 		if "already exists" not in str(exc):
@@ -209,7 +250,7 @@ def get_room(
 @router.post("/room/members")
 def add_room_member(
 	project_id: str, body: RoomMemberBody, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:approve"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	_, service = _collaboration()
 	try:
@@ -260,7 +301,7 @@ def mark_inbox_read(
 @router.post("/tasks")
 def create_task(
 	project_id: str, body: TaskCreateBody, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	_, service = _collaboration()
 	try:
@@ -278,7 +319,7 @@ def create_task(
 @router.post("/tasks/{task_id}/transition")
 def transition_task(
 	project_id: str, task_id: str, body: TaskTransitionBody, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	_, service = _collaboration()
 	try:
@@ -295,7 +336,7 @@ def transition_task(
 @router.post("/tasks/{task_id}/claim")
 def claim_task(
 	project_id: str, task_id: str, expected_revision: int, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	_, service = _collaboration()
 	try:
@@ -312,13 +353,13 @@ def claim_task(
 @router.post("/tasks/{task_id}/reviews")
 def review_task(
 	project_id: str, task_id: str, body: TaskReviewBody, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:approve"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	_, service = _collaboration()
 	try:
 		review, task = service.review_task(
 			tenant_id=ctx.tenant_id, project_id=project_id, task_id=task_id,
-			reviewer_id=ctx.user.id, reviewer_role=ctx.role, decision=body.decision,
+			reviewer_id=ctx.user.id, decision=body.decision,
 			expected_revision=body.expected_revision, body=body.note,
 		)
 	except CollaborationError as exc:
@@ -330,7 +371,7 @@ def review_task(
 @router.post("/comments")
 def create_comment(
 	project_id: str, body: CommentCreateBody, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	_, service = _collaboration()
 	try:
@@ -349,13 +390,14 @@ def create_comment(
 @router.post("/operation-graph/revisions")
 def create_graph_revision(
 	project_id: str, body: GraphRevisionBody, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	try:
+		_require_graph_mutator(project_id, ctx)
 		revision = _graph_store(project_id, ctx.tenant_id).create_revision(
 			body.graph, expected_revision_hash=body.expected_revision_hash
 		)
-	except (OperationGraphError, ValueError) as exc:
+	except (CollaborationError, OperationGraphError, ValueError) as exc:
 		raise _translate(exc) from exc
 	audit_request(request, ctx, "cmul8.graph.revise", project_id=project_id, revision_hash=revision.revision_hash)
 	return asdict(revision)
@@ -364,11 +406,12 @@ def create_graph_revision(
 @router.post("/operation-graph/revisions/{revision_hash}/approve")
 def approve_graph_revision(
 	project_id: str, revision_hash: str, request: Request,
-	ctx: Annotated[AuthContext, Depends(require_project_access("project:approve"))],
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	try:
+		_require_graph_mutator(project_id, ctx)
 		approval = _graph_store(project_id, ctx.tenant_id).approve_revision(revision_hash, actor_id=ctx.user.id)
-	except (OperationGraphError, ValueError) as exc:
+	except (CollaborationError, OperationGraphError, ValueError) as exc:
 		raise _translate(exc) from exc
 	audit_request(request, ctx, "cmul8.graph.approve", project_id=project_id, revision_hash=revision_hash)
 	return asdict(approval)
@@ -382,6 +425,39 @@ async def harness_status(
 	config = HarnessConfig.from_env()
 	harness = create_harness(config)
 	return {"config": config.metadata(), "health": dict(await harness.healthcheck())}
+
+
+@router.post("/runtime/jobs")
+def enqueue_runtime_job(
+	project_id: str, body: RuntimeJobBody, request: Request,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
+) -> dict[str, Any]:
+	if body.kind not in SUPPORTED_JOB_KINDS:
+		raise HTTPException(400, f"unsupported runtime job kind: {body.kind}")
+	try:
+		assert_opaque_credentials(body.payload, context="scheduled job payload")
+		plane = _runtime_plane(project_id, ctx.tenant_id, body.environment_id, body.revision_hash)
+		job = plane.scheduler.enqueue(
+			body.kind, body.payload, max_attempts=body.max_attempts,
+			idempotency_key=body.idempotency_key,
+		)
+	except Exception as exc:
+		raise _translate(exc) from exc
+	audit_request(request, ctx, "cmul8.runtime.enqueue", project_id=project_id, job_id=job.id, kind=job.kind)
+	return job.to_dict()
+
+
+@router.get("/runtime/jobs/{job_id}")
+def get_runtime_job(
+	project_id: str, job_id: str, revision_hash: str,
+	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
+	environment_id: str = "production",
+) -> dict[str, Any]:
+	try:
+		plane = _runtime_plane(project_id, ctx.tenant_id, environment_id, revision_hash)
+		return plane.scheduler.get(job_id).to_dict()
+	except Exception as exc:
+		raise _translate(exc) from exc
 
 
 @router.post("/observability/events")

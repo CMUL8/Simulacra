@@ -232,7 +232,7 @@ def test_transition_rules_and_review_metadata(collaboration) -> None:
 		decision="approve", expected_revision=3,
 	)
 	assert task.state == TaskState.DONE
-	assert review.reviewer_role == "security_reviewer"
+	assert review.reviewer_role == "reviewer"
 	assert review.actor_type == ActorType.HUMAN
 	assert repository.list_reviews("tenant_a", "project_a", task.id) == [review]
 

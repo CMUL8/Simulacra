@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import contextmanager
 from typing import Any
 
 from .errors import AuthorizationError, ConflictError, InvalidTransitionError, ValidationError
@@ -34,6 +35,9 @@ _TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
 	TaskState.DONE: frozenset(),
 	TaskState.CANCELLED: frozenset(),
 }
+_TASK_MANAGEMENT_ROLES = frozenset({"owner", "admin", "member", "reviewer", "approver"})
+_COMMENT_ROLES = frozenset({"owner", "admin", "member", "reviewer", "approver"})
+_REVIEW_ROLES = frozenset({"owner", "admin", "reviewer", "approver"})
 
 
 class CollaborationService:
@@ -46,6 +50,20 @@ class CollaborationService:
 			if member.actor_id == actor_id:
 				return member
 		raise AuthorizationError("actor is not a project room member")
+
+	@contextmanager
+	def mutation_authority_lock(self, *, tenant_id: str, project_id: str, actor_id: str):
+		"""Serialize a final owner/admin check with an external durable commit."""
+		with self.repository.room_lock(tenant_id, project_id) as room:
+			member = next((item for item in room.members if item.actor_id == actor_id), None)
+			if member is None or member.role not in {"owner", "admin"}:
+				raise AuthorizationError("a Project Room owner or admin is required for project mutation")
+			yield
+
+	@staticmethod
+	def _require_role(member: Member, allowed: frozenset[str], action: str) -> None:
+		if member.role not in allowed:
+			raise AuthorizationError(f"room role {member.role} cannot {action}")
 
 	def _emit(
 		self,
@@ -109,7 +127,7 @@ class CollaborationService:
 		owner_id: str | None = None, collaborator_ids: list[str] | None = None,
 		operation_graph_version: str | None = None, application_version: str | None = None,
 	) -> Task:
-		self._room_member(tenant_id, project_id, actor_id)
+		self._require_role(self._room_member(tenant_id, project_id, actor_id), _TASK_MANAGEMENT_ROLES, "create tasks")
 		if not title.strip() or not objective.strip() or not acceptance_criteria:
 			raise ValidationError("title, objective, and acceptance criteria are required")
 		if owner_id is not None:
@@ -136,7 +154,7 @@ class CollaborationService:
 		self, *, tenant_id: str, project_id: str, task_id: str, actor_id: str,
 		collaborator_ids: list[str], expected_revision: int,
 	) -> Task:
-		self._room_member(tenant_id, project_id, actor_id)
+		self._require_role(self._room_member(tenant_id, project_id, actor_id), _TASK_MANAGEMENT_ROLES, "change task collaborators")
 		task = self.repository.get_task(tenant_id, project_id, task_id)
 		if task.revision != expected_revision:
 			raise ConflictError(f"stale task revision: expected {expected_revision}, current {task.revision}")
@@ -158,7 +176,7 @@ class CollaborationService:
 	def claim_task(
 		self, *, tenant_id: str, project_id: str, task_id: str, actor_id: str, expected_revision: int
 	) -> Task:
-		self._room_member(tenant_id, project_id, actor_id)
+		self._require_role(self._room_member(tenant_id, project_id, actor_id), _TASK_MANAGEMENT_ROLES, "claim tasks")
 		task = self.repository.get_task(tenant_id, project_id, task_id)
 		if task.revision != expected_revision:
 			raise ConflictError(f"stale task revision: expected {expected_revision}, current {task.revision}")
@@ -178,7 +196,7 @@ class CollaborationService:
 		to_state: TaskState | str, expected_revision: int, result: dict[str, Any] | None = None,
 		activity_detail: str = ""
 	) -> Task:
-		self._room_member(tenant_id, project_id, actor_id)
+		self._require_role(self._room_member(tenant_id, project_id, actor_id), _TASK_MANAGEMENT_ROLES, "transition tasks")
 		task = self.repository.get_task(tenant_id, project_id, task_id)
 		if task.revision != expected_revision:
 			raise ConflictError(f"stale task revision: expected {expected_revision}, current {task.revision}")
@@ -207,7 +225,7 @@ class CollaborationService:
 		graph_path: str | None = None, graph_revision: str | None = None,
 		mentions: list[Any] | None = None,
 	) -> Comment:
-		self._room_member(tenant_id, project_id, author_id)
+		self._require_role(self._room_member(tenant_id, project_id, author_id), _COMMENT_ROLES, "comment")
 		if not body.strip():
 			raise ValidationError("comment body is required")
 		target = CommentTargetType(target_type)
@@ -257,7 +275,7 @@ class CollaborationService:
 		choice = ReviewDecision(decision)
 		if task.owner_id == reviewer_id and not allow_self_review:
 			raise AuthorizationError("task owner cannot review their own work")
-		if ActorType(actor_type) == ActorType.HUMAN and member.role not in {"owner", "admin", "approver", "reviewer"}:
+		if ActorType(actor_type) == ActorType.HUMAN and member.role not in _REVIEW_ROLES:
 			raise AuthorizationError("task review requires an owner, admin, approver, or reviewer role")
 		if choice == ReviewDecision.ROLLBACK:
 			if task.state != TaskState.DONE:
@@ -275,7 +293,7 @@ class CollaborationService:
 			new_state = TaskState.IN_REVIEW
 		review = Review(
 			id=new_id("review"), tenant_id=tenant_id, project_id=project_id, task_id=task_id,
-			reviewer_id=reviewer_id, reviewer_role=reviewer_role or member.role,
+			reviewer_id=reviewer_id, reviewer_role=member.role,
 			actor_type=ActorType(actor_type), decision=choice, body=body.strip(), task_revision=task.revision,
 		)
 		updated = replace(task, state=new_state, revision=task.revision + 1, updated_at=iso_now(),
@@ -285,6 +303,6 @@ class CollaborationService:
 		self.repository.create_review(review)
 		self._emit(tenant_id=tenant_id, project_id=project_id, actor_id=reviewer_id,
 			action="task.reviewed", result="rejected" if choice == ReviewDecision.REJECT else "succeeded",
-			task=updated, actor_type=ActorType(actor_type), payload={"category": "reviews", "decision": choice.value,
+			task=updated, actor_type=ActorType(actor_type), payload={"category": "reviews", "decision": choice.value, "reviewer_role": member.role,
 			"owner_id": task.owner_id, "target_type": "task", "target_id": task.id})
 		return review, updated

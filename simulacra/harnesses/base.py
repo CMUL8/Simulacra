@@ -41,12 +41,16 @@ class AgentHarness(ABC):
 
     async def create_session(self, request: AgentRunRequest) -> AgentSession:
         self._validate_request(request)
+        if request.session_mode == "ephemeral":
+            raise ValueError("ephemeral requests cannot create durable sessions")
         session = await self._create_session(request, None)
         self._repository(request).save(session)
         return session
 
     async def resume_session(self, request: AgentRunRequest) -> AgentSession:
         self._validate_request(request)
+        if request.session_mode == "ephemeral":
+            raise ValueError("ephemeral requests cannot resume durable sessions")
         persisted = self._repository(request).get(request.project_id, request.role)
         if persisted is None:
             raise LookupError(f"No session exists for project={request.project_id!r}, role={request.role!r}")
@@ -163,6 +167,8 @@ class AgentHarness(ABC):
         )
 
     async def _session_for_run(self, request: AgentRunRequest) -> AgentSession:
+        if request.session_mode == "ephemeral":
+            return await self._create_session(request, None)
         if request.session_id:
             stored = self._repository(request).get(request.project_id, request.role)
             if stored and stored.session_id == request.session_id:

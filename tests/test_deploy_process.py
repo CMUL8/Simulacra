@@ -3,9 +3,18 @@ from __future__ import annotations
 import socket
 import threading
 import os
+import signal
+import subprocess
+import sys
+import time
+
+import pytest
+import yaml
 
 from simulacra import deploy_process
 from apps.api.main import liveness, readiness
+from simulacra.operation_graph import OperationGraphStore, load_operation_graph
+from simulacra.runtime import RuntimePlane
 
 
 def test_preflight_rejects_missing_contract(monkeypatch):
@@ -26,11 +35,17 @@ def test_preflight_accepts_explicit_external_services(monkeypatch):
 
 
 def test_worker_health_probes_a_running_worker_socket(monkeypatch, tmp_path):
-	socket_path = deploy_process.Path(f"/tmp/cm8-health-{os.getpid()}.sock")
+	# AF_UNIX paths are capped at ~104 bytes on macOS; pytest's nested tmp_path
+	# can exceed that before the socket name is appended.
+	socket_path = deploy_process.Path(f"/private/tmp/cm8-health-{os.getpid()}.sock")
 	socket_path.unlink(missing_ok=True)
 	monkeypatch.setattr(deploy_process, "WORKER_SOCKET", socket_path)
 	server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-	server.bind(str(socket_path))
+	try:
+		server.bind(str(socket_path))
+	except PermissionError:
+		server.close()
+		pytest.skip("managed sandbox forbids AF_UNIX bind")
 	server.listen(1)
 
 	def respond():
@@ -48,13 +63,317 @@ def test_worker_health_probes_a_running_worker_socket(monkeypatch, tmp_path):
 	socket_path.unlink(missing_ok=True)
 
 
+def test_real_worker_serves_live_ready_and_a_second_probe(monkeypatch, tmp_path):
+	"""Exercise the worker loop with real AF_UNIX connection lifetimes."""
+	socket_path = deploy_process.Path(f"/private/tmp/cm8-worker-{os.getpid()}-{time.time_ns()}.sock")
+	probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+	try:
+		try:
+			probe.bind(str(socket_path))
+		except PermissionError:
+			pytest.skip("managed sandbox forbids AF_UNIX bind")
+	finally:
+		probe.close()
+		socket_path.unlink(missing_ok=True)
+	monkeypatch.setattr(deploy_process, "WORKER_SOCKET", socket_path)
+	queue_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	queue_server.bind(("127.0.0.1", 0))
+	queue_server.listen(4)
+	queue_server.settimeout(0.1)
+	stop_queue = threading.Event()
+
+	def accept_queue_connections() -> None:
+		while not stop_queue.is_set():
+			try:
+				connection, _ = queue_server.accept()
+			except TimeoutError:
+				continue
+			except OSError:
+				break
+			with connection:
+				pass
+
+	queue_thread = threading.Thread(target=accept_queue_connections)
+	queue_thread.start()
+	queue_port = queue_server.getsockname()[1]
+	runtime_root = tmp_path / "runtime"
+	invalid_state = runtime_root / "tenant_invalid" / "environment_invalid" / "project_invalid" / "runtime" / "state.json"
+	invalid_state.parent.mkdir(parents=True)
+	invalid_state.write_text("[]", encoding="utf-8")
+	environment = {
+		**os.environ,
+		"CMUL8_WORKER_SOCKET": str(socket_path),
+		"SIMULACRA_RUNS_DIR": str(tmp_path / "runs"),
+		"CMUL8_RUNTIME_ROOT": str(runtime_root),
+		"CMUL8_TELEMETRY_ROOT": str(tmp_path / "telemetry"),
+		"CMUL8_REDIS_URL": f"redis://127.0.0.1:{queue_port}/0",
+	}
+	process = subprocess.Popen(
+		[sys.executable, "-c", "from simulacra.deploy_process import worker; raise SystemExit(worker())"],
+		cwd=deploy_process.Path(__file__).parents[1],
+		env=environment,
+		stdout=subprocess.DEVNULL,
+		stderr=subprocess.PIPE,
+	)
+	try:
+		deadline = time.monotonic() + 5
+		while not socket_path.exists() and process.poll() is None and time.monotonic() < deadline:
+			time.sleep(0.02)
+		if process.poll() is not None:
+			detail = process.stderr.read().decode("utf-8", "replace") if process.stderr else ""
+			raise AssertionError(f"worker exited before accepting probes: {detail}")
+		assert socket_path.exists(), "worker did not create its health socket"
+		assert deploy_process.worker_health("--live") == 0
+		assert deploy_process.worker_health("--ready") == 0
+		assert deploy_process.worker_health("--live") == 0
+	finally:
+		if process.poll() is None:
+			process.send_signal(signal.SIGTERM)
+			try:
+				process.wait(timeout=3)
+			except subprocess.TimeoutExpired:
+				process.kill()
+				process.wait(timeout=3)
+		if process.stderr:
+			process.stderr.close()
+		stop_queue.set()
+		queue_server.close()
+		queue_thread.join(timeout=2)
+		socket_path.unlink(missing_ok=True)
+
+
 def test_image_defines_the_process_entrypoint():
 	dockerfile = (deploy_process.Path(__file__).parents[1] / "Dockerfile").read_text()
 	assert 'ENTRYPOINT ["/opt/cmul8/bin/cmul8-entrypoint"]' in dockerfile
 	assert 'CMD ["api"]' in dockerfile
 	assert "worker-health" in dockerfile
+	assert "@openai/codex@0.148.0" in dockerfile
+
+
+def test_compose_api_and_worker_share_mounted_runtime_roots():
+	compose = yaml.safe_load((deploy_process.Path(__file__).parents[1] / "docker-compose.yml").read_text())
+	environment = compose["x-cmul8-environment"]
+	assert environment["CMUL8_RUNTIME_ROOT"] == "/app/runs/.cmul8-runtime"
+	assert environment["CMUL8_TELEMETRY_ROOT"] == "/app/runs/.cmul8-telemetry"
+	assert compose["services"]["api"]["command"] == ["api"]
+	assert compose["services"]["worker"]["command"] == ["worker"]
 
 
 def test_api_exposes_container_health_contract():
 	assert liveness()["status"] == "live"
 	assert readiness()["status"] == "ready"
+
+
+def test_compose_worker_discovers_and_executes_shared_project_jobs(monkeypatch, tmp_path):
+	runs = tmp_path / "runs"
+	project = runs / "project_support"
+	project.mkdir(parents=True)
+	store = OperationGraphStore(project, tenant_id="tenant_acme", project_id="project_support")
+	graph = load_operation_graph(deploy_process.Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+	revision = store.create_revision(graph, expected_revision_hash=None)
+	store.approve_revision(revision.revision_hash, actor_id="owner")
+	runtime_root = runs / ".cmul8-runtime"
+	plane = RuntimePlane.from_approved_revision(
+		runtime_root, store, revision.revision_hash, environment_id="production",
+	)
+	workflow = plane.workflows.start("workflow_resolve_case")
+	job = plane.scheduler.enqueue("workflow.transition", {
+		"instance_id": workflow.id, "target_state": "triaged", "expected_state": "new",
+		"expected_revision": workflow.revision,
+	})
+	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
+	monkeypatch.setenv("CMUL8_RUNTIME_ROOT", str(runtime_root))
+	monkeypatch.setenv("CMUL8_TELEMETRY_ROOT", str(runs / ".cmul8-telemetry"))
+	monkeypatch.setattr(deploy_process, "_queue_reachable", lambda: True)
+
+	workers = deploy_process._discovered_runtime_workers()
+
+	assert len(workers) == 1
+	completed = workers[0].run_once()
+	assert completed is not None and completed.id == job.id and completed.status == "succeeded"
+	assert deploy_process._runtime_roots_ready() is True
+
+
+def test_worker_discovery_skips_a_stale_revision_without_blocking_a_valid_scope(monkeypatch, tmp_path):
+	runs = tmp_path / "runs"
+	project = runs / "project_support"
+	project.mkdir(parents=True)
+	store = OperationGraphStore(project, tenant_id="tenant_acme", project_id="project_support")
+	graph = load_operation_graph(deploy_process.Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+	revision = store.create_revision(graph, expected_revision_hash=None)
+	store.approve_revision(revision.revision_hash, actor_id="owner")
+	runtime_root = runs / ".cmul8-runtime"
+	plane = RuntimePlane.from_approved_revision(runtime_root, store, revision.revision_hash, environment_id="production")
+	workflow = plane.workflows.start("workflow_resolve_case")
+	job = plane.scheduler.enqueue("workflow.transition", {
+		"instance_id": workflow.id, "target_state": "triaged", "expected_state": "new",
+		"expected_revision": workflow.revision,
+	})
+
+	def inject_stale_revision(state: dict) -> None:
+		stale = dict(state["jobs"][job.id])
+		stale["id"] = "job_stale_revision"
+		stale["operation_graph_version"] = "0" * 64
+		state["jobs"][stale["id"]] = stale
+
+	plane.repository.mutate_project("tenant_acme", "production", "project_support", inject_stale_revision)
+	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
+	monkeypatch.setenv("CMUL8_RUNTIME_ROOT", str(runtime_root))
+	monkeypatch.setenv("CMUL8_TELEMETRY_ROOT", str(runs / ".cmul8-telemetry"))
+	monkeypatch.setattr(deploy_process, "_queue_reachable", lambda: True)
+
+	workers = deploy_process._discovered_runtime_workers()
+
+	assert len(workers) == 1
+	completed = workers[0].run_once()
+	assert completed is not None and completed.id == job.id and completed.status == "succeeded"
+	assert plane.workflows.get(workflow.id).state == "triaged"
+
+
+def test_worker_discovery_skips_invalid_json_container_shapes_without_blocking_valid_jobs(monkeypatch, tmp_path):
+	runs = tmp_path / "runs"
+	project = runs / "project_support"
+	project.mkdir(parents=True)
+	store = OperationGraphStore(project, tenant_id="tenant_acme", project_id="project_support")
+	graph = load_operation_graph(deploy_process.Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+	revision = store.create_revision(graph, expected_revision_hash=None)
+	store.approve_revision(revision.revision_hash, actor_id="owner")
+	runtime_root = runs / ".cmul8-runtime"
+	plane = RuntimePlane.from_approved_revision(runtime_root, store, revision.revision_hash, environment_id="production")
+	workflow = plane.workflows.start("workflow_resolve_case")
+	job = plane.scheduler.enqueue("workflow.transition", {
+		"instance_id": workflow.id, "target_state": "triaged", "expected_state": "new",
+		"expected_revision": workflow.revision,
+	})
+	for project_id, payload in (("invalid_array", "[]"), ("invalid_jobs", '{"jobs": []}')):
+		state_path = runtime_root / "tenant_000" / "environment_000" / project_id / "runtime" / "state.json"
+		state_path.parent.mkdir(parents=True)
+		state_path.write_text(payload, encoding="utf-8")
+	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
+	monkeypatch.setenv("CMUL8_RUNTIME_ROOT", str(runtime_root))
+	monkeypatch.setenv("CMUL8_TELEMETRY_ROOT", str(runs / ".cmul8-telemetry"))
+	monkeypatch.setattr(deploy_process, "_queue_reachable", lambda: True)
+
+	workers = deploy_process._discovered_runtime_workers()
+
+	assert len(workers) == 1
+	completed = workers[0].run_once()
+	assert completed is not None and completed.id == job.id and completed.status == "succeeded"
+	assert plane.workflows.get(workflow.id).state == "triaged"
+
+
+def test_invalid_explicit_worker_config_never_falls_back_to_discovery(monkeypatch, tmp_path):
+	socket_path = tmp_path / "worker.sock"
+	responses: list[bytes] = []
+	handlers: dict[int, object] = {}
+	discovery_calls: list[bool] = []
+
+	class Connection:
+		closed = False
+
+		def recv(self, _size: int) -> bytes:
+			return b"READY\n"
+
+		def sendall(self, value: bytes) -> None:
+			responses.append(value)
+
+		def __enter__(self):
+			return self
+
+		def __exit__(self, *_args) -> None:
+			self.closed = True
+			return None
+
+	class Server:
+		connection: Connection | None = None
+
+		def bind(self, path: str) -> None:
+			deploy_process.Path(path).touch()
+
+		def listen(self, _backlog: int) -> None:
+			return None
+
+		def settimeout(self, _timeout: float) -> None:
+			return None
+
+		def accept(self):
+			handler = handlers[signal.SIGTERM]
+			handler(None, None)  # type: ignore[operator]
+			self.connection = Connection()
+			return self.connection, None
+
+		def close(self) -> None:
+			return None
+
+	monkeypatch.setattr(deploy_process, "WORKER_SOCKET", socket_path)
+	server = Server()
+	monkeypatch.setattr(deploy_process.socket, "socket", lambda *_args: server)
+	monkeypatch.setattr(deploy_process.signal, "signal", lambda signal_number, handler: handlers.__setitem__(signal_number, handler))
+	monkeypatch.setattr(deploy_process, "_configured_runtime_worker", lambda: (_ for _ in ()).throw(ValueError("invalid explicit scope")))
+	monkeypatch.setattr(deploy_process, "_discovered_runtime_workers", lambda: discovery_calls.append(True) or [])
+	monkeypatch.setattr(deploy_process, "_runtime_roots_ready", lambda: True)
+	monkeypatch.setenv("CMUL8_PROJECT_ID", "project_confined")
+
+	assert deploy_process.worker() == 0
+	assert discovery_calls == []
+	assert responses == [b"NOT_READY\n"]
+	assert server.connection is not None and server.connection.closed
+
+
+def test_worker_survives_a_probe_io_failure_and_closes_every_test_connection(monkeypatch, tmp_path):
+	socket_path = tmp_path / "worker.sock"
+	handlers: dict[int, object] = {}
+	responses: list[bytes] = []
+
+	class Connection:
+		def __init__(self, *, fails: bool) -> None:
+			self.fails = fails
+			self.closed = False
+
+		def recv(self, _size: int) -> bytes:
+			if self.fails:
+				raise OSError("client disconnected")
+			return b"LIVE\n"
+
+		def sendall(self, value: bytes) -> None:
+			responses.append(value)
+
+		def __enter__(self):
+			return self
+
+		def __exit__(self, *_args) -> None:
+			self.closed = True
+			return None
+
+	class Server:
+		def __init__(self) -> None:
+			self.all_connections = [Connection(fails=True), Connection(fails=False)]
+			self.connections = list(self.all_connections)
+
+		def bind(self, path: str) -> None:
+			deploy_process.Path(path).touch()
+
+		def listen(self, _backlog: int) -> None:
+			return None
+
+		def settimeout(self, _timeout: float) -> None:
+			return None
+
+		def accept(self):
+			connection = self.connections.pop(0)
+			if not connection.fails:
+				handlers[signal.SIGTERM](None, None)  # type: ignore[operator]
+			return connection, None
+
+		def close(self) -> None:
+			return None
+
+	server = Server()
+	monkeypatch.setattr(deploy_process, "WORKER_SOCKET", socket_path)
+	monkeypatch.setattr(deploy_process.socket, "socket", lambda *_args: server)
+	monkeypatch.setattr(deploy_process.signal, "signal", lambda signal_number, handler: handlers.__setitem__(signal_number, handler))
+	monkeypatch.setattr(deploy_process, "_discovered_runtime_workers", lambda: [])
+
+	assert deploy_process.worker() == 0
+	assert responses == [b"OK\n"]
+	assert all(connection.closed for connection in server.all_connections)

@@ -61,6 +61,7 @@ class JobRecord:
 	tool_signatures: dict[str, int] = field(default_factory=dict)
 	result: Any = None
 	thread: threading.Thread | None = None
+	persist_agent_metadata: bool = True
 
 
 _lock = threading.Lock()
@@ -142,7 +143,7 @@ def _persist(job: JobRecord, *, extra_prime: dict[str, Any] | None = None) -> No
 		"error": job.error,
 		"label": job.label,
 	}
-	if extra_prime:
+	if extra_prime and job.persist_agent_metadata:
 		state.prime = {**state.prime, **extra_prime}
 	save_state(state)
 
@@ -246,6 +247,7 @@ def start_job(
 	*,
 	label: str,
 	target: Callable[[JobRecord], Any],
+	persist_agent_metadata: bool = True,
 ) -> JobRecord:
 	bounds = BOUNDS.get(kind, BOUNDS["build_run"])
 	try:
@@ -267,6 +269,7 @@ def start_job(
 			deadline=time.monotonic() + float(bounds["timeout"]),
 			max_steps=int(bounds["max_steps"]),
 			stall_secs=float(bounds["stall"]),
+			persist_agent_metadata=persist_agent_metadata,
 		)
 		_jobs[project_id] = job
 

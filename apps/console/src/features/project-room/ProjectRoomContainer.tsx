@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   addCmul8Comment,
+  addCmul8RoomMember,
   approveCmul8Graph,
   createCmul8Room,
   getCmul8Room,
   heartbeatCmul8Presence,
+  markCmul8InboxRead,
   reviewCmul8Task,
   claimCmul8Task,
   transitionCmul8Task,
@@ -18,6 +20,7 @@ import { mapCmul8RoomPayload } from "./mapper";
 import { ProjectRoom } from "./ProjectRoom";
 
 const NO_PERMISSIONS: ProjectRoomPermissions = { manageTasks: false, reviewTasks: false, reviewGraph: false, handoff: false, invite: false, comment: false };
+const ROOM_REFRESH_MS = 15_000;
 
 function commandDecision(decision: ReviewDecision): string {
   if (decision === "approved") return "approve";
@@ -38,46 +41,88 @@ export function ProjectRoomContainer({ projectId }: { projectId: string }) {
   const [payload, setPayload] = useState<Cmul8RoomPayload | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error" | "forbidden">("loading");
   const [actionError, setActionError] = useState<string>();
+  const [connectionState, setConnectionState] = useState<"connected" | "disconnected" | "unknown">("unknown");
 
-  const load = useCallback(async () => {
-    if (!payload) setState("loading");
-    setActionError(undefined);
+  const load = useCallback(async (mode: "initial" | "manual" | "poll" = "manual"): Promise<boolean> => {
+    if (mode !== "poll") setState("loading");
     try {
       let next: Cmul8RoomPayload;
+      let created = false;
       try {
         next = await getCmul8Room(projectId);
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 404) throw error;
         next = await createCmul8Room(projectId);
+        created = true;
       }
       setPayload(next);
       setState("ready");
+      setConnectionState("connected");
+      if (mode === "poll") setActionError(undefined);
+      return created;
     } catch (error) {
+      if (mode === "poll") {
+        setConnectionState("disconnected");
+        setActionError(`Live updates paused: ${message(error)}`);
+        return false;
+      }
       if (error instanceof ApiError && (error.status === 401 || error.status === 403)) setState("forbidden");
       else setState("error");
       setActionError(message(error));
+      return false;
     }
-  }, [projectId, payload]);
+  }, [projectId]);
 
   useEffect(() => {
-    setPayload(null); setState("loading");
-    void heartbeatCmul8Presence(projectId).then(load, load);
-    const timer = window.setInterval(() => { void heartbeatCmul8Presence(projectId); }, 30_000);
-    return () => window.clearInterval(timer);
-  }, [projectId]); // load is intentionally reset by project identity only
+    let disposed = false;
+    let timer: number | undefined;
+    setPayload(null); setState("loading"); setConnectionState("unknown");
+    const refresh = async (mode: "initial" | "poll") => {
+      if (disposed || document.visibilityState === "hidden") return;
+      try { await heartbeatCmul8Presence(projectId); } catch { /* GET below determines room availability. */ }
+      const created = await load(mode);
+      if (created && !disposed) {
+        try { await heartbeatCmul8Presence(projectId); } catch { /* Next poll retries presence. */ }
+        await load("poll");
+      }
+    };
+    const startPolling = (initial = false) => {
+      if (timer !== undefined) window.clearInterval(timer);
+      if (document.visibilityState !== "hidden") {
+        void refresh(initial ? "initial" : "poll");
+        timer = window.setInterval(() => { void refresh("poll"); }, ROOM_REFRESH_MS);
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        if (timer !== undefined) window.clearInterval(timer);
+        timer = undefined;
+      } else startPolling();
+    };
+    startPolling(true);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => { disposed = true; if (timer !== undefined) window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibilityChange); };
+  }, [projectId, load]);
 
-  const mapped = useMemo(() => payload ? mapCmul8RoomPayload(payload) : null, [payload]);
+  const mapped = useMemo(() => payload ? mapCmul8RoomPayload(payload, connectionState) : null, [connectionState, payload]);
   const mutate = useCallback(async (operation: () => Promise<unknown>) => {
     setActionError(undefined);
-    try { await operation(); await load(); } catch (error) { setActionError(message(error)); }
+    try { await operation(); await load("poll"); } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        await load("poll");
+        setActionError("This room changed in another session. The latest state has been loaded; retry your action if it still applies.");
+      } else setActionError(message(error));
+    }
   }, [load]);
 
   const adapter = useMemo<Partial<ProjectRoomFeatureAdapter>>(() => ({
+    addMember: async (memberId, role, revision) => { await mutate(() => addCmul8RoomMember(projectId, { member_id: memberId, role, expected_revision: revision })); },
+    claimTask: async (taskId, revision) => { await mutate(() => claimCmul8Task(projectId, taskId, revision)); },
     transitionTask: async (taskId, next, revision) => {
       const current = mapped?.room.tasks.find((task) => task.id === taskId);
       await mutate(async () => {
         let expected = revision;
-        if (current && !current.ownerId) {
+        if (current && !current.ownerId && current.durableState === "proposed") {
           const claimed = await claimCmul8Task(projectId, taskId, revision);
           expected = claimed.revision;
           if (next === "ready") return;
@@ -86,6 +131,7 @@ export function ProjectRoomContainer({ projectId }: { projectId: string }) {
       });
     },
     submitTaskReview: async (taskId, decision, note, revision) => { await mutate(() => reviewCmul8Task(projectId, taskId, commandDecision(decision), note ?? "", revision)); },
+    markInboxRead: async (eventId) => { await mutate(() => markCmul8InboxRead(projectId, eventId)); },
     reconnect: load,
     approveGraph: async (revisionHash) => { await mutate(() => approveCmul8Graph(projectId, revisionHash)); },
     addComment: async (revisionId, body, section): Promise<GraphComment> => {
@@ -95,5 +141,5 @@ export function ProjectRoomContainer({ projectId }: { projectId: string }) {
     },
   }), [load, mapped, mutate, projectId]);
 
-  return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} actionError={actionError} onRetryLoad={() => void load()} />;
+  return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} actionError={actionError} onRetryLoad={() => void load("manual")} />;
 }

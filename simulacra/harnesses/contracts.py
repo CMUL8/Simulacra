@@ -305,6 +305,7 @@ class AgentRunRequest:
     trace_context: Mapping[str, str] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
     session_id: str | None = None
+    session_mode: str = "durable"
     required_artifact_paths: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
@@ -324,6 +325,10 @@ class AgentRunRequest:
             raise ValueError("wall_timeout_seconds must be positive")
         if self.step_budget <= 0:
             raise ValueError("step_budget must be positive")
+        if self.session_mode not in {"durable", "ephemeral"}:
+            raise ValueError("session_mode must be durable or ephemeral")
+        if self.session_mode == "ephemeral" and self.session_id is not None:
+            raise ValueError("ephemeral requests cannot resume a durable session")
 
 
 @dataclass(frozen=True, slots=True)

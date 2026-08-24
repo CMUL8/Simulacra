@@ -28,8 +28,10 @@ from .plan import (
 	plan_chat,
 	start_agent_chat,
 )
+from .mutation_authorization import require_room_mutation_authority
 
-from .prime_builder import prime_build_app
+from .builder_harness import run_app_builder
+from .operation_graph_builder import approved_graph_path
 from .prime_hook import prime_meta_dict
 from .research_bundle import (
 	ensure_research_aware_report_app,
@@ -48,6 +50,12 @@ from .tenants import get_tenant
 from .formats import normalize_kind
 
 log = logging.getLogger("simulacra.pipeline")
+
+
+def _builder_source_succeeded(source: object) -> bool:
+	return bool(source) and str(source) not in {
+		"error", "heuristic", "timeout", "cancelled", "template", "pending"
+	}
 
 
 def _load_rows(project_id: str) -> list[dict[str, Any]]:
@@ -155,18 +163,6 @@ def _prepare_data_and_gates(state: ProjectState) -> tuple[ProjectState, list[dic
 		detail += f" · {len(report.errors)} file errors"
 	emit_event(pid, "phase", label="Reading data room", detail=detail, status="done")
 
-	if not rows:
-		state.status = "failed"
-		state.phase = "plan"
-		msg = "Nothing extractable in sources yet. Add a .md, .csv, or .json, or ask the agent to gather material."
-		if report.skipped:
-			msg += f" Skipped: {', '.join(report.skipped[:5])}."
-		if report.errors:
-			msg += f" Errors: {'; '.join(report.errors[:3])}."
-		state.chat.append(ChatMessage(role="assistant", content=msg, source="system"))
-		save_state(state)
-		return state, [], []
-
 	emit_event(pid, "phase", label="Extracting structured data", status="running")
 	parquet = root / "outputs" / "table.parquet"
 	rows_to_parquet(rows, parquet)
@@ -197,7 +193,7 @@ def _prepare_data_and_gates(state: ProjectState) -> tuple[ProjectState, list[dic
 	state.status = "gating"
 	save_state(state)
 	emit_event(pid, "gate", label="Running eval gates", status="running")
-	audit = run_gates(state.id)
+	audit = run_gates(state.id, min_rows=0 if not rows else 1)
 	state.gates_status = audit["status"]
 	for r in audit.get("results", []):
 		emit_event(
@@ -277,8 +273,13 @@ def _scaffold_and_preview(
 			detail="Customizing from your brief",
 			status="running",
 		)
-		build_meta = prime_build_app(
-			app_dir, state.prompt, project_id=pid, row_count=len(rows), kind="build_run"
+		build_meta = run_app_builder(
+			app_dir,
+			state.prompt,
+			project_id=pid,
+			row_count=len(rows),
+			kind="build_run",
+			operation_graph_path=approved_graph_path(state),
 		)
 		source = build_meta.get("source") or ("prime" if build_meta.get("ok") else "heuristic")
 		if build_meta.get("used") and not build_meta.get("ok"):
@@ -294,6 +295,7 @@ def _scaffold_and_preview(
 			"steps": build_meta.get("events") or 0,
 			"style_only": bool(build_meta.get("style_only")),
 			"layout_customized": bool(build_meta.get("layout_customized")),
+			"changed_files": list(build_meta.get("changed_files") or ()),
 		}
 		emit_event(pid, "phase", label=f"Building {spec.short.lower()}", status="done")
 	else:
@@ -323,7 +325,7 @@ def _scaffold_and_preview(
 	return state
 
 
-def bootstrap_project(state: ProjectState) -> ProjectState:
+def bootstrap_project(state: ProjectState, *, actor_id: str | None = None) -> ProjectState:
 	"""Create path: data + gates + scaffold + builder customize + preview.
 
 	Template sync stays behind the scenes — the user lands on a Built artifact
@@ -332,21 +334,22 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	from .formats import get_format
 
 	pid = state.id
+	require_room_mutation_authority(pid, tenant_id=state.tenant_id, actor_id=actor_id)
 	state, rows, _sources = _prepare_data_and_gates(state)
 	if not rows:
 		return state
 
 	spec = get_format(state.artifact_kind)
 	state = _scaffold_and_preview(state, rows, run_prime=True, leave_in_plan=False)
-	source = state.prime.get("source") or "prime"
+	source = state.prime.get("source") or "heuristic"
 	changed = [str(x) for x in (state.prime.get("changed_files") or []) if x]
-	if not changed and source in ("prime", "craft"):
+	if not changed and _builder_source_succeeded(source):
 		changed = ["src/App.tsx", "src/styles.css"]
 	req_note = _honesty_change_note(
-		state.prompt, changed, layout=source in ("prime", "craft")
+		state.prompt, changed, layout=_builder_source_succeeded(source)
 	)
 	title = state.app_config.title or spec.label
-	if source in ("prime", "craft"):
+	if _builder_source_succeeded(source):
 		body = (
 			f"**{title}** is ready in Preview.\n\n"
 			f"{req_note}"
@@ -373,15 +376,18 @@ def bootstrap_project(state: ProjectState) -> ProjectState:
 	return state
 
 
-def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> ProjectState:
+def deepen_with_prime(
+	project_id: str, *, reset_scaffold: bool = True, actor_id: str | None = None,
+) -> ProjectState:
 	"""Agent customize. reset_scaffold=True for Build/Rebuild; False preserves agent edits."""
 	state = load_state(project_id)
+	require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
 	pid = project_id
 	rows = _load_rows(pid)
 	app_dir = project_dir(pid) / "app"
 
 	if not rows or not app_dir.exists():
-		return build_project(state, run_prime=True)
+		return build_project(state, run_prime=True, actor_id=actor_id)
 
 	state.status = "building_app"
 	state.phase = "build"
@@ -408,8 +414,13 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 	except Exception:  # noqa: BLE001
 		log.exception("research bundle ensure failed for %s", pid)
 
-	build_meta = prime_build_app(
-		app_dir, state.prompt, project_id=pid, row_count=len(rows), kind="build_run"
+	build_meta = run_app_builder(
+		app_dir,
+		state.prompt,
+		project_id=pid,
+		row_count=len(rows),
+		kind="build_run",
+		operation_graph_path=approved_graph_path(state),
 	)
 	source = build_meta.get("source") or ("prime" if build_meta.get("ok") else "heuristic")
 	if build_meta.get("used") and not build_meta.get("ok"):
@@ -489,11 +500,16 @@ def deepen_with_prime(project_id: str, *, reset_scaffold: bool = True) -> Projec
 	return state
 
 
-def build_project(state: ProjectState, *, run_prime: bool = True) -> ProjectState:
+def build_project(
+	state: ProjectState, *, run_prime: bool = True, actor_id: str | None = None,
+) -> ProjectState:
 	"""Full extract → gates → scaffold → optional deepen → preview."""
+	require_room_mutation_authority(state.id, tenant_id=state.tenant_id, actor_id=actor_id)
+	if run_prime:
+		approved_graph_path(state)
 	pid = state.id
 	state, rows, _sources = _prepare_data_and_gates(state)
-	if not rows:
+	if state.gates_status != "pass":
 		return state
 
 	state = _scaffold_and_preview(state, rows, run_prime=run_prime, leave_in_plan=False)
@@ -529,25 +545,32 @@ def prime_meta_dict_from_state(state: ProjectState) -> dict[str, Any]:
 	}
 
 
-def approve_and_build(project_id: str) -> ProjectState:
+def approve_and_build(project_id: str, *, actor_id: str | None = None) -> ProjectState:
 	"""Synchronous deepen (tests / CLI). Prefer start_approve_build for API."""
+	state = load_state(project_id)
+	require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
 	approve_plan(project_id)
-	return deepen_with_prime(project_id)
+	return deepen_with_prime(project_id, actor_id=actor_id)
 
 
-def start_approve_build(project_id: str, *, reset_scaffold: bool = True) -> dict[str, Any]:
+def start_approve_build(
+	project_id: str, *, reset_scaffold: bool = True, actor_id: str | None = None,
+) -> dict[str, Any]:
 	"""Non-blocking Build app / Rebuild from draft → agent customize."""
 	from .observe import ensure_fresh_extract
 
+	state = load_state(project_id)
+	require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
 	ensure_fresh_extract(project_id)
 	approve_plan(project_id)
 
 	def target(_job: JobRecord) -> None:
 		cur = load_state(project_id)
+		require_room_mutation_authority(project_id, tenant_id=cur.tenant_id, actor_id=actor_id)
 		if cur.deploy_url and (project_dir(project_id) / "app").exists() and _load_rows(project_id):
-			deepen_with_prime(project_id, reset_scaffold=reset_scaffold)
+			deepen_with_prime(project_id, reset_scaffold=reset_scaffold, actor_id=actor_id)
 		else:
-			build_project(cur, run_prime=True)
+			build_project(cur, run_prime=True, actor_id=actor_id)
 
 	try:
 		job = start_job(project_id, "build_run", label="Building app", target=target)
@@ -556,18 +579,20 @@ def start_approve_build(project_id: str, *, reset_scaffold: bool = True) -> dict
 	return {"job_id": job.id, "status": "running", **project_snapshot(project_id)}
 
 
-def follow_up(project_id: str, message: str) -> ProjectState:
+def follow_up(project_id: str, message: str, *, actor_id: str | None = None) -> ProjectState:
 	"""Synchronous chat (tests). Product path uses start_follow_up → Prime."""
-	return plan_chat(project_id, message)
+	return plan_chat(project_id, message, actor_id=actor_id)
 
 
-def start_follow_up(project_id: str, message: str, *, chat_id: str | None = None) -> dict[str, Any]:
-	"""Main chat entry — always Prime; Simulacra observes structured requests."""
+def start_follow_up(
+	project_id: str, message: str, *, chat_id: str | None = None, actor_id: str | None = None,
+) -> dict[str, Any]:
+	"""Main chat entry through the selected builder harness."""
 	if chat_id:
 		from .runs import activate_chat
 
 		activate_chat(project_id, chat_id)
-	start_agent_chat(project_id, message)
+	start_agent_chat(project_id, message, actor_id=actor_id)
 	snap = project_snapshot(project_id)
 	job = snap.get("job") or {}
 	return {"job_id": job.get("id"), "status": job.get("status") or "running", **snap}
@@ -591,10 +616,12 @@ def _iterate_merge_app_config(state: ProjectState, message: str) -> None:
 	state.app_config = infer_app_config(message, state.app_config)
 
 
-def _iterate_ui(project_id: str, message: str) -> None:
+def _iterate_ui(project_id: str, message: str, *, actor_id: str | None = None) -> None:
 	from .jobs import extend_job_budget
 	from .observe import ensure_fresh_extract
 
+	state = load_state(project_id)
+	require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
 	# Chat often burns budget before chaining here — give the builder a full slice.
 	extend_job_budget(project_id, extra_secs=420.0, extra_steps=50)
 
@@ -623,13 +650,13 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		except Exception:  # noqa: BLE001
 			log.exception("research bundle failed for %s", project_id)
 
-	meta = prime_build_app(
+	meta = run_app_builder(
 		app_dir,
 		f"{state.prompt}\n\nFollow-up: {message}",
 		project_id=project_id,
 		row_count=len(rows),
-		delta_note=message,
 		kind="iterate_run",
+		operation_graph_path=approved_graph_path(state),
 	)
 	# Heavy visual asks often land CSS first — keep going on App.tsx without asking the user.
 	if meta.get("style_only") or (
@@ -643,7 +670,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 			status="running",
 		)
 		extend_job_budget(project_id, extra_secs=360.0, extra_steps=40)
-		meta2 = prime_build_app(
+		meta2 = run_app_builder(
 			app_dir,
 			(
 				f"{state.prompt}\n\nFollow-up: {message}\n\n"
@@ -652,8 +679,8 @@ def _iterate_ui(project_id: str, message: str) -> None:
 			),
 			project_id=project_id,
 			row_count=len(rows),
-			delta_note=message,
 			kind="iterate_run",
+			operation_graph_path=approved_graph_path(state),
 		)
 		if meta2.get("layout_customized") or (
 			meta2.get("ok") and not meta2.get("style_only") and meta2.get("source") == "prime"
@@ -703,7 +730,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 		meta.get("ok")
 		and meta.get("files_changed")
 		and not meta.get("style_only")
-		and meta.get("source") == "prime"
+		and _builder_source_succeeded(meta.get("source"))
 	)
 	research_ready = bool(research_bundle) and kind == "report"
 	if content_win:
@@ -713,7 +740,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 			f"{req_note}"
 			"Open **Preview** to check, keep chatting to refine, or **Ship** for a share link."
 		)
-		source = "prime"
+		source = str(meta.get("source") or "agent")
 	elif research_ready:
 		honesty = (
 			"## Preview refreshed\n\n"
@@ -721,7 +748,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 			f"{req_note}"
 			"Open **Preview** to check, or keep chatting to refine."
 		)
-		source = "prime" if meta.get("source") == "prime" else "craft"
+		source = str(meta.get("source") or "craft") if meta.get("ok") else "craft"
 	elif (
 		meta.get("source") == "craft"
 		and meta.get("layout_customized")
@@ -766,7 +793,7 @@ def _iterate_ui(project_id: str, message: str) -> None:
 	state.deploy_url = url
 	state.status = "ready"
 	# Only keep a version when something useful landed
-	if source in ("prime", "craft") or (changed and source != "error") or research_ready:
+	if _builder_source_succeeded(source) or (changed and source != "error") or research_ready:
 		save_checkpoint(state, version_label(message))
 	emit_event(project_id, "done", label="Preview updated", detail=url, status="done")
 	save_state(state)
@@ -1014,7 +1041,7 @@ def project_snapshot(project_id: str) -> dict:
 			state.app_config.subtitle = one if one and one.lower() not in stock_subs else ""
 			dirty = True
 		elif sub == "Built from your sources":
-			if src in ("prime", "craft"):
+			if _builder_source_succeeded(src):
 				state.app_config.subtitle = ""
 			else:
 				state.app_config.subtitle = "From your sources"

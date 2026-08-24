@@ -6,6 +6,7 @@ import asyncio
 import json
 import multiprocessing
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from simulacra.harnesses import (
     AgentRunRequest,
     AgentSession,
+    CodexAppServerTransport,
     CodexHarness,
     FakeHarness,
     HarnessConfig,
@@ -60,6 +62,141 @@ def test_default_selection_is_codex_and_no_adapter_fallback() -> None:
         assert ProviderConfig(name).provider == name
     with pytest.raises(ValueError):
         ProviderConfig("unsupported")
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_transport_executes_official_jsonl_contract(tmp_path: Path) -> None:
+    executable = tmp_path / "fake-codex"
+    executable.write_text(
+        """#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+
+for raw in sys.stdin:
+    message = json.loads(raw)
+    method = message.get("method")
+    request_id = message.get("id")
+    params = message.get("params") or {}
+    if request_id is None:
+        continue
+    if method == "initialize":
+        result = {"userAgent": "fake-codex"}
+    elif method == "thread/start":
+        pathlib.Path(params["cwd"]).joinpath("thread-protocol.json").write_text(json.dumps(params), encoding="utf-8")
+        result = {"thread": {"id": "thread_test"}}
+    elif method == "thread/resume":
+        result = {"thread": {"id": params["threadId"]}}
+    elif method == "turn/start":
+        cwd = pathlib.Path(params["cwd"])
+        (cwd / "artifact.txt").write_text("built by app server", encoding="utf-8")
+        (cwd / "protocol.json").write_text(json.dumps(params), encoding="utf-8")
+        result = {"turn": {"id": "turn_test"}}
+    else:
+        result = {}
+    print(json.dumps({"id": request_id, "result": result}), flush=True)
+    if method == "turn/start":
+        print(json.dumps({"method": "item/agentMessage/delta", "params": {"delta": "{\\\"reply\\\":\\\"done\\\",\\\"request\\\":\\\"await_user\\\"}"}}), flush=True)
+        print(json.dumps({"method": "turn/completed", "params": {"turn": {"id": "turn_test", "status": "completed"}}}), flush=True)
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    config = HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("codex-test"))
+    request = _request(
+        tmp_path,
+        config=config,
+        prompt="build the approved application",
+        metadata={"output_schema": {"type": "object"}},
+    )
+    transport = CodexAppServerTransport(executable=str(executable))
+    harness = CodexHarness(transport)
+
+    result = await harness.run(request)
+
+    assert result.status is TerminalStatus.SUCCEEDED
+    assert result.structured_output == {"reply": "done", "request": "await_user"}
+    assert {path.name for path in result.changed_files} >= {"artifact.txt", "protocol.json"}
+    protocol = json.loads((tmp_path / "protocol.json").read_text())
+    thread_protocol = json.loads((tmp_path / "thread-protocol.json").read_text())
+    assert thread_protocol["sandbox"] == "workspace-write"
+    assert thread_protocol["approvalPolicy"] == "never"
+    assert thread_protocol["ephemeral"] is False
+    assert protocol["approvalPolicy"] == "never"
+    assert protocol["sandboxPolicy"]["type"] == "workspaceWrite"
+    assert protocol["sandboxPolicy"]["networkAccess"] is False
+    assert protocol["outputSchema"] == {"type": "object"}
+    assert transport._process is None
+
+    ephemeral_request = _request(
+        tmp_path,
+        task_type=TaskType.CHAT,
+        write_paths=(),
+        config=config,
+        session_mode="ephemeral",
+    )
+    ephemeral_transport = CodexAppServerTransport(executable=str(executable))
+    try:
+        thread_id = await ephemeral_transport.create_thread(request=ephemeral_request)
+        ephemeral_protocol = json.loads((tmp_path / "thread-protocol.json").read_text())
+        assert ephemeral_protocol["sandbox"] == "read-only"
+        assert ephemeral_protocol["ephemeral"] is True
+        with pytest.raises(ValueError, match="ephemeral"):
+            await ephemeral_transport.create_thread(request=ephemeral_request, thread_id=thread_id)
+    finally:
+        await ephemeral_transport.close()
+    assert ephemeral_transport._process is None
+
+
+@pytest.mark.asyncio
+async def test_installed_codex_app_server_accepts_thread_start_handshake(tmp_path: Path) -> None:
+    """Exercise the installed official schema without starting a model turn."""
+    executable = shutil.which("codex")
+    if executable is None:
+        pytest.skip("codex executable is not installed")
+    transport = CodexAppServerTransport(executable=executable)
+    request = _request(
+        tmp_path,
+        config=HarnessConfig("codex", ProviderConfig("openai"), ModelCapability("default")),
+    )
+    process = None
+    try:
+        thread_id = await asyncio.wait_for(transport.create_thread(request=request), timeout=10)
+        process = transport._process
+        assert thread_id
+        ephemeral_request = _request(
+            tmp_path,
+            task_type=TaskType.CHAT,
+            write_paths=(),
+            config=request.config,
+            session_mode="ephemeral",
+        )
+        assert await asyncio.wait_for(transport.create_thread(request=ephemeral_request), timeout=10)
+    except RuntimeError as exc:
+        detail = str(exc).lower()
+        if ".codex" in detail and ("permission denied" in detail or "operation not permitted" in detail):
+            pytest.skip("installed Codex cannot initialize its writable state in this environment")
+        raise
+    finally:
+        await transport.close()
+    if process is not None:
+        assert process.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_request_never_creates_or_resumes_a_durable_session(tmp_path: Path) -> None:
+    harness = FakeHarness()
+    request = _request(
+        tmp_path, task_type=TaskType.CHAT, write_paths=(), session_mode="ephemeral",
+    )
+    result = await harness.run(request)
+
+    assert result.status is TerminalStatus.SUCCEEDED
+    assert not (tmp_path / ".cmul8/harness/sessions.json").exists()
+    with pytest.raises(ValueError, match="ephemeral"):
+        await harness.create_session(request)
+    with pytest.raises(ValueError, match="ephemeral"):
+        await harness.resume_session(request)
 
 
 def test_canonical_environment_wins_and_safe_metadata_never_resolves_secrets() -> None:

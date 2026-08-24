@@ -30,6 +30,7 @@ from .plane import RuntimePlane
 from .policy import ApprovedGraph
 from .repository import FileRuntimeRepository, JsonRuntimeRepository, RuntimeRepository
 from .scheduler import Scheduler
+from .worker import RuntimeWorker, SUPPORTED_JOB_KINDS
 from .services import (
 	ActionGateway,
 	ApprovalService,
@@ -48,6 +49,6 @@ __all__ = [
 	"InvalidTransitionError", "JsonRuntimeRepository", "ReadOnlyDataTool", "RuntimeAgentGateway",
 	"RuntimeAgentSupervisor", "RuntimeAuthorizationError", "RuntimeConflictError",
 	"RuntimeNotFoundError", "RuntimePlane", "RuntimePlaneError", "RuntimeRepository", "RuntimeTool",
-	"RuntimeScopeError", "ScheduledJob", "Scheduler", "TelemetryEvent", "TelemetryService",
+	"RuntimeScopeError", "RuntimeWorker", "SUPPORTED_JOB_KINDS", "ScheduledJob", "Scheduler", "TelemetryEvent", "TelemetryService",
 	"WorkflowInstance", "WorkflowService", "new_id", "utc_now",
 ]

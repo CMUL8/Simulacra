@@ -213,11 +213,12 @@ def prime_chat_turn(
 	message: str | None = None,
 	open_turn: bool = False,
 	project_id: str | None = None,
+	ephemeral_session: bool = False,
 ) -> PrimeChatTurn:
 	"""Single Prime chat turn for the product. Main chat = this helper.
 
-	Always uses the same session name + session_dir so Prime's RLM worker can
-	resume context across the ~10–12 follow-ups a normal user sends.
+	Durable turns use the project chat session; read-only turns opt into an
+	ephemeral provider session with no project-local session artifacts.
 	"""
 	if not prime_enabled() or not (project_id or state.id):
 		return PrimeChatTurn(meta=PrimeBuildMeta(used=False, source="heuristic"))
@@ -268,7 +269,7 @@ def prime_chat_turn(
 			"You are the Simulacra agent, live in the main chat with the user.\n"
 			"This is the opening turn after create. They will steer you across many follow-ups.\n"
 			"Do NOT claim you have built anything. Do not write app code in this turn.\n"
-			"Use your persistent session/RLM memory — later turns will resume this conversation.\n"
+			+ ("Use this turn's supplied context only.\n" if ephemeral_session else "Use your persistent session/RLM memory — later turns will resume this conversation.\n")
 		)
 		user_bit = f"User request:\n{state.prompt}\n\nGoal (if any):\n{state.goal or '(none)'}\n"
 		# Inventory only — do not dump high-risk/vendor KPIs unless the room is diligence-shaped.
@@ -286,7 +287,8 @@ def prime_chat_turn(
 		# Slim follow-ups: rely on session memory + short recent transcript, not a full dump.
 		role = (
 			"You are the Simulacra agent continuing the SAME chat session with the user.\n"
-			"Resume prior context from your session/RLM memory. Do not restart from scratch.\n"
+			+ ("Use the supplied recent chat context. Do not restart from scratch.\n" if ephemeral_session else "Resume prior context from your session/RLM memory. Do not restart from scratch.\n")
+			+
 			"They steer you — sources, sample pack, research, scope, tone, UI edits.\n"
 			"Do NOT force a vendor dashboard unless they want that.\n"
 			"Do not write app code in this turn; request iterate/build instead.\n"
@@ -319,8 +321,9 @@ def prime_chat_turn(
 		pid,
 		cwd=cwd,
 		prompt=prime_prompt,
-		name=session_name,
+		name=None if ephemeral_session else session_name,
 		timeout=ask_timeout,
+		ephemeral_session=ephemeral_session,
 	)
 	out_meta = PrimeBuildMeta(
 		used=True,

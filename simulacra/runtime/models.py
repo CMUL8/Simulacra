@@ -85,6 +85,8 @@ class HumanTask(RecordMixin):
 	revision: int = 0
 	created_at: str = field(default_factory=utc_now)
 	updated_at: str = field(default_factory=utc_now)
+	# Human work is governed by the exact graph revision that created it.
+	operation_graph_version: str = ""
 	schema_version: str = SCHEMA_VERSION
 
 
@@ -113,6 +115,9 @@ class ApprovalRequest(RecordMixin):
 	revision: int = 0
 	created_at: str = field(default_factory=utc_now)
 	updated_at: str = field(default_factory=utc_now)
+	# Approval decisions are governed by the graph revision that created the
+	# request.  A newer worker must not decide an older revision's policy.
+	operation_graph_version: str = ""
 	schema_version: str = SCHEMA_VERSION
 
 
@@ -132,6 +137,9 @@ class ScheduledJob(RecordMixin):
 	lease_until: str | None = None
 	last_error: str | None = None
 	idempotency_key: str | None = None
+	# The revision is copied from the verified runtime policy at admission time.
+	# A worker must never run a durable job under a different graph revision.
+	operation_graph_version: str = ""
 	revision: int = 0
 	created_at: str = field(default_factory=utc_now)
 	updated_at: str = field(default_factory=utc_now)
@@ -162,6 +170,9 @@ class ActionRecord(RecordMixin):
 	revision: int = 0
 	created_at: str = field(default_factory=utc_now)
 	updated_at: str = field(default_factory=utc_now)
+	# Consequential connector work remains pinned to the approved graph that
+	# admitted it, even when the project later approves another revision.
+	operation_graph_version: str = ""
 	schema_version: str = SCHEMA_VERSION
 
 

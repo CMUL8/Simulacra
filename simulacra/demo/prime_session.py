@@ -126,18 +126,18 @@ async def _ask_async(
 	prompt: str,
 	name: str,
 	timeout: float,
+	ephemeral_session: bool = False,
 ) -> tuple[str | None, dict[str, Any]]:
 	load_dotenv()
 	meta: dict[str, Any] = {"used": True, "ok": False, "source": "prime"}
 	if not _prime_enabled():
 		return None, {"used": False, "ok": False, "source": "heuristic"}
 
-	session_dir = session_dir_for(project_id)
 	agent = Agent(
 		cwd=cwd,
-		no_session=False,
-		session_dir=session_dir,
-		name=name,
+		no_session=ephemeral_session,
+		session_dir=None if ephemeral_session else session_dir_for(project_id),
+		name=None if ephemeral_session else name,
 		on_event=_on_event(project_id),
 		**_prime_kwargs(),
 	)
@@ -193,13 +193,15 @@ async def _ask_async(
 		text = await agent.ask(prompt, timeout=timeout)
 		meta["ok"] = bool(text)
 		meta["text"] = text
-		_save_prime_meta(project_id, meta)
+		if not ephemeral_session:
+			_save_prime_meta(project_id, meta)
 		return text, meta
 	except Exception as exc:  # noqa: BLE001
 		meta["error"] = str(exc)[:300]
 		meta["source"] = "error"
 		emit_event(project_id, "error", label="Ask failed", detail=meta["error"], status="fail")
-		_save_prime_meta(project_id, meta)
+		if not ephemeral_session:
+			_save_prime_meta(project_id, meta)
 		return None, meta
 	finally:
 		stop_hb.set()
@@ -302,10 +304,14 @@ def prime_ask(
 	*,
 	cwd: Path,
 	prompt: str,
-	name: str = "simulacra",
+	name: str | None = "simulacra",
 	timeout: float = 240.0,
+	ephemeral_session: bool = False,
 ) -> tuple[str | None, dict[str, Any]]:
-	return _run_coro(_ask_async(project_id, cwd=cwd, prompt=prompt, name=name, timeout=timeout))
+	return _run_coro(_ask_async(
+		project_id, cwd=cwd, prompt=prompt, name=name or "simulacra", timeout=timeout,
+		ephemeral_session=ephemeral_session,
+	))
 
 
 def prime_run(

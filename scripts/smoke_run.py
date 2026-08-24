@@ -15,6 +15,8 @@ from simulacra.env import load_dotenv
 from simulacra.demo.pipeline import approve_and_build, init_plan
 from simulacra.demo.prime_hook import prime_enabled
 from simulacra.demo.runs import create_project
+from simulacra.demo.paths import RUNS_DIR
+from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
 
 load_dotenv()
 
@@ -27,8 +29,12 @@ def main() -> int:
 
 	state = create_project(prompt, use_fixture=True)
 	print(f"==> project {state.id}")
+	actor_id = "smoke_owner"
+	CollaborationService(JsonCollaborationRepository(RUNS_DIR / ".cmul8-control")).create_room(
+		tenant_id=state.tenant_id, project_id=state.id, creator_id=actor_id, creator_role="owner",
+	)
 
-	state = init_plan(state)
+	state = init_plan(state, actor_id=actor_id)
 	print(f"==> plan phase: {state.phase}, rows preview: {state.plan_preview.get('row_count', 0)}")
 
 	# Plan open runs as a background job — wait for Prime (or heuristic) reply
@@ -45,7 +51,7 @@ def main() -> int:
 	state = load_state(state.id)
 	print(f"==> plan open source: {state.prime.get('source')}")
 
-	state = approve_and_build(state.id)
+	state = approve_and_build(state.id, actor_id=actor_id)
 	print(f"==> status: {state.status}")
 	print(f"==> app: {state.app_config.title}")
 	print(f"==> rows: {state.row_count}")

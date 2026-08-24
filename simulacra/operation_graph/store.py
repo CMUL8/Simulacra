@@ -15,6 +15,7 @@ from typing import Any, Callable, Iterator, Mapping
 
 from .codec import canonical_json_bytes, deterministic_json
 from .errors import RevisionConflictError, RevisionNotFoundError, UnapprovedRevisionError
+from .security import assert_connector_configurations_opaque
 from .validation import validate_operation_graph
 
 RECORD_SCHEMA_VERSION = "cmul8.operation-graph.store.v0"
@@ -199,6 +200,9 @@ class OperationGraphStore:
 		expected_revision_hash: str | None,
 	) -> GraphRevision:
 		validated = validate_operation_graph(graph)
+		# Check before acquiring the lock or calculating/writing immutable bytes.  This
+		# keeps credential-like values out of revision and head records entirely.
+		assert_connector_configurations_opaque(validated)
 		metadata = validated["metadata"]
 		if metadata["tenant_id"] != self.tenant_id or metadata["project_id"] != self.project_id:
 			raise ValueError("graph tenant_id/project_id does not match store scope")
@@ -252,6 +256,9 @@ class OperationGraphStore:
 		actual_hash = hashlib.sha256(canonical_json_bytes(record.graph)).hexdigest()
 		if record.revision_hash != revision_hash or actual_hash != revision_hash:
 			raise ValueError(f"Immutable Operation Graph revision failed content hash verification: {revision_hash}")
+		# This check is deliberately on the central load path so legacy unsafe
+		# revisions cannot be listed, activated, approved, rolled back to, or built.
+		assert_connector_configurations_opaque(record.graph)
 		return record
 
 	def current_revision(self) -> GraphRevision | None:

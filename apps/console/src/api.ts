@@ -628,7 +628,7 @@ export type Cmul8RoomPayload = {
   operation_graph?: Cmul8GraphRecord | null;
   operation_graph_approvals: Array<{ approval_id: string; revision_hash: string; actor_id: string; decision: string; created_at: string; updated_at?: string }>;
   away: { since?: string | null; total: number; unread: number; counts: Record<string, number>; highlights: Array<{ position: number; category: string; unread: boolean; event: Cmul8DomainEventRecord; deep_link: Record<string, string | null> }> };
-  permissions: { manage_tasks: boolean; review_tasks: boolean; review_graph: boolean; invite: boolean };
+  permissions: { manage_tasks: boolean; review_tasks: boolean; review_graph: boolean; invite: boolean; comment: boolean };
   presence: Array<{ actor_id: string; status: "active" | "away"; location?: string | null; last_seen_at: string; expires_at: string }>;
 };
 
@@ -640,8 +640,17 @@ export async function createCmul8Room(projectId: string): Promise<Cmul8RoomPaylo
   return json(`/projects/${projectId}/cmul8/room`, { method: "POST", body: "{}" });
 }
 
+export async function addCmul8RoomMember(projectId: string, member: { member_id: string; role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver"; expected_revision: number }): Promise<Cmul8RoomPayload["room"]> {
+  return json(`/projects/${projectId}/cmul8/room/members`, { method: "POST", body: JSON.stringify(member) });
+}
+
 export async function heartbeatCmul8Presence(projectId: string, status: "active" | "away" = "active"): Promise<void> {
   await json(`/projects/${projectId}/cmul8/presence`, { method: "POST", body: JSON.stringify({ status }) });
+}
+
+export async function markCmul8InboxRead(projectId: string, eventId?: string): Promise<{ last_read_position: number; updated_at: string }> {
+  const query = eventId ? `?event_id=${encodeURIComponent(eventId)}` : "";
+  return json(`/projects/${projectId}/cmul8/inbox/read${query}`, { method: "POST" });
 }
 
 export async function createCmul8Task(projectId: string, task: { title: string; objective: string; acceptance_criteria: string[]; owner_id?: string; operation_graph_version?: string }): Promise<Cmul8TaskRecord> {

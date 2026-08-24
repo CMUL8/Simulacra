@@ -290,10 +290,14 @@ class JsonRuntimeRepository:
 	def get_approval(self, tenant_id: str, environment_id: str, project_id: str, record_id: str) -> ApprovalRequest: return self._get("approvals", tenant_id, environment_id, project_id, record_id)
 	def list_approvals(self, tenant_id: str, environment_id: str, project_id: str) -> list[ApprovalRequest]: return self._list("approvals", tenant_id, environment_id, project_id)
 	def save_approval(self, record: ApprovalRequest, expected_revision: int) -> ApprovalRequest: return self._save("approvals", record, expected_revision)
-	def create_job(self, record: ScheduledJob) -> ScheduledJob: return self._create("jobs", record)
+	def create_job(self, record: ScheduledJob) -> ScheduledJob:
+		assert_opaque_credentials(record.payload, context="scheduled job payload")
+		return self._create("jobs", record)
 	def get_job(self, tenant_id: str, environment_id: str, project_id: str, record_id: str) -> ScheduledJob: return self._get("jobs", tenant_id, environment_id, project_id, record_id)
 	def list_jobs(self, tenant_id: str, environment_id: str, project_id: str) -> list[ScheduledJob]: return self._list("jobs", tenant_id, environment_id, project_id)
-	def save_job(self, record: ScheduledJob, expected_revision: int) -> ScheduledJob: return self._save("jobs", record, expected_revision)
+	def save_job(self, record: ScheduledJob, expected_revision: int) -> ScheduledJob:
+		assert_opaque_credentials(record.payload, context="scheduled job payload")
+		return self._save("jobs", record, expected_revision)
 
 	def create_action(self, record: ActionRecord) -> ActionRecord:
 		assert_opaque_credentials(record.input, context="action payload")
@@ -348,7 +352,9 @@ class JsonRuntimeRepository:
 			return record
 		return self.mutate_project(record.tenant_id, record.environment_id, record.project_id, change)
 	def list_audit(self, tenant_id: str, environment_id: str, project_id: str) -> list[AuditEvent]: return self._list("audit", tenant_id, environment_id, project_id)
-	def append_telemetry(self, record: TelemetryEvent) -> TelemetryEvent: return self._create("telemetry", record)
+	def append_telemetry(self, record: TelemetryEvent) -> TelemetryEvent:
+		assert_opaque_credentials({"name": record.name, "attributes": record.attributes}, context="runtime telemetry")
+		return self._create("telemetry", record)
 	def list_telemetry(self, tenant_id: str, environment_id: str, project_id: str) -> list[TelemetryEvent]: return self._list("telemetry", tenant_id, environment_id, project_id)
 
 

@@ -22,6 +22,7 @@ _ROOT_LOCKS: dict[str, threading.RLock] = {}
 class CollaborationRepository(Protocol):
 	def create_room(self, room: ProjectRoom) -> ProjectRoom: ...
 	def get_room(self, tenant_id: str, project_id: str) -> ProjectRoom: ...
+	def room_lock(self, tenant_id: str, project_id: str): ...
 	def save_room(self, room: ProjectRoom, expected_revision: int) -> ProjectRoom: ...
 	def create_task(self, task: Task) -> Task: ...
 	def get_task(self, tenant_id: str, project_id: str, task_id: str) -> Task: ...
@@ -162,6 +163,12 @@ class JsonCollaborationRepository:
 		room = ProjectRoom.from_dict(self._read_json(path, {}))
 		self._assert_scope(room, tenant_id, project_id)
 		return room
+
+	@contextmanager
+	def room_lock(self, tenant_id: str, project_id: str):
+		"""Hold the durable room lock while an external mutation is committed."""
+		with self._write_lock(tenant_id, project_id):
+			yield self.get_room(tenant_id, project_id)
 
 	def save_room(self, room: ProjectRoom, expected_revision: int) -> ProjectRoom:
 		with self._write_lock(room.tenant_id, room.project_id):

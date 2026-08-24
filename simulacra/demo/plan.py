@@ -11,8 +11,9 @@ from .design_brief import merge_notes_from_message, write_brief
 from .extract import extract_data_room_report, write_summary
 from .events import emit_event
 from .jobs import JobConflictError, start_job
-from .prime_hook import prime_chat_turn
+from .builder_harness import run_chat_builder
 from .runs import ChatMessage, ProjectState, load_state, project_dir, save_state
+from .mutation_authorization import has_room_mutation_authority, require_room_mutation_authority
 from .sources import (
 	apply_profile_to_brief,
 	content_fingerprint,
@@ -21,7 +22,6 @@ from .sources import (
 	source_room_brief,
 	write_agent_context,
 )
-
 
 def explore_plan_scan(state: ProjectState) -> ProjectState:
 	"""Read-only extract for plan preview — does not talk to the user yet."""
@@ -80,13 +80,16 @@ def explore_plan_scan(state: ProjectState) -> ProjectState:
 	return state
 
 
-def run_plan_open(project_id: str) -> ProjectState:
-	"""Opening Prime turn after create."""
-	return _agent_chat_turn(project_id, message=None, open_turn=True)
+def run_plan_open(project_id: str, *, actor_id: str | None) -> ProjectState:
+	"""Opening architect-harness turn after create."""
+	state = load_state(project_id)
+	require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
+	return _agent_chat_turn(project_id, message=None, open_turn=True, actor_id=actor_id)
 
 
-def init_plan(state: ProjectState) -> ProjectState:
-	"""Scan sources, then open Prime in the main chat. User steers; Build scaffolds."""
+def init_plan(state: ProjectState, *, actor_id: str | None) -> ProjectState:
+	"""Scan sources, then open the selected harness in main chat."""
+	require_room_mutation_authority(state.id, tenant_id=state.tenant_id, actor_id=actor_id)
 	if not any(m.role == "user" for m in state.chat):
 		state.chat.append(ChatMessage(role="user", content=state.prompt, source="system"))
 		save_state(state)
@@ -108,7 +111,12 @@ def init_plan(state: ProjectState) -> ProjectState:
 	save_state(state)
 
 	def plan_target(_job):
-		return run_plan_open(pid)
+		from .operation_graph_builder import propose_operation_graph
+
+		current = load_state(pid)
+		require_room_mutation_authority(pid, tenant_id=current.tenant_id, actor_id=actor_id)
+		propose_operation_graph(current, actor_id=actor_id)
+		return run_plan_open(pid, actor_id=actor_id)
 
 	try:
 		start_job(pid, "agent_chat", label="Agent", target=plan_target)
@@ -117,39 +125,46 @@ def init_plan(state: ProjectState) -> ProjectState:
 	return load_state(pid)
 
 
-def start_agent_chat(project_id: str, message: str) -> ProjectState:
-	"""Append user message; Prime replies; Simulacra observes structured request."""
+def start_agent_chat(project_id: str, message: str, *, actor_id: str | None = None) -> ProjectState:
+	"""Append user message; the selected harness returns a structured request."""
 	state = load_state(project_id)
 	state.chat.append(ChatMessage(role="user", content=message))
-	if state.phase == "plan":
-		state.prompt = _merge_prompt_update(state.prompt, message)
-	state.design_brief = merge_notes_from_message(state.design_brief, message)
-	write_brief(project_id, state.design_brief)
+	can_mutate = has_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
+	if can_mutate:
+		if state.phase == "plan":
+			state.prompt = _merge_prompt_update(state.prompt, message)
+		state.design_brief = merge_notes_from_message(state.design_brief, message)
+		write_brief(project_id, state.design_brief)
 	save_state(state)
 
 	def target(_job):
-		return _agent_chat_turn(project_id, message=message, open_turn=False)
+		return _agent_chat_turn(project_id, message=message, open_turn=False, actor_id=actor_id)
 
 	try:
-		start_job(project_id, "agent_chat", label="Agent", target=target)
+		start_job(
+			project_id, "agent_chat", label="Agent", target=target,
+			persist_agent_metadata=can_mutate,
+		)
 	except JobConflictError as exc:
 		raise ValueError(str(exc)) from exc
 	return load_state(project_id)
 
 
-def start_plan_chat(project_id: str, message: str) -> ProjectState:
-	"""Alias — main chat is Prime regardless of phase."""
-	return start_agent_chat(project_id, message)
+def start_plan_chat(project_id: str, message: str, *, actor_id: str | None = None) -> ProjectState:
+	"""Alias for the provider-neutral main chat."""
+	return start_agent_chat(project_id, message, actor_id=actor_id)
 
 
-def plan_chat(project_id: str, message: str) -> ProjectState:
+def plan_chat(project_id: str, message: str, *, actor_id: str | None = None) -> ProjectState:
 	"""Synchronous chat turn (tests / scripts)."""
 	state = load_state(project_id)
 	state.chat.append(ChatMessage(role="user", content=message))
-	if state.phase == "plan":
+	if state.phase == "plan" and has_room_mutation_authority(
+		project_id, tenant_id=state.tenant_id, actor_id=actor_id,
+	):
 		state.prompt = _merge_prompt_update(state.prompt, message)
 	save_state(state)
-	return _agent_chat_turn(project_id, message=message, open_turn=False)
+	return _agent_chat_turn(project_id, message=message, open_turn=False, actor_id=actor_id)
 
 
 def _agent_chat_turn(
@@ -157,6 +172,7 @@ def _agent_chat_turn(
 	*,
 	message: str | None,
 	open_turn: bool,
+	actor_id: str | None = None,
 ) -> ProjectState:
 	state = load_state(project_id)
 	root = project_dir(project_id)
@@ -187,9 +203,55 @@ def _agent_chat_turn(
 		snapshot_work_mtimes,
 	)
 
-	# Observe baseline + research scratch for agent writes
+	# Ordinary conversation is available to room readers. Work/data/app changes
+	# are deferred until the actor is revalidated after the long harness turn.
+	can_mutate = has_room_mutation_authority(
+		project_id, tenant_id=state.tenant_id, actor_id=actor_id,
+	)
+
+	# Capture only a read-only baseline before the harness runs.
 	before_work = snapshot_work_mtimes(project_id)
-	ensure_research_scratch(project_id)
+
+	turn = run_chat_builder(state, message=message, open_turn=open_turn, read_only=not can_mutate)
+	meta = turn.meta
+	source = meta.source if turn.reply and meta.used and not meta.error else ("error" if meta.error else "heuristic")
+
+	reply = turn.reply
+	if not reply:
+		if open_turn:
+			reply = _open_reply(state, files=files, rows=rows, high=high, vendors=vendors)
+		else:
+			reply = _heuristic_chat_reply(state, message or "")
+		# Prefer honest heuristic label over "error" when we still have a user-facing reply
+		source = "heuristic"
+
+	from .chat_sanitize import reply_asks_to_build, sanitize_agent_reply
+
+	reply = sanitize_agent_reply(reply)
+	# Revalidate after the harness has finished. A demoted actor receives only a
+	# safe conversational reply; no structured request/config/brief is promoted.
+	can_mutate = can_mutate and has_room_mutation_authority(
+		project_id, tenant_id=state.tenant_id, actor_id=actor_id,
+	)
+	if not can_mutate:
+		state = load_state(project_id)
+		state.chat.append(ChatMessage(role="assistant", content=reply, source=source))
+		if turn.request in {"build", "iterate"} or reply_asks_to_build(reply):
+			state.chat.append(ChatMessage(
+				role="assistant",
+				content="A current Project Room owner or admin must authorize build or source changes.",
+				source="system",
+			))
+		save_state(state)
+		emit_event(project_id, "done", label="Ready", detail="await_user", status="done")
+		return state
+
+	# From this point forward the current durable owner/admin is allowed to
+	# promote structured output and perform source-affecting chat steering.
+	require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
+	state = load_state(project_id)
+	if can_mutate:
+		ensure_research_scratch(project_id)
 	if message:
 		try:
 			apply_style_from_message(project_id, message)
@@ -206,16 +268,6 @@ def _agent_chat_turn(
 			state.prime = prime_meta
 			save_state(state)
 
-	turn = prime_chat_turn(
-		root,
-		state,
-		message=message,
-		open_turn=open_turn,
-		project_id=project_id,
-	)
-	meta = turn.meta
-	source = "prime" if turn.reply and meta.source == "prime" else ("error" if meta.error else "heuristic")
-
 	cfg = turn.config
 	if cfg and cfg.title:
 		state.app_config = cfg
@@ -226,15 +278,6 @@ def _agent_chat_turn(
 		state.design_brief["product_name"] = state.app_config.title
 	if state.app_config.subtitle:
 		state.design_brief["one_liner"] = state.app_config.subtitle
-
-	reply = turn.reply
-	if not reply:
-		if open_turn:
-			reply = _open_reply(state, files=files, rows=rows, high=high, vendors=vendors)
-		else:
-			reply = _heuristic_chat_reply(state, message or "")
-		# Prefer honest heuristic label over "error" when we still have a user-facing reply
-		source = "heuristic"
 
 	# Soft topic note once — separate system line; never rewrite the agent's reply
 	if (
@@ -247,12 +290,8 @@ def _agent_chat_turn(
 			# Stored for system message after agent reply is appended below
 			prime_meta["_pending_topic_note"] = note
 
-	request = turn.request if turn.meta.source == "prime" and turn.reply else "await_user"
-
-	from .chat_sanitize import reply_asks_to_build, sanitize_agent_reply
-
+	request = turn.request if turn.meta.used and not turn.meta.error and turn.reply else "await_user"
 	asks_build = reply_asks_to_build(reply)
-	reply = sanitize_agent_reply(reply)
 	if request == "await_user" and state.phase == "plan" and asks_build:
 		request = "build"
 
@@ -277,6 +316,7 @@ def _agent_chat_turn(
 	save_state(state)
 
 	# Observe + intervene BEFORE done — sidebar refresh keys off the done event.
+	require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
 	observe = promote_work_artifacts(
 		project_id,
 		before=before_work,
@@ -347,6 +387,9 @@ def _agent_chat_turn(
 	state = load_state(project_id)
 	request = str((state.prime or {}).get("request") or request)
 	if request == "build" and state.phase == "plan":
+		if not can_mutate:
+			return _record_mutation_denial(project_id)
+		require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
 		prewarm_for_build(project_id)
 		state = load_state(project_id)
 
@@ -373,15 +416,31 @@ def _agent_chat_turn(
 	if request == "iterate" and state.phase == "ready":
 		brief = resolve_iterate_brief(state, turn.brief, message)
 		if brief:
+			if not can_mutate:
+				return _record_mutation_denial(project_id)
+			require_room_mutation_authority(project_id, tenant_id=state.tenant_id, actor_id=actor_id)
 			emit_event(project_id, "phase", label="Refining the artifact", detail=brief[:120], status="running")
 			from .pipeline import _iterate_ui
 
-			_iterate_ui(project_id, brief)
+			_iterate_ui(project_id, brief, actor_id=actor_id)
 			state = load_state(project_id)
 			state.prime = {**state.prime, "request": "await_user"}
 			save_state(state)
 
 	return load_state(project_id)
+
+
+def _record_mutation_denial(project_id: str) -> ProjectState:
+	"""Leave the conversation honest when a non-owner requests source work."""
+	state = load_state(project_id)
+	state.prime = {**state.prime, "request": "await_user"}
+	state.chat.append(ChatMessage(
+		role="assistant",
+		content="A current Project Room owner or admin must authorize build or source changes.",
+		source="system",
+	))
+	save_state(state)
+	return state
 
 
 _LAYOUT_ASK = re.compile(
