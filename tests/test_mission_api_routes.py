@@ -45,7 +45,14 @@ def test_mission_routes_owner_member_and_verification_contract(monkeypatch, tmp_
 
     mission = mission_routes.bootstrap("project_api", mission_routes.BootstrapBody(title="Launch", verifier_ids=["reviewer"]), request, owner)
     assert mission["owner_id"] == "owner"
-    assert mission_routes.overview("project_api", member)["mission"]["id"] == mission["id"]
+    overview = mission_routes.overview("project_api", member)
+    assert overview["mission"]["id"] == mission["id"]
+    assert overview["mission"]["objective"] == "Launch"
+    assert "human verification" in overview["mission"]["definition_of_done"]
+    assert overview["readiness"] == {
+        "graph": {"status": "missing", "revision": None, "revision_hash": None},
+        "crew_count": 0,
+    }
     with pytest.raises(HTTPException) as denied:
         mission_routes.add_agent("project_api", mission_routes.AgentBody(name="A", role="Engineer", mandate="Work"), request, member)
     assert denied.value.status_code == 403
@@ -83,6 +90,34 @@ def test_mission_routes_owner_member_and_verification_contract(monkeypatch, tmp_
     with pytest.raises(HTTPException) as traversal:
         mission_routes.create_deliverable("project_api", mission_routes.DeliverableBody(type="report", name="bad", source_ref="x", artifact_ref="../escape"), request, owner)
     assert traversal.value.status_code == 400
+
+
+def test_mission_overview_reports_exact_graph_readiness(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(mission_routes, "_root", tmp_path / "missions")
+    monkeypatch.setattr(mission_routes, "_rooms", tmp_path / "rooms")
+    workspace = tmp_path / "project"; workspace.mkdir()
+    monkeypatch.setattr(mission_routes, "project_dir", lambda _project_id: workspace)
+    owner = _context("owner", "owner")
+    CollaborationService(JsonCollaborationRepository(mission_routes._rooms)).create_room(
+        tenant_id="tenant_api", project_id="project_api", creator_id="owner",
+    )
+    request = SimpleNamespace(url=SimpleNamespace(path="/test"))
+    monkeypatch.setattr(mission_routes, "audit_request", lambda *args, **kwargs: None)
+    mission_routes.bootstrap("project_api", mission_routes.BootstrapBody(title="Reconcile"), request, owner)
+    graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+    graph["metadata"]["tenant_id"] = "tenant_api"; graph["metadata"]["project_id"] = "project_api"
+    store = OperationGraphStore(workspace, tenant_id="tenant_api", project_id="project_api")
+    revision = store.create_revision(graph, expected_revision_hash=None)
+
+    pending = mission_routes.overview("project_api", owner)["readiness"]["graph"]
+    assert pending == {
+        "status": "pending_approval",
+        "revision": revision.revision,
+        "revision_hash": revision.revision_hash,
+    }
+    store.approve_revision(revision.revision_hash, actor_id="owner")
+    approved = mission_routes.overview("project_api", owner)["readiness"]["graph"]
+    assert approved == {**pending, "status": "approved"}
 
 
 def test_code_agent_stages_until_exact_verifier_promotes(monkeypatch, tmp_path: Path):

@@ -6,18 +6,18 @@ import { SourcesPanel } from "./SourcesPanel";
 
 /** Prompt chips — three shown; set rotates each UTC day. */
 const IDEA_BANK = [
-  "An analytics app my team can explore",
-  "A shareable research report my partners can open",
-  "A board deck from our latest research pack",
-  "A one-page briefing for tomorrow's review",
-  "An internal briefing app for the weekly review",
-  "A source inventory of what we ingested and why",
-  "A comparison view ranked by the key metric",
-  "A compact explorer with search and filters",
-  "A narrative report on the topic in the data room",
-  "A slide deck that tells the story in six slides",
-  "A one-pager with the headline numbers only",
-  "A data table my analysts can query in chat",
+  "Reconcile this month's invoices and route exceptions for approval",
+  "Produce a verified weekly operating report from our source files",
+  "Monitor a shared folder and brief the team when material changes appear",
+  "Turn our research pack into a board-ready briefing",
+  "Maintain an internal dashboard and ask before publishing changes",
+  "Review incoming documents, classify them, and escalate uncertain cases",
+  "Compare suppliers against our policy and produce an exception register",
+  "Create a source-grounded report my partners can verify",
+  "Update a small data app when the underlying files change",
+  "Prepare a monthly close pack with a human sign-off checkpoint",
+  "Track customer requests from intake through review and resolution",
+  "Build a searchable evidence inventory with a verified summary",
 ];
 
 const FORMAT_OPTIONS: { kind: ArtifactKind; label: string; hint: string }[] = [
@@ -239,12 +239,12 @@ export function Landing({
       <div className="landing-atmosphere" aria-hidden="true" />
       <header className="landing-nav">
         <div className="landing-nav-pill">
-          <span className="landing-nav-brand">Simulacra</span>
+          <span className="landing-nav-brand">CMUL8</span>
 
           <nav className="landing-nav-links" aria-label="Primary">
             {authed && recent.length > 0 && (
               <button type="button" onClick={scrollToProjects}>
-                Projects
+                Missions
               </button>
             )}
             <button type="button" onClick={() => onLogin?.()}>
@@ -257,15 +257,15 @@ export function Landing({
             className="landing-nav-cta"
             onClick={() => (authed ? promptRef.current?.focus() : onLogin?.())}
           >
-            {authed ? "Start" : "Get started"}
+            {authed ? "New Mission" : "Get started"}
           </button>
         </div>
       </header>
 
       <div className="landing-content" id="start">
-        <h1 className="brand-mark">Simu<em>lacra</em></h1>
+        <h1 className="brand-mark">Mission control</h1>
         <p className="landing-sub">
-          Describe the brief. Chat to shape it, then confirm, refine, and ship.
+          Give a human-and-agent team an outcome. CMUL8 plans the work, asks for permission, and delivers evidence you can verify.
         </p>
 
         {error && (
@@ -334,7 +334,7 @@ export function Landing({
 
         {busy && (
           <p className="landing-busy-status" role="status" aria-live="polite" aria-busy="true">
-            Starting your {activeFormat.label.toLowerCase()}
+            Starting your Mission
             <span className="landing-busy-dots" aria-hidden>
               <i />
               <i />
@@ -365,9 +365,9 @@ export function Landing({
         )}
 
         {authed && recent.length > 0 && (
-          <section className="landing-projects" ref={projectsRef} id="projects" aria-label="Your projects">
+          <section className="landing-projects" ref={projectsRef} id="projects" aria-label="Your Missions">
             <div className="landing-projects-head">
-              <h2>Your projects</h2>
+              <h2>Your Missions</h2>
               <span>{projects.length}</span>
             </div>
             <ul className="landing-project-grid">

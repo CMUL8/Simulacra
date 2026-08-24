@@ -121,11 +121,11 @@ export function Sidebar({
           onClick={onHome}
           aria-label="Home"
         >
-          <strong>Simulacra</strong>
+          <strong>CMUL8</strong>
         </button>
         <button type="button" className="bui-nav-btn" onClick={onNew}>
           <Plus size={16} strokeWidth={1.5} aria-hidden />
-          New project
+          New Mission
         </button>
         <button
           type="button"
@@ -141,10 +141,10 @@ export function Sidebar({
 
       <div className="sidebar-section grow projects-section">
         <div className="sidebar-head title-case">
-          <span>Projects</span>
+          <span>Missions</span>
         </div>
         <ul className="project-list nested">
-          {projects.length === 0 && <li className="empty">No projects</li>}
+          {projects.length === 0 && <li className="empty">No Missions yet</li>}
           {projects.map((p) => {
             const isActive = activeId === p.id;
             const chats = chatsFor(p);

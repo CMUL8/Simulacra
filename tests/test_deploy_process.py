@@ -203,6 +203,12 @@ def test_image_defines_the_process_entrypoint():
 	assert "@openai/codex@0.148.0" in dockerfile
 
 
+def test_railway_uses_the_public_web_process_port():
+	railway = (deploy_process.Path(__file__).parents[1] / "railway.toml").read_text()
+	assert 'startCommand = "/opt/cmul8/bin/cmul8-web"' in railway
+	assert 'healthcheckPath = "/health"' in railway
+
+
 def test_compose_api_and_worker_share_mounted_runtime_roots():
 	compose = yaml.safe_load((deploy_process.Path(__file__).parents[1] / "docker-compose.yml").read_text())
 	environment = compose["x-cmul8-environment"]

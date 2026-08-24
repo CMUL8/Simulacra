@@ -304,8 +304,18 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
     headers,
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new ApiError(res.status, text || res.statusText);
+    const raw = await res.text();
+    let message = raw || res.statusText;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      if (typeof parsed.detail === "string" && parsed.detail.trim()) message = parsed.detail;
+    } catch {
+      /* Non-JSON errors already have the most useful available message. */
+    }
+    const friendly = message
+      .replace(/Operation Graph revision is not approved exactly:\s*[0-9a-f]{64}/i, "Review and approve the current Operation Graph before starting this Mission.")
+      .replace(/An exactly approved Operation Graph revision is required before building/i, "Review and approve the current Operation Graph before building.");
+    throw new ApiError(res.status, friendly);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -375,6 +385,14 @@ export type MissionOverview = {
   events: Record<string, unknown>[];
   approvals: Record<string, unknown>[];
   runtime: "codex";
+  readiness: {
+    graph: {
+      status: "missing" | "pending_approval" | "approved" | "invalid";
+      revision: number | null;
+      revision_hash: string | null;
+    };
+    crew_count: number;
+  };
 };
 export type MissionBudget = { max_steps?: number; wall_timeout_seconds?: number };
 export type MissionAgentInput = { name: string; role: string; mandate: string; responsibilities: string[]; data_scope: string[]; tools: string[]; autonomy: "assist" | "execute_safely" | "operate_with_checkpoints"; escalation_actor_id?: string | null; budget: MissionBudget };
@@ -387,6 +405,10 @@ export async function getMission(projectId: string): Promise<MissionOverview> {
 
 export async function bootstrapMission(projectId: string, body: Record<string, unknown>) {
   return json<Record<string, unknown>>(`/projects/${projectId}/mission`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function updateMission(projectId: string, body: Record<string, unknown>) {
+  return json<Record<string, unknown>>(`/projects/${projectId}/mission`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export async function createMissionAgent(projectId: string, body: MissionAgentInput) {

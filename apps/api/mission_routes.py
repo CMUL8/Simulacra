@@ -24,6 +24,7 @@ from simulacra.missions import (
 )
 from simulacra.missions.artifacts import artifact_bytes
 from simulacra.operation_graph import OperationGraphStore
+from simulacra.operation_graph.errors import UnapprovedRevisionError
 
 router = APIRouter(prefix="/projects/{project_id}/mission", tags=["missions-v0"])
 _root = RUNS_DIR / ".mission-control"
@@ -74,6 +75,40 @@ def _approved_contract_revision(project_id: str, tenant_id: str) -> str | None:
     if current is None:
         return None
     return store.require_approved_revision(current.revision_hash).revision_hash
+
+
+def _graph_readiness(project_id: str, tenant_id: str) -> dict[str, Any]:
+    """Return a small, user-facing admission state without exposing graph bytes."""
+    try:
+        workspace = project_dir(project_id)
+        graph_root = workspace / ".simulacra" / "operation-graph"
+        if not graph_root.exists():
+            return {"status": "missing", "revision": None, "revision_hash": None}
+        if graph_root.is_symlink() or not graph_root.is_dir():
+            return {"status": "invalid", "revision": None, "revision_hash": None}
+        store = OperationGraphStore(
+            workspace, tenant_id=tenant_id, project_id=project_id,
+        )
+        current = store.current_revision()
+        if current is None:
+            return {"status": "missing", "revision": None, "revision_hash": None}
+        try:
+            store.require_approved_revision(current.revision_hash)
+        except UnapprovedRevisionError:
+            return {
+                "status": "pending_approval",
+                "revision": current.revision,
+                "revision_hash": current.revision_hash,
+            }
+        return {
+            "status": "approved",
+            "revision": current.revision,
+            "revision_hash": current.revision_hash,
+        }
+    except Exception:
+        # Corrupt or unsafe graph state remains fail-closed. The UI needs a stable
+        # recovery state, not raw filesystem or validation details.
+        return {"status": "invalid", "revision": None, "revision_hash": None}
 
 
 def _evaluate_condition_event(
@@ -263,6 +298,7 @@ def overview(
 ):
     _member(ctx, project_id)
     svc = _service()
+    graph = _graph_readiness(project_id, ctx.tenant_id)
     try:
         mission = svc.mission(ctx.tenant_id, project_id)
     except MissionNotFoundError:
@@ -274,10 +310,12 @@ def overview(
             "deliverables": [],
             "events": [], "approvals": [],
             "runtime": "codex",
+            "readiness": {"graph": graph, "crew_count": 0},
         }
+    agents = svc.agents(ctx.tenant_id, project_id)
     return {
         "mission": mission.to_dict(),
-        "agents": [x.to_dict() for x in svc.agents(ctx.tenant_id, project_id)],
+        "agents": [x.to_dict() for x in agents],
         "runs": [x.to_dict() for x in svc.runs(ctx.tenant_id, project_id)],
         "triggers": [x.to_dict() for x in svc.triggers(ctx.tenant_id, project_id)],
         "deliverables": [
@@ -286,6 +324,7 @@ def overview(
         "events": svc.events(ctx.tenant_id, project_id, 100),
         "approvals": svc.approvals(ctx.tenant_id, project_id),
         "runtime": "codex",
+        "readiness": {"graph": graph, "crew_count": len(agents)},
     }
 
 

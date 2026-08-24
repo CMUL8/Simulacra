@@ -980,7 +980,7 @@ export function AgentShell({
           <span className="project-name">{project.app_config.title}</span>
         </div>
         <div className="agent-topbar-actions">
-          <button type="button" className="icon-btn" onClick={() => { setRoomOpen(false); setObservabilityOpen(false); setMissionOpen((value) => !value); }} title={missionOpen ? "Return to conversation" : "Open Mission Pod"} aria-pressed={missionOpen}>
+          <button type="button" className="icon-btn" onClick={() => { setRoomOpen(false); setObservabilityOpen(false); setMissionOpen((value) => !value); }} title={missionOpen ? "Return to conversation" : "Open Mission"} aria-pressed={missionOpen}>
             <Flag size={16} strokeWidth={1.5} />
           </button>
           <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen(false); setRoomOpen((value) => !value); }} title={roomOpen ? "Return to conversation" : "Open Project Room"} aria-pressed={roomOpen}>
@@ -1003,7 +1003,7 @@ export function AgentShell({
 
       <div className="agent-center">
         {missionOpen ? (
-          <MissionPod projectId={project.id} projectTitle={project.app_config.title} onClose={() => setMissionOpen(false)} />
+          <MissionPod projectId={project.id} projectTitle={project.app_config.title} projectPrompt={project.prompt} artifactKind={project.artifact_kind} onClose={() => setMissionOpen(false)} />
         ) : observabilityOpen ? (
           <ObservabilityContainer projectId={project.id} />
         ) : roomOpen ? (

@@ -47,7 +47,9 @@ def test_mission_vertical_slice_is_durable_and_deterministic(tmp_path):
 
 def test_mission_rejects_runtime_control_fields(tmp_path):
     service = MissionService(JsonMissionRepository(tmp_path / "control"))
-    service.bootstrap("tenant_1", "project_1", "owner_1", {"title": "Launch"})
+    mission = service.bootstrap("tenant_1", "project_1", "owner_1", {"title": "Launch"})
+    assert mission.objective == "Launch"
+    assert "human verification" in mission.definition_of_done
     with pytest.raises(ValueError, match="server-controlled"):
         service.add_agent("tenant_1", "project_1", {
             "name": "Nope", "role": "Engineer", "mandate": "Nope", "model": "user-choice",

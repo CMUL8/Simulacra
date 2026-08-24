@@ -91,11 +91,17 @@ class MissionService:
         def mutate(records: dict[str, Any]) -> Mission:
             if records["mission"] is not None:
                 return Mission.from_dict(records["mission"])
+            title = str(data.get("title") or "Mission").strip() or "Mission"
+            objective = str(data.get("objective") or "").strip() or title
+            definition_of_done = str(data.get("definition_of_done") or "").strip() or (
+                "Produce the requested outcome from the approved sources and workflow, "
+                "then obtain human verification of the exact final deliverable."
+            )
             mission = Mission(
                 id=new_id("mission"), tenant_id=tenant_id, project_id=project_id,
-                owner_id=owner_id, title=str(data.get("title") or "Mission"),
-                objective=str(data.get("objective") or ""),
-                definition_of_done=str(data.get("definition_of_done") or ""),
+                owner_id=owner_id, title=title,
+                objective=objective,
+                definition_of_done=definition_of_done,
                 template=str(data.get("template") or "custom"),
                 verifier_ids=list(data.get("verifier_ids") or [owner_id]),
                 priority=str(data.get("priority") or "normal"),

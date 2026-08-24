@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_DESIGN_BRIEF,
   approveProject,
+  bootstrapMission,
   cancelProjectJob,
   clearAuth,
   createProject,
@@ -483,6 +484,19 @@ export default function App({
         snap = await uploadProjectFiles(snap.project.id, pendingFiles, { reingest: true });
         setPendingFiles([]);
       }
+      const outcome = (goal || prompt).trim();
+      const deliverable = artifactKind === "data_app"
+        ? "working application"
+        : artifactKind === "one_pager"
+          ? "one-page brief"
+          : artifactKind === "slides"
+            ? "slide deck"
+            : "report";
+      await bootstrapMission(snap.project.id, {
+        title: snap.project.app_config?.title || prompt.slice(0, 80),
+        objective: outcome,
+        definition_of_done: `Produce a source-grounded ${deliverable}, resolve or clearly flag material exceptions, and obtain human verification of the exact final version.`,
+      });
       setSnapshot(snap);
       setMode(snap.project.phase === "ready" ? "workspace" : "plan");
       setInput("");
