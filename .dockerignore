@@ -1,0 +1,17 @@
+.git
+.github
+.cursor
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+**/__pycache__
+**/*.pyc
+**/node_modules
+apps/console/dist
+.env
+.env.*
+package-lock.json
+!apps/console/package-lock.json
+uv.lock
+scripts/_*
