@@ -195,6 +195,26 @@ class MissionService:
         values = sorted((dict(value) for value in self.repository.list_collection(tenant_id, project_id, "events").values()), key=lambda value: (str(value.get("timestamp", "")), str(value.get("id", ""))))
         return values[-limit:] if limit else values
 
+    def run_handoffs(self, tenant_id: str, project_id: str, run_id: str) -> list[dict[str, Any]]:
+        """Return bounded, already-screened crew output for the next agent."""
+        agents = {agent.id: agent for agent in self.agents(tenant_id, project_id)}
+        handoffs: list[dict[str, Any]] = []
+        for event in self.events(tenant_id, project_id):
+            if event.get("run_id") != run_id or event.get("type") != "agent_completed":
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+            agent_id = str(payload.get("agent_id") or "")
+            agent = agents.get(agent_id)
+            handoffs.append({
+                "agent_id": agent_id,
+                "agent_name": agent.name if agent else agent_id,
+                "role": agent.role if agent else "Mission agent",
+                "response": payload.get("response"),
+                "structured_output": payload.get("structured_output", {}),
+                "artifacts": payload.get("artifacts", []),
+            })
+        return handoffs[-31:]
+
     def approvals(self, tenant_id: str, project_id: str) -> list[dict[str, Any]]:
         """Return an overview where actionable approvals are never hidden.
 

@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import {
   bootstrapMission, createMissionAgent, createMissionRun, createMissionTrigger,
-  getMission, updateMission, verifyMissionDeliverable,
+  decideMissionCheckpoint, getMission, updateMission, verifyMissionDeliverable,
   type MissionAgentInput, type MissionDeliverable, type MissionOverview,
 } from "../../api";
 
@@ -68,8 +68,9 @@ export function MissionPod({
   const crewReady = Boolean(data?.agents.length);
   const graphReady = data?.readiness?.graph?.status === "approved";
   const canRun = Boolean(mission && objectiveReady && crewReady && graphReady);
-  const activeRun = data?.runs.find((item) => !["completed", "failed", "cancelled"].includes(text(item.status)));
+  const activeRun = data?.runs.find((item) => !["succeeded", "failed", "cancelled", "expired"].includes(text(item.status)));
   const pendingOutput = data?.deliverables.filter((item) => text(item.state) !== "verified") ?? [];
+  const pendingApprovals = data?.approvals.filter((item) => item.status === "pending") ?? [];
 
   const bootstrap = async () => {
     const deliverable = artifactKind === "data_app" ? "working application" : artifactKind === "slides" ? "slide deck" : artifactKind === "one_pager" ? "one-page brief" : "report";
@@ -136,6 +137,16 @@ export function MissionPod({
     catch (cause) { setError(cause instanceof Error ? cause.message : "Verification is not permitted"); }
   };
 
+  const decide = async (approvalId: string, decision: "approve" | "reject") => {
+    const approval = pendingApprovals.find((item) => item.id === approvalId);
+    const run = data?.runs.find((item) => item.id === approval?.run_id);
+    if (!approval || !run) return;
+    try {
+      await decideMissionCheckpoint(projectId, approval.id, decision, approval.revision, run.revision);
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not record the decision"); }
+  };
+
   return <div className="mission-panel-scrim" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
     <aside className="mission-panel" aria-label="Mission details">
       <header className="mission-panel-header"><div><span><Flag size={13} /> MISSION</span><h2>{projectTitle}</h2></div><button type="button" aria-label="Close Mission details" onClick={onClose}><X size={17} /></button></header>
@@ -146,6 +157,8 @@ export function MissionPod({
         {!canRun ? <section className="mission-panel-setup"><header><span>SETUP</span><strong>{[objectiveReady, crewReady, graphReady].filter(Boolean).length}/3 complete</strong></header><button className={objectiveReady ? "done" : ""} onClick={() => setEditing(true)}>{objectiveReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Outcome</strong><small>{objectiveReady ? "Defined" : "Define success"}</small></span><ChevronRight size={14} /></button><button className={crewReady ? "done" : ""} onClick={() => setAgentOpen(true)}>{crewReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Crew</strong><small>{crewReady ? `${data.agents.length} agents` : "Add a specialist"}</small></span><ChevronRight size={14} /></button><button className={graphReady ? "done" : ""} onClick={onOpenTasks}>{graphReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Plan</strong><small>{graphReady ? "Approved" : "Review tasks and responsibilities"}</small></span><ChevronRight size={14} /></button></section> : null}
 
         <section className="mission-panel-section" ref={crewRef}><header><div><span><Users size={14} /> CREW</span><strong>{data.agents.length} agent{data.agents.length === 1 ? "" : "s"}</strong></div><button onClick={() => setAgentOpen(true)}><Plus size={14} /> Agent</button></header>{data.agents.length ? <ul className="mission-panel-crew">{data.agents.map((item) => <li key={text(item.id)}><i>{text(item.name).slice(0, 1).toUpperCase()}</i><span><strong>{text(item.name)}</strong><small>{text(item.role)} · {pretty(item.autonomy)}</small></span><em /></li>)}</ul> : <button className="mission-panel-empty-action" onClick={() => setAgentOpen(true)}><Bot size={18} /><span><strong>Add the first agent</strong><small>Define a durable specialist role.</small></span></button>}</section>
+
+        {pendingApprovals.length ? <section className="mission-panel-section"><header><div><span><ShieldCheck size={14} /> YOUR DECISION</span><strong>{pendingApprovals.length}</strong></div></header><ul className="mission-panel-approvals">{pendingApprovals.map((approval) => { const run = data.runs.find((item) => item.id === approval.run_id); const agent = data.agents.find((item) => item.id === approval.agent_id); return <li key={approval.id}><div><strong>{agent?.name || "Mission agent"} is waiting</strong><small>{run?.trigger_snapshot?.note || "Approve this checkpoint to continue the run."}</small></div><span><button className="secondary" onClick={() => void decide(approval.id, "reject")}>Reject</button><button onClick={() => void decide(approval.id, "approve")}>Approve</button></span></li>; })}</ul></section> : null}
 
         {pendingOutput.length ? <section className="mission-panel-section"><header><div><span><ShieldCheck size={14} /> NEEDS REVIEW</span><strong>{pendingOutput.length}</strong></div></header><ul className="mission-panel-output">{pendingOutput.map((raw) => { const item = raw as unknown as MissionDeliverable; return <li key={item.id}><FileCheck2 size={16} /><span><strong>{item.name}</strong><small>Version {item.version} · exact output</small></span><button onClick={() => void verify(item)}>Verify</button></li>; })}</ul></section> : null}
 

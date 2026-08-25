@@ -25,6 +25,16 @@ class _Harness:
             changed_files=(), events=(), duration_seconds=0, usage={"steps": 1})
 
 
+class _HandoffHarness:
+    def __init__(self, prompts: list[str]): self.prompts = prompts
+    async def run(self, request):
+        self.prompts.append(request.prompt)
+        response = "Source review complete: invoice 42 needs human review." if len(self.prompts) == 1 else "Review pack assembled from the prior handoff."
+        return AgentRunResult(harness="codex", provider="openai", model_id="default", session_id=f"session-{len(self.prompts)}",
+            status=TerminalStatus.SUCCEEDED, response=response, structured_output={"stage": len(self.prompts)},
+            changed_files=(), events=(), duration_seconds=0, usage={"steps": 1})
+
+
 def _approved_workspace(path: Path) -> str:
     store = OperationGraphStore(path, tenant_id="tenant_1", project_id="project_1")
     graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
@@ -148,6 +158,25 @@ def test_worker_advances_agents_and_screens_response(tmp_path: Path):
     assert len(seen) == 2 and seen[0] != seen[1]
     assert "sk-not-a-real-secret" not in str(service.events("tenant_1", "project_1"))
     assert service.runs("tenant_1", "project_1")[0].id == run.id
+
+
+def test_later_agent_receives_the_previous_agents_durable_handoff(tmp_path: Path):
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "Close the books"})
+    first = service.add_agent("tenant_1", "project_1", {"name": "Analyst", "role": "research", "mandate": "find exceptions"})
+    second = service.add_agent("tenant_1", "project_1", {"name": "Reviewer", "role": "review", "mandate": "assemble evidence"})
+    service.create_run("tenant_1", "project_1", {"type": "manual", "note": "Reconcile invoice 42"}, verified_contract_revision=revision)
+    prompts: list[str] = []
+    worker = MissionWorker(service, tmp_path, "worker", lambda _config, **_kw: _HandoffHarness(prompts))
+
+    assert worker.run_once("tenant_1", "project_1").status == "queued"
+    assert worker.run_once("tenant_1", "project_1").status == "succeeded"
+
+    assert "No previous crew output" in prompts[0]
+    assert first.id in prompts[1] and "Analyst" in prompts[1]
+    assert "invoice 42 needs human review" in prompts[1]
+    assert second.id not in prompts[1]
 
 
 def test_manual_assignment_runs_only_the_tagged_agents_in_exact_order(tmp_path: Path):

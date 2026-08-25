@@ -34,7 +34,7 @@ COPY --from=console-build /src/apps/console/dist ./apps/console/dist
 RUN pip install --no-cache-dir -e ".[demo]" \
 	&& chmod 0555 /opt/cmul8/bin/cmul8-entrypoint \
 		/opt/cmul8/bin/cmul8-mission-sandbox \
-	&& for process in api web worker worker-health preflight migrate smoke; do \
+	&& for process in api web web-worker worker worker-health preflight migrate smoke; do \
 		ln -s /opt/cmul8/bin/cmul8-entrypoint "/opt/cmul8/bin/cmul8-${process}"; \
 	done \
 	&& groupadd --gid 65532 cmul8 \

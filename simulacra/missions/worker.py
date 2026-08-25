@@ -320,12 +320,15 @@ class MissionWorker:
 
     def _prompt(self, run: MissionRun, agent: AgentDefinition, reads: tuple[Path, ...], writes: tuple[Path, ...], budget: Mapping[str, int]) -> str:
         mission = self.service.mission(run.tenant_id, run.project_id)
+        handoffs = self.service.run_handoffs(run.tenant_id, run.project_id, run.id)
+        handoff_text = json.dumps(handoffs, ensure_ascii=False, sort_keys=True)[:12000] if handoffs else "No previous crew output. You are the first assigned agent."
         return "\n".join((
             f"Mission title: {mission.title}", f"Objective: {mission.objective}", f"Definition of done: {mission.definition_of_done}",
             f"Run id: {run.id}", f"Trigger: {run.trigger_snapshot}", f"Agent: {agent.name} ({agent.role})", f"Mandate: {agent.mandate}",
             f"Responsibilities: {', '.join(agent.responsibilities)}", f"Read scopes: {', '.join(str(path.relative_to(self.workspace)) for path in reads) or 'none'}",
             f"Write scopes: {', '.join(str(path.relative_to(self.workspace)) for path in writes) or 'none'}", "Network access is denied.",
             f"Execution budget: at most {budget['max_steps']} tool actions and {budget['wall_timeout_seconds']} seconds wall time.",
+            "Previous crew handoffs (use them, verify them against sources, and move the Mission forward):", handoff_text,
             "Only produce output inside the listed write scopes; report changed artifact paths exactly.",
         ))
 

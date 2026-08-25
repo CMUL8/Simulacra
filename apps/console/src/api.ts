@@ -382,6 +382,17 @@ export type MissionAgent = Record<string, unknown> & {
 export type MissionRunSummary = Record<string, unknown> & {
   id: string; status: string; assigned_agent_ids?: string[]; current_agent_id?: string | null;
   trigger_snapshot?: { note?: string; [key: string]: unknown };
+  progress?: { completed?: number; total?: number; [key: string]: unknown };
+  error?: { code?: string; message?: string; [key: string]: unknown } | null;
+  active_approval_id?: string | null; revision: number; created_at?: string; updated_at?: string;
+};
+export type MissionEvent = {
+  id: string; run_id: string; type: string; timestamp: string;
+  payload: Record<string, unknown>;
+};
+export type MissionApproval = Record<string, unknown> & {
+  id: string; run_id: string; agent_id?: string; status: string; revision: number;
+  created_at?: string; updated_at?: string;
 };
 export type MissionOverview = {
   mission: Record<string, unknown> | null;
@@ -389,8 +400,8 @@ export type MissionOverview = {
   runs: MissionRunSummary[];
   triggers: Record<string, unknown>[];
   deliverables: Record<string, unknown>[];
-  events: Record<string, unknown>[];
-  approvals: Record<string, unknown>[];
+  events: MissionEvent[];
+  approvals: MissionApproval[];
   runtime: "codex";
   readiness: {
     graph: {

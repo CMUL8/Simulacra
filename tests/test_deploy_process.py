@@ -210,8 +210,15 @@ def test_image_defines_the_process_entrypoint():
 
 def test_railway_uses_the_public_web_process_port():
 	railway = (deploy_process.Path(__file__).parents[1] / "railway.toml").read_text()
-	assert 'startCommand = "/opt/cmul8/bin/cmul8-web"' in railway
+	assert 'startCommand = "/opt/cmul8/bin/cmul8-web-worker"' in railway
 	assert 'healthcheckPath = "/health"' in railway
+
+
+def test_web_worker_process_dispatches_the_combined_supervisor(monkeypatch):
+	seen: list[int] = []
+	monkeypatch.setattr(deploy_process, "serve_with_worker", lambda port: seen.append(port) or 23)
+	assert deploy_process.main(["web-worker"]) == 23
+	assert seen == [8080]
 
 
 def test_compose_api_and_worker_share_mounted_runtime_roots():

@@ -8,7 +8,9 @@ import os
 import signal
 import socket
 import stat
+import subprocess
 import sys
+import time
 import urllib.request
 import threading
 from collections.abc import Mapping
@@ -429,13 +431,85 @@ def serve(port: int) -> int:
 	return 70
 
 
+def _stop_child(process: subprocess.Popen[bytes], timeout: float = 5.0) -> None:
+	"""Stop an isolated child process group without leaving Codex descendants."""
+	def group_exists() -> bool:
+		try:
+			os.killpg(process.pid, 0)
+			return True
+		except ProcessLookupError:
+			return False
+
+	try:
+		os.killpg(process.pid, signal.SIGTERM)
+	except ProcessLookupError:
+		pass
+	deadline = time.monotonic() + timeout
+	while group_exists() and time.monotonic() < deadline:
+		if process.poll() is None:
+			try:
+				process.wait(timeout=min(0.1, max(0.01, deadline - time.monotonic())))
+			except subprocess.TimeoutExpired:
+				pass
+		else:
+			threading.Event().wait(0.05)
+	if group_exists():
+		try:
+			os.killpg(process.pid, signal.SIGKILL)
+		except ProcessLookupError:
+			pass
+	if process.poll() is None:
+		process.wait(timeout=timeout)
+
+
+def serve_with_worker(port: int = 8080) -> int:
+	"""Supervise the public API and worker in one volume-sharing container.
+
+	Railway volumes attach to a service instance. Keeping these processes in one
+	container gives the worker the exact durable Mission queue used by the API.
+	If either process exits, the supervisor stops the other and lets Railway
+	restart the complete service rather than serving a misleading half-live app.
+	"""
+	worker_process = subprocess.Popen(
+		[sys.executable, "-m", "simulacra.deploy_process", "worker"],
+		start_new_session=True,
+	)
+	web_process = subprocess.Popen(
+		["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", str(port)],
+		start_new_session=True,
+	)
+	children = (web_process, worker_process)
+	stop_event = threading.Event()
+
+	def stop(_signum: int, _frame: object) -> None:
+		stop_event.set()
+
+	signal.signal(signal.SIGTERM, stop)
+	signal.signal(signal.SIGINT, stop)
+	exit_code = 0
+	try:
+		while not stop_event.wait(0.2):
+			for child in children:
+				code = child.poll()
+				if code is not None:
+					exit_code = code or 1
+					stop_event.set()
+					break
+	finally:
+		for child in reversed(children):
+			_stop_child(child)
+	return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
 	parser = argparse.ArgumentParser(prog="cmul8-entrypoint")
-	parser.add_argument("process", choices=("web", "api", "worker", "worker-health", "preflight", "migrations", "smoke"))
+	parser.add_argument("process", choices=("web", "web-worker", "api", "worker", "worker-health", "preflight", "migrations", "smoke"))
 	parser.add_argument("process_args", nargs="*")
 	args = parser.parse_args(argv)
 	if args.process in {"web", "api"}:
 		return serve(8080 if args.process == "web" else 8000)
+	if args.process == "web-worker":
+		return serve_with_worker(8080)
 	if args.process == "worker":
 		return worker()
 	if args.process == "worker-health":

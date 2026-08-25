@@ -872,6 +872,41 @@ function MessageTurn({
   );
 }
 
+function MissionConversation({ data, onOpenMission, onOpenTasks }: {
+  data: MissionOverview | null;
+  onOpenMission: () => void;
+  onOpenTasks: () => void;
+}) {
+  if (!data?.runs.length) return null;
+  const agents = new Map(data.agents.map((agent) => [agent.id, agent]));
+  return <section className="mission-conversation" aria-label="Mission work">
+    {data.runs.slice(-20).map((run) => {
+      const runEvents = data.events.filter((event) => event.run_id === run.id && ["agent_started", "agent_completed", "agent_failed", "gate"].includes(event.type));
+      const assigned = run.assigned_agent_ids?.length ? run.assigned_agent_ids.map((id) => agents.get(id)?.name || "Agent") : data.agents.map((agent) => agent.name);
+      const task = run.trigger_snapshot?.note || String(data.mission?.objective || "Run the Mission outcome");
+      return <Fragment key={run.id}>
+        <article className="cursor-turn cursor-turn-user mission-task-turn">
+          <div className="mission-turn-label"><span>MISSION TASK</span><em className={run.status}>{run.status.replaceAll("_", " ")}</em></div>
+          <div className="cursor-user-bubble"><MarkdownBody text={task} /></div>
+          <small>Assigned to {assigned.length ? assigned.join(" → ") : "Mission crew"}</small>
+        </article>
+        {runEvents.map((event) => {
+          const agent = agents.get(String(event.payload.agent_id || ""));
+          if (event.type === "agent_started") return <div className="cursor-turn mission-agent-status" key={event.id}><i>{agent?.name?.slice(0, 1).toUpperCase() || "A"}</i><span><strong>{agent?.name || "Mission agent"}</strong> started working</span></div>;
+          if (event.type === "agent_completed") {
+            const response = typeof event.payload.response === "string" ? event.payload.response : "Work completed and handed to the next teammate.";
+            const artifacts = Array.isArray(event.payload.artifacts) ? event.payload.artifacts.length : 0;
+            return <article className="cursor-turn mission-agent-turn" key={event.id}><header><i>{agent?.name?.slice(0, 1).toUpperCase() || "A"}</i><span><strong>{agent?.name || "Mission agent"}</strong><small>{agent?.role || "Agent"} · completed{artifacts ? ` · ${artifacts} output${artifacts === 1 ? "" : "s"}` : ""}</small></span></header><div className="cursor-answer"><AnswerBlock><MarkdownBody text={response} /></AnswerBlock></div>{artifacts ? <button type="button" onClick={onOpenMission}>Review exact outputs</button> : null}</article>;
+          }
+          const code = typeof event.payload.code === "string" ? event.payload.code : event.type;
+          const message = typeof event.payload.message === "string" ? event.payload.message : "This run needs attention before it can continue.";
+          return <article className="cursor-turn mission-agent-block" key={event.id}><Flag size={15} /><div><strong>{code === "checkpoint_required" ? "Human decision required" : code === "credential_unavailable" ? "Execution is not activated" : "Mission needs attention"}</strong><p>{message}</p></div><button type="button" onClick={code === "checkpoint_required" ? onOpenMission : onOpenTasks}>{code === "checkpoint_required" ? "Review" : "Open task"}</button></article>;
+        })}
+      </Fragment>;
+    })}
+  </section>;
+}
+
 export function AgentShell({
   variant,
   snapshot,
@@ -1096,7 +1131,7 @@ export function AgentShell({
           ref={threadRef}
           onScroll={onThreadScroll}
         >
-          {visibleChat.length === 0 && !busy ? (
+          {visibleChat.length === 0 && !missionData?.runs.length && !busy ? (
             <div className="thread-first">
               <p>
                 {isPlan
@@ -1137,6 +1172,12 @@ export function AgentShell({
               />
             </Fragment>
           ))}
+
+          <MissionConversation
+            data={missionData}
+            onOpenMission={() => { setMissionFocus("summary"); setMissionOpen(true); }}
+            onOpenTasks={() => setWorkspaceTab("tasks")}
+          />
 
           {showStandalonePlan && (
             <article className="cursor-turn cursor-turn-plan">
