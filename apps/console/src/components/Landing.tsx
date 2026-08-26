@@ -274,7 +274,7 @@ export function Landing({
         </div>
         <p className="landing-sub">
           <strong>Where human judgment and AI agents move work forward together.</strong>
-          <span>Set the mission. Agents carry it through; people guide the decisions, verify the evidence, and approve what ships.</span>
+          <span>Set the mission. Agents carry it through; humans guide the decisions, verify the evidence, and approve what ships.</span>
         </p>
 
         {error && (
