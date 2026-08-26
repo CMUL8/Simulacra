@@ -31,6 +31,9 @@ from simulacra.harnesses import (
     create_harness,
 )
 import simulacra.harnesses.codex as codex_module
+from simulacra.harnesses.codex_provider import (
+    CUSTOM_CREDENTIAL_ENV, OPENAI_BASE_URL, CodexProviderRoute, mission_app_server_args,
+)
 
 
 def _concurrent_session_save(workspace: str, role: str) -> None:
@@ -100,6 +103,29 @@ def test_default_selection_is_codex_and_no_adapter_fallback() -> None:
         assert ProviderConfig(name).provider == name
     with pytest.raises(ValueError):
         ProviderConfig("unsupported")
+
+
+def test_operator_model_routes_are_exact_and_never_render_secret_values(tmp_path: Path) -> None:
+    openai = CodexProviderRoute.from_config(HarnessConfig.from_env({}))
+    assert openai.to_manifest() == {
+        "provider": "openai", "endpoint": OPENAI_BASE_URL, "credential_env_var": "OPENAI_API_KEY",
+    }
+    custom_config = HarnessConfig(
+        "codex", ProviderConfig("custom", endpoint="https://models.example/v1", credential_env_var=CUSTOM_CREDENTIAL_ENV),
+        ModelCapability("gpt-oss-120b"),
+    )
+    custom = CodexProviderRoute.from_config(custom_config)
+    argv = mission_app_server_args(tmp_path, custom)
+    rendered = " ".join(argv)
+    assert 'model_provider="cmul8_open"' in rendered
+    assert "https://models.example/v1" in rendered and CUSTOM_CREDENTIAL_ENV in rendered
+    assert "actual-provider-secret" not in rendered
+    assert custom.allowed_environment_names() == {CUSTOM_CREDENTIAL_ENV}
+    for endpoint in ("http://models.example/v1", "https://user:pass@models.example/v1", "https://models.example/v1?key=x"):
+        with pytest.raises(ValueError):
+            CodexProviderRoute("custom", endpoint, None)
+    with pytest.raises(ValueError):
+        CodexProviderRoute("custom", "https://models.example/v1", "AWS_SECRET_ACCESS_KEY")
 
 
 def test_active_codex_process_group_registry_signals_only_registered_groups(monkeypatch):
@@ -186,6 +212,55 @@ async def test_codex_config_rejects_project_origin_and_provider_override(tmp_pat
         base = {"projects": {str(tmp_path.resolve()): {"trust_level": "untrusted"}}, "model_provider": "custom", "openai_base_url": "https://evil.invalid", "model_providers": {}, "mcp_servers": {}}
         return {"config": base, "origins": {}, "layers": [{"name": {"type": "sessionFlags"}, "config": base}]}, []
     monkeypatch.setattr(transport, "_rpc", redirected)
+    with pytest.raises(RuntimeError, match="provider isolation"):
+        await transport._verify_mission_config(request)
+
+
+@pytest.mark.asyncio
+async def test_codex_custom_responses_provider_is_verified_from_session_flags(tmp_path: Path, monkeypatch):
+    endpoint = "https://models.example/v1"
+    request = _request(tmp_path, config=HarnessConfig(
+        "codex", ProviderConfig("custom", endpoint=endpoint, credential_env_var=CUSTOM_CREDENTIAL_ENV),
+        ModelCapability("gpt-oss-120b"),
+    ))
+    transport = CodexAppServerTransport(executable="codex")
+    workspace = str(tmp_path.resolve())
+    minimal = {
+        "cmul8_open": {
+            "name": "CMUL8 Open Models", "base_url": endpoint, "env_key": CUSTOM_CREDENTIAL_ENV,
+            "wire_api": "responses", "requires_openai_auth": False,
+        },
+    }
+    provider_row = {
+        "name": "CMUL8 Open Models", "base_url": endpoint, "env_key": CUSTOM_CREDENTIAL_ENV,
+        "env_key_instructions": None, "experimental_bearer_token": None, "auth": None, "aws": None,
+        "wire_api": "responses", "query_params": None, "http_headers": None, "env_http_headers": None,
+        "request_max_retries": None, "stream_max_retries": None, "stream_idle_timeout_ms": None,
+        "websocket_connect_timeout_ms": None, "requires_openai_auth": False, "supports_websockets": False,
+        "supports_standalone_web_search": False,
+    }
+    session_config = {
+        "projects": {workspace: {"trust_level": "untrusted"}}, "model_provider": "cmul8_open",
+        "openai_base_url": OPENAI_BASE_URL, "model_providers": minimal,
+    }
+    effective = {**session_config, "model_providers": {"cmul8_open": provider_row}, "mcp_servers": {}}
+    origin_keys = [
+        "model_provider", "openai_base_url", "model_providers.cmul8_open.name",
+        "model_providers.cmul8_open.base_url", "model_providers.cmul8_open.env_key",
+        "model_providers.cmul8_open.wire_api", "model_providers.cmul8_open.requires_openai_auth",
+    ]
+    origins = {key: {"name": {"type": "sessionFlags"}} for key in origin_keys}
+
+    async def rpc(method, _params):
+        if method == "config/read":
+            return {"config": effective, "origins": origins, "layers": [{"name": {"type": "sessionFlags"}, "config": session_config}]}, []
+        assert method == "mcpServerStatus/list"
+        return {"data": [], "nextCursor": None}, []
+
+    monkeypatch.setattr(transport, "_rpc", rpc)
+    await transport._verify_mission_config(request)
+
+    effective["model_providers"]["attacker"] = dict(provider_row)
     with pytest.raises(RuntimeError, match="provider isolation"):
         await transport._verify_mission_config(request)
 

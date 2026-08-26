@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from simulacra.harnesses import (
-    AgentRunRequest, HarnessConfig, JsonSessionRepository, ModelCapability,
-    NetworkPolicy, ProviderConfig, TaskType, create_harness,
+    AgentRunRequest, HarnessConfig, JsonSessionRepository,
+    NetworkPolicy, TaskType, create_harness,
 )
 from simulacra.harnesses.codex import CodexAppServerTransport, CodexIsolationSpec
+from simulacra.harnesses.codex_provider import CodexProviderRoute
 from simulacra.operation_graph import OperationGraphStore
 
 from .artifacts import artifact_evidence
@@ -194,9 +195,12 @@ class MissionWorker:
 
     def _config(self, run: MissionRun) -> HarnessConfig:
         profile = run.execution_profile
-        return HarnessConfig(harness="codex", provider=ProviderConfig("openai"),
-            model=ModelCapability(str(profile.get("model") or "default")),
-            model_reasoning_effort=profile.get("reasoning_effort"), codex_profile=profile.get("codex_profile"))
+        base = HarnessConfig.from_env()
+        return base.with_model(
+            str(profile.get("model") or base.model.model_id or "default"),
+            reasoning_effort=profile.get("reasoning_effort"),
+            codex_profile=profile.get("codex_profile"),
+        )
 
     @staticmethod
     def _private_directory(path: Path, *, root: Path) -> None:
@@ -245,7 +249,8 @@ class MissionWorker:
         except (OSError, ValueError):
             return False
 
-    def _isolation(self, run: MissionRun, agent: AgentDefinition, reads: tuple[Path, ...], writes: tuple[Path, ...]) -> _IsolationResources | None:
+    def _isolation(self, run: MissionRun, agent: AgentDefinition, reads: tuple[Path, ...], writes: tuple[Path, ...],
+                   config: HarnessConfig | None = None) -> _IsolationResources | None:
         """Make a one-shot, descriptor-safe manifest for the trusted launcher."""
         launcher = os.environ.get("CMUL8_MISSION_ISOLATION_LAUNCHER", "")
         try:
@@ -276,6 +281,7 @@ class MissionWorker:
             manifest_inode = (created_manifest_info.st_dev, created_manifest_info.st_ino)
             try:
                 os.fchmod(descriptor, 0o600)
+                route = CodexProviderRoute.from_config(config or self._config(run))
                 payload = {
                     "workspace": str(self.workspace.resolve(strict=True)),
                     "read_roots": sorted(str(item.resolve(strict=True)) for item in reads),
@@ -288,6 +294,7 @@ class MissionWorker:
                     "mission_id": run.mission_id,
                     "run_id": run.id,
                     "agent_id": agent.id,
+                    "model_route": route.to_manifest(),
                 }
                 if run.invocation_id and run.execution_binding:
                     payload["invocation_id"] = run.invocation_id
@@ -366,8 +373,13 @@ class MissionWorker:
         admitted, code, graph = self._admitted(run)
         if not admitted:
             return self.service.gate(tenant_id, project_id, run.id, code, "The approved Operation Graph changed before Codex could start.", lease_owner=self.worker_id)
-        if self.harness_factory is create_harness and not os.environ.get("OPENAI_API_KEY", "").strip():
-            return self.service.gate(tenant_id, project_id, run.id, "credential_unavailable", "Mission execution requires the server-managed OPENAI_API_KEY.", lease_owner=self.worker_id, agent_id=agent.id)
+        try:
+            config = self._config(run)
+            route = CodexProviderRoute.from_config(config)
+        except ValueError:
+            return self.service.gate(tenant_id, project_id, run.id, "model_route_invalid", "The managed model route is not valid.", lease_owner=self.worker_id, agent_id=agent.id)
+        if self.harness_factory is create_harness and not route.credential_ready(os.environ):
+            return self.service.gate(tenant_id, project_id, run.id, "credential_unavailable", "The managed model route is not ready.", lease_owner=self.worker_id, agent_id=agent.id)
         if self.harness_factory is create_harness and not self._sandbox_ready():
             return self.service.gate(tenant_id, project_id, run.id, "sandbox_unavailable", "Mission isolation launcher is unavailable.", lease_owner=self.worker_id, agent_id=agent.id)
         isolation = None
@@ -384,6 +396,8 @@ class MissionWorker:
                 "role": f"mission:{run.mission_id}:agent:{agent.id}",
                 "tools": list(agent.tools), "autonomy": agent.autonomy,
                 "execution_profile": run.execution_profile,
+                "runtime_config": config.persisted_identity(),
+                "model_route": route.to_manifest(),
                 "assigned_agent_ids": list(run.assigned_agent_ids),
                 "effective_budget": budget,
             }
@@ -395,7 +409,7 @@ class MissionWorker:
             admitted, code, current_graph = self._admitted(started)
             if not admitted or current_graph is None or started.execution_binding is None or current_graph.revision != started.execution_binding.get("operation_graph_revision"):
                 return self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {"status": "failed"}, [])
-            isolation = None if self.harness_factory is not create_harness else self._isolation(started, agent, reads, writes)
+            isolation = None if self.harness_factory is not create_harness else self._isolation(started, agent, reads, writes, config)
             if self.harness_factory is create_harness and isolation is None:
                 return self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {"status": "failed"}, [])
             request = AgentRunRequest(project_id=project_id, environment_id="production", workspace=self.workspace,
@@ -403,7 +417,7 @@ class MissionWorker:
                 task_type=TaskType.RESEARCH if agent.autonomy == "assist" else TaskType.BUILD_APP,
                 read_paths=reads, write_paths=writes, network_policy=NetworkPolicy.DENY,
                 wall_timeout_seconds=budget["wall_timeout_seconds"], step_budget=budget["max_steps"],
-                config=self._config(started), session_id=started.session_ids.get(agent.id), metadata={"mission_id": started.mission_id, "run_id": started.id, "agent_id": agent.id, "invocation_id": started.invocation_id, "execution_binding_sha256": self.service._binding_digest(started.execution_binding)})
+                config=config, session_id=started.session_ids.get(agent.id), metadata={"mission_id": started.mission_id, "run_id": started.id, "agent_id": agent.id, "invocation_id": started.invocation_id, "execution_binding_sha256": self.service._binding_digest(started.execution_binding)})
             adapters = {"session_repository": JsonSessionRepository(self.workspace)}
             if isolation: adapters["codex_transport"] = CodexAppServerTransport(executable=isolation.executable, isolation_spec=isolation.spec)
             harness = self.harness_factory(request.config, **adapters)

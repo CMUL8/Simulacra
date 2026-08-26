@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from simulacra.missions import landlock
+from simulacra.harnesses.codex_provider import CodexProviderRoute, OPENAI_BASE_URL
 
 
 def _launcher_module() -> dict[str, object]:
@@ -25,7 +26,8 @@ def test_launcher_rejects_manifest_hash_tamper_and_scrubs_environment(monkeypatc
         launcher["_open_manifest"](manifest, "0" * 64)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("UNRELATED_SECRET", "do-not-inherit")
-    env = launcher["_child_environment"](temp_root=tmp_path / "temp", codex_home=tmp_path / "home")
+    route = CodexProviderRoute("openai", OPENAI_BASE_URL, "OPENAI_API_KEY")
+    env = launcher["_child_environment"](temp_root=tmp_path / "temp", codex_home=tmp_path / "home", route=route)
     assert env["OPENAI_API_KEY"] == "test-key" and "UNRELATED_SECRET" not in env
     assert env["TMPDIR"] == str(tmp_path / "temp") and env["CODEX_HOME"] == str(tmp_path / "home")
 

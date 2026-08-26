@@ -188,6 +188,16 @@ class HarnessConfig:
         if self.harness not in _HARNESSES:
             raise ValueError(f"Unsupported harness {self.harness!r}; expected one of {sorted(_HARNESSES)}")
 
+    def with_model(self, model_id: str, *, reasoning_effort: str | None = None, codex_profile: str | None = None) -> "HarnessConfig":
+        """Keep the machine-owned provider route while selecting a run model."""
+        return HarnessConfig(
+            harness=self.harness,
+            provider=self.provider,
+            model=ModelCapability(model_id),
+            model_reasoning_effort=reasoning_effort,
+            codex_profile=codex_profile,
+        )
+
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "HarnessConfig":
         env = os.environ if environ is None else environ
@@ -212,8 +222,21 @@ class HarnessConfig:
         # An explicitly supplied mapping is likewise an internal test seam;
         # a process environment only admits it while pytest is executing.
         test_seam = environ is not None or bool(env.get("PYTEST_CURRENT_TEST"))
-        if (harness != "codex" or provider != "openai") and not test_seam:
-            raise ValueError("production harness configuration supports Codex/OpenAI only")
+        if harness != "codex" and not test_seam:
+            raise ValueError("production harness configuration supports the Codex runtime only")
+        if provider not in {"openai", "custom"} and not test_seam:
+            raise ValueError("production Codex provider must be openai or custom")
+        if provider == "openai" and not test_seam:
+            if endpoint not in {None, "https://api.openai.com/v1"} or credential not in {None, "OPENAI_API_KEY"}:
+                raise ValueError("OpenAI provider routing is fixed to the official endpoint and credential")
+        if provider == "custom" and not test_seam:
+            if endpoint is None or not endpoint.startswith("https://"):
+                raise ValueError("custom production model provider requires an HTTPS Responses endpoint")
+            if credential not in {None, "CMUL8_MODEL_API_KEY"}:
+                raise ValueError("custom provider credential must use CMUL8_MODEL_API_KEY")
+        if provider == "openai":
+            endpoint = endpoint or "https://api.openai.com/v1"
+            credential = credential or "OPENAI_API_KEY"
         return cls(
             harness=harness,
             provider=ProviderConfig(provider, endpoint=endpoint, credential_env_var=credential),

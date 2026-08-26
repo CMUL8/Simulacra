@@ -156,10 +156,13 @@ Named volumes preserve PostgreSQL, Redis, CMUL8 data, runs, approved graphs, run
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CMUL8_AGENT_HARNESS` | `codex` | Builder harness. `prime` is an explicit compatibility choice. |
-| `CMUL8_MODEL_PROVIDER` | `openai` | Model provider used by the harness. |
-| `CMUL8_MODEL` | account default | Optional model override. |
-| `CMUL8_MODEL_REASONING_EFFORT` | unset | Optional Codex reasoning-effort override. |
+| `CMUL8_AGENT_HARNESS` | `codex` | Fixed managed agent runtime. Production does not expose alternate runtimes. |
+| `CMUL8_MODEL_PROVIDER` | `openai` | Operator route: `openai` or a Responses-compatible `custom` endpoint. This is not an end-user choice. |
+| `CMUL8_MODEL` | account default | Operator-selected model ID for new runs. Each run binds its selected model immutably. |
+| `CMUL8_MODEL_BASE_URL` | unset | HTTPS base URL when `CMUL8_MODEL_PROVIDER=custom`. Query strings and embedded credentials are rejected. |
+| `CMUL8_MODEL_API_KEY_ENV` | unset | Set only to `CMUL8_MODEL_API_KEY` when the custom endpoint requires authentication. |
+| `CMUL8_MODEL_API_KEY` | unset | Credential for the custom model endpoint; never exposed to agent tools or persisted evidence. |
+| `CMUL8_MODEL_REASONING_EFFORT` | unset | Optional reasoning-effort override for new runs. |
 | `OPENAI_API_KEY` | unset | OpenAI authentication for container and non-interactive environments. |
 | `SIMULACRA_AUTH_REQUIRED` | `1` | Enables authenticated multi-user access. |
 | `SIMULACRA_BOOTSTRAP_EMAIL` | `admin@localhost` | Initial owner email. |

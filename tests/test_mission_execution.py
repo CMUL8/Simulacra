@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from simulacra.harnesses import AgentRunResult, TerminalStatus
+from simulacra.harnesses.codex_provider import CUSTOM_CREDENTIAL_ENV, OPENAI_BASE_URL
 from simulacra.harnesses.codex import CodexIsolationSpec
 from simulacra.missions import JsonMissionRepository, MissionConflictError, MissionService, MissionWorker
 import simulacra.missions.worker as worker_module
@@ -447,6 +448,7 @@ def test_worker_one_shot_manifest_is_private_random_and_cleaned(monkeypatch, tmp
     assert first.manifest.stat().st_mode & 0o777 == 0o600 and first.temp_root.stat().st_mode & 0o777 == 0o700
     payload = __import__("json").loads(first.manifest.read_text(encoding="utf-8"))
     assert payload["workspace"] == str(workspace.resolve()) and payload["run_id"] == run.id and payload["agent_id"] == agent.id
+    assert payload["model_route"] == {"provider": "openai", "endpoint": OPENAI_BASE_URL, "credential_env_var": "OPENAI_API_KEY"}
     assert payload["temp_root"] == str(first.temp_root.resolve()) and str(workspace) not in str(first.manifest)
     second_payload = __import__("json").loads(second.manifest.read_text(encoding="utf-8"))
     assert payload["codex_home"] == second_payload["codex_home"] and run.mission_id in payload["codex_home"] and agent.id in payload["codex_home"]
@@ -542,6 +544,19 @@ def test_default_worker_gates_missing_openai_credential(monkeypatch, tmp_path: P
     assert MissionWorker(service, tmp_path, "worker").run_once("tenant_1", "project_1").error["code"] == "credential_unavailable"
 
 
+def test_default_worker_gates_missing_custom_provider_credential(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CMUL8_MODEL_PROVIDER", "custom")
+    monkeypatch.setenv("CMUL8_MODEL_BASE_URL", "https://models.example/v1")
+    monkeypatch.setenv("CMUL8_MODEL_API_KEY_ENV", CUSTOM_CREDENTIAL_ENV)
+    monkeypatch.delenv(CUSTOM_CREDENTIAL_ENV, raising=False)
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control")); service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    service.create_run("tenant_1", "project_1", {"type": "manual"}, verified_contract_revision=revision)
+    result = MissionWorker(service, tmp_path, "worker").run_once("tenant_1", "project_1")
+    assert result.error["code"] == "credential_unavailable" and result.invocation_id is None
+
+
 def test_execution_binding_rejects_prompt_or_capability_tamper(tmp_path: Path):
     service = MissionService(JsonMissionRepository(tmp_path / "control")); service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
     agent = service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
@@ -595,6 +610,37 @@ def test_effective_mission_budget_is_bound_prompted_and_wired_to_codex_request(t
     assert captured["binding"]["effective_budget"] == expected
     started_event = next(event for event in service.events("tenant_1", "project_1") if event["type"] == "agent_started")
     assert started_event["payload"]["effective_budget"] == expected
+
+
+def test_operator_can_route_new_run_to_custom_open_model_without_user_runtime_choice(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CMUL8_MODEL_PROVIDER", "custom")
+    monkeypatch.setenv("CMUL8_MODEL_BASE_URL", "https://models.example/v1")
+    monkeypatch.setenv("CMUL8_MODEL_API_KEY_ENV", CUSTOM_CREDENTIAL_ENV)
+    monkeypatch.setenv(CUSTOM_CREDENTIAL_ENV, "provider-secret-never-persisted")
+    monkeypatch.setenv("CMUL8_MODEL", "gpt-oss-120b")
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control")); service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    run = service.create_run("tenant_1", "project_1", {"type": "manual"}, verified_contract_revision=revision)
+    captured: dict[str, object] = {}
+
+    class RoutedHarness:
+        async def run(self, request):
+            captured["config"] = request.config
+            captured["binding"] = service.runs("tenant_1", "project_1")[0].execution_binding
+            return AgentRunResult("codex", "custom", request.config.model.model_id, "session", TerminalStatus.SUCCEEDED, "ok", {}, (), (), 0, {})
+
+    completed = MissionWorker(service, tmp_path, "worker", lambda _config, **_kw: RoutedHarness()).run_once("tenant_1", "project_1")
+    config = captured["config"]
+    binding = captured["binding"]
+    assert completed is not None and completed.status == "succeeded"
+    assert run.execution_profile["model"] == "gpt-oss-120b"
+    assert config.provider.provider == "custom" and config.provider.endpoint == "https://models.example/v1"
+    assert config.model.model_id == "gpt-oss-120b"
+    assert binding["runtime_config"]["provider"] == {"provider": "custom", "endpoint": "https://models.example/v1", "extra": {}}
+    assert binding["model_route"] == {"provider": "custom", "endpoint": "https://models.example/v1", "credential_env_var": CUSTOM_CREDENTIAL_ENV}
+    persisted = (tmp_path / "control" / "tenant_1" / "project_1" / "missions" / "state.json").read_text()
+    assert "provider-secret-never-persisted" not in persisted
 
 
 def test_execution_binding_rejects_effective_budget_tamper(tmp_path: Path):

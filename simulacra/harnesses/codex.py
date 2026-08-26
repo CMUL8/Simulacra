@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterable, Protocol, runtime_checkable
 
 from .base import AgentHarness
+from .codex_provider import CodexProviderRoute, OPENAI_BASE_URL, mission_app_server_args
 from .contracts import AgentRunRequest, AgentSession, ModelCapability, NetworkPolicy, TerminalStatus
 
 
@@ -104,16 +105,6 @@ def _canonical_path(workspace: Path, value: Path) -> str:
 
 def _canonical_roots(workspace: Path, values: Iterable[Path]) -> list[str]:
     return sorted({_canonical_path(workspace, value) for value in values})
-
-
-def _mission_project_override(workspace: Path) -> str:
-    """Return a TOML-safe, session-flag project trust override."""
-    rendered = str(workspace.resolve())
-    if any(ord(character) < 32 for character in rendered):
-        raise RuntimeError("unsafe Mission workspace path")
-    # JSON strings are TOML basic strings, including the required escaping for
-    # quotes and backslashes in a platform path.
-    return f"projects={{{json.dumps(rendered)}={{trust_level=\"untrusted\"}}}}"
 
 
 _SEMANTIC_TOOL_TYPES = frozenset({"commandExecution", "fileChange", "mcpToolCall"})
@@ -404,30 +395,8 @@ class CodexAppServerTransport:
         # An empty, invocation-private CODEX_HOME plus an empty MCP map means
         # workspace/project config, plugins, skills, and MCP cannot introduce a
         # credential-bearing subprocess path.
-        command = [self.executable,
-            "--strict-config",
-            "-c", 'shell_environment_policy.inherit="none"',
-            "-c", "shell_environment_policy.ignore_default_excludes=false",
-            "-c", "mcp_servers={}",
-            "-c", _mission_project_override(request.workspace),
-            "-c", 'model_provider="openai"',
-            "-c", 'openai_base_url="https://api.openai.com/v1"',
-            "-c", "project_doc_max_bytes=0",
-            "-c", "agents.enabled=false",
-            "-c", "allow_login_shell=false",
-            "-c", "check_for_update_on_startup=false",
-            "--disable", "plugins",
-            "--disable", "remote_plugin",
-            "--disable", "recommended_plugins",
-            "--disable", "apps",
-            "--disable", "hooks",
-            "--disable", "multi_agent",
-            "--disable", "skill_search",
-            "--disable", "skill_mcp_dependency_install",
-            "app-server",
-            "--listen",
-            "stdio://",
-        ]
+        route = CodexProviderRoute.from_config(request.config)
+        command = [self.executable, *mission_app_server_args(request.workspace, route)]
         if self._isolation_spec is not None:
             command = [*self._isolation_spec.command_prefix(), *command]
         try:
@@ -462,6 +431,7 @@ class CodexAppServerTransport:
         other half of this check.
         """
         workspace = str(request.workspace.resolve())
+        route = CodexProviderRoute.from_config(request.config)
         config, _ = await self._rpc("config/read", {"cwd": workspace, "includeLayers": True})
         status, _ = await self._rpc("mcpServerStatus/list", {"limit": 1, "detail": "toolsAndAuthOnly"})
         effective, origins, layers = config.get("config"), config.get("origins"), config.get("layers")
@@ -482,13 +452,46 @@ class CodexAppServerTransport:
         projects = effective.get("projects")
         if not isinstance(projects, Mapping) or not isinstance(projects.get(workspace), Mapping) or projects[workspace].get("trust_level") != "untrusted":
             raise RuntimeError("Codex Mission project trust verification failed")
-        if effective.get("model_provider") != "openai" or effective.get("openai_base_url") != "https://api.openai.com/v1":
+        if effective.get("model_provider") != route.codex_provider_id or effective.get("openai_base_url") != OPENAI_BASE_URL:
             raise RuntimeError("Codex Mission provider isolation verification failed")
-        if effective.get("model_providers") != {} or effective.get("mcp_servers") != {}:
+        model_providers = effective.get("model_providers")
+        if not isinstance(model_providers, Mapping) or effective.get("mcp_servers") != {}:
             raise RuntimeError("Codex Mission provider isolation verification failed")
-        if not any(isinstance(layer.get("config"), Mapping) and layer["config"].get("model_provider") == "openai" and layer["config"].get("openai_base_url") == "https://api.openai.com/v1" and isinstance(layer["config"].get("projects"), Mapping) and layer["config"]["projects"].get(workspace, {}).get("trust_level") == "untrusted" for layer in session_layers):
+        minimal_table = route.minimal_provider_table()
+        if route.provider == "openai":
+            if model_providers != {}:
+                raise RuntimeError("Codex Mission provider isolation verification failed")
+        else:
+            if set(model_providers) != {route.codex_provider_id} or not isinstance(model_providers.get(route.codex_provider_id), Mapping):
+                raise RuntimeError("Codex Mission provider isolation verification failed")
+            provider_row = model_providers[route.codex_provider_id]
+            expected_row = minimal_table[route.codex_provider_id]
+            allowed_keys = {
+                "name", "base_url", "env_key", "env_key_instructions", "experimental_bearer_token", "auth", "aws",
+                "wire_api", "query_params", "http_headers", "env_http_headers", "request_max_retries",
+                "stream_max_retries", "stream_idle_timeout_ms", "websocket_connect_timeout_ms",
+                "requires_openai_auth", "supports_websockets", "supports_standalone_web_search",
+            }
+            if set(provider_row) != allowed_keys or any(provider_row.get(key) != value for key, value in expected_row.items()):
+                raise RuntimeError("Codex Mission provider isolation verification failed")
+            safe_defaults = {key: provider_row.get(key) for key in allowed_keys - set(expected_row)}
+            if any(value is not None and value is not False for value in safe_defaults.values()):
+                raise RuntimeError("Codex Mission provider isolation verification failed")
+
+        def valid_session_layer(layer: Mapping[str, Any]) -> bool:
+            layer_config = layer.get("config")
+            if not isinstance(layer_config, Mapping) or layer_config.get("model_provider") != route.codex_provider_id or layer_config.get("openai_base_url") != OPENAI_BASE_URL:
+                return False
+            layer_projects = layer_config.get("projects")
+            if not isinstance(layer_projects, Mapping) or not isinstance(layer_projects.get(workspace), Mapping) or layer_projects[workspace].get("trust_level") != "untrusted":
+                return False
+            return route.provider == "openai" or layer_config.get("model_providers") == minimal_table
+        if not any(valid_session_layer(layer) for layer in session_layers):
             raise RuntimeError("Codex Mission session flag verification failed")
-        for key in ("model_provider", "openai_base_url"):
+        origin_keys = ["model_provider", "openai_base_url"]
+        if route.provider == "custom":
+            origin_keys.extend(f"model_providers.{route.codex_provider_id}.{key}" for key in minimal_table[route.codex_provider_id])
+        for key in origin_keys:
             origin = origins.get(key)
             source = origin.get("name") if isinstance(origin, Mapping) else None
             if not isinstance(source, Mapping) or source.get("type") != "sessionFlags":

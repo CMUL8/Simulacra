@@ -10,6 +10,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from simulacra.harnesses import HarnessConfig
+from simulacra.harnesses.codex_provider import CodexProviderRoute
+
 from .models import (
     PROFILES, AgentDefinition, AutomationTrigger, Deliverable, Mission,
     MissionRun, clean_public_mapping, condition_matches, effective_budget, hash_artifact, normalize_budget,
@@ -62,6 +65,19 @@ def _safe_value(value: Any, depth: int = 0) -> Any:
 
 
 class MissionService:
+    @staticmethod
+    def _runtime_config(profile: Mapping[str, Any]) -> HarnessConfig:
+        base = HarnessConfig.from_env()
+        return base.with_model(
+            str(profile.get("model") or base.model.model_id or "default"),
+            reasoning_effort=profile.get("reasoning_effort"),
+            codex_profile=profile.get("codex_profile"),
+        )
+
+    @classmethod
+    def _runtime_identity(cls, profile: Mapping[str, Any]) -> dict[str, Any]:
+        return cls._runtime_config(profile).persisted_identity()
+
     def __init__(self, repository: JsonMissionRepository):
         self.repository = repository
 
@@ -381,6 +397,8 @@ class MissionService:
                 "tools": list(agent.get("tools") or []),
                 "autonomy": agent.get("autonomy"),
                 "execution_profile": run.execution_profile,
+                "runtime_config": self._runtime_identity(run.execution_profile),
+                "model_route": CodexProviderRoute.from_config(self._runtime_config(run.execution_profile)).to_manifest(),
                 "assigned_agent_ids": list(run.assigned_agent_ids),
                 "effective_budget": effective_budget(self._mission(records).budget, agent.get("budget")),
             }

@@ -13,32 +13,14 @@ import stat
 import sys
 from pathlib import Path
 
+from simulacra.harnesses.codex_provider import CodexProviderRoute, mission_app_server_args
 from simulacra.missions.landlock import apply
 
 
 _MAX_MANIFEST_BYTES = 64 * 1024
 _RUNTIME_ROOT = Path("/opt/codex")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
-_ENV_ALLOWLIST = frozenset({
-    "OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID",
-    "LANG", "LC_ALL",
-})
-
-
-def _codex_args(workspace: Path) -> tuple[str, ...]:
-    rendered = str(workspace)
-    if any(ord(character) < 32 for character in rendered):
-        die("unsafe workspace")
-    project_override = f"projects={{{json.dumps(rendered)}={{trust_level=\"untrusted\"}}}}"
-    return (
-    "--strict-config", "-c", 'shell_environment_policy.inherit="none"',
-    "-c", "shell_environment_policy.ignore_default_excludes=false", "-c", "mcp_servers={}",
-    "-c", project_override, "-c", 'model_provider="openai"', "-c", 'openai_base_url="https://api.openai.com/v1"',
-    "-c", "project_doc_max_bytes=0", "-c", "agents.enabled=false", "-c", "allow_login_shell=false",
-    "-c", "check_for_update_on_startup=false", "--disable", "plugins", "--disable", "remote_plugin",
-    "--disable", "recommended_plugins", "--disable", "apps", "--disable", "hooks", "--disable", "multi_agent",
-    "--disable", "skill_search", "--disable", "skill_mcp_dependency_install", "app-server", "--listen", "stdio://",
-    )
+_ENV_ALLOWLIST = frozenset({"LANG", "LC_ALL"})
 
 
 def die(message: str) -> None:
@@ -116,8 +98,9 @@ def _manifest(data: dict[str, object], executable: str) -> tuple[Path, list[Path
     return workspace, reads, writes, temp_root, codex_home, runtime
 
 
-def _child_environment(*, temp_root: Path, codex_home: Path) -> dict[str, str]:
-    environment = {key: os.environ[key] for key in _ENV_ALLOWLIST if os.environ.get(key)}
+def _child_environment(*, temp_root: Path, codex_home: Path, route: CodexProviderRoute) -> dict[str, str]:
+    allowed = _ENV_ALLOWLIST | route.allowed_environment_names()
+    environment = {key: os.environ[key] for key in allowed if os.environ.get(key)}
     environment.update({
         "HOME": str(codex_home), "CODEX_HOME": str(codex_home), "TMPDIR": str(temp_root),
         "XDG_CACHE_HOME": str(codex_home / "cache"), "XDG_CONFIG_HOME": str(codex_home / "config"),
@@ -130,11 +113,15 @@ def main(argv: list[str]) -> None:
     if len(argv) < 7: die("invalid sandbox argv")
     manifest = _open_manifest(Path(argv[1]), argv[2])
     workspace, reads, writes, temp_root, codex_home, runtime = _manifest(manifest, argv[3])
-    expected = _codex_args(workspace)
+    try:
+        route = CodexProviderRoute.from_manifest(manifest.get("model_route"))
+    except ValueError:
+        die("invalid manifest model route")
+    expected = mission_app_server_args(workspace, route)
     if len(argv) != 4 + len(expected) or tuple(argv[4:]) != expected:
         die("invalid sandbox argv")
     apply(workspace, reads, writes, runtime_root=runtime, executable=Path(argv[3]), temp_root=temp_root, codex_home=codex_home)
-    os.execve(argv[3], argv[3:], _child_environment(temp_root=temp_root, codex_home=codex_home))
+    os.execve(argv[3], argv[3:], _child_environment(temp_root=temp_root, codex_home=codex_home, route=route))
 
 
 if __name__ == "__main__":

@@ -15,6 +15,10 @@ x-cmul8-environment: &cmul8-environment
   CMUL8_AGENT_HARNESS: ${CMUL8_AGENT_HARNESS:-codex}
   CMUL8_MODEL_PROVIDER: ${CMUL8_MODEL_PROVIDER:-openai}
   CMUL8_MODEL: ${CMUL8_MODEL:-default}
+  CMUL8_MODEL_BASE_URL: ${CMUL8_MODEL_BASE_URL:-}
+  CMUL8_MODEL_API_KEY_ENV: ${CMUL8_MODEL_API_KEY_ENV:-}
+  CMUL8_MODEL_API_KEY: ${CMUL8_MODEL_API_KEY:-}
+  CMUL8_MODEL_REASONING_EFFORT: ${CMUL8_MODEL_REASONING_EFFORT:-}
   CMUL8_CODEX_BIN: /opt/codex/bin/codex
   CODEX_HOME: /app/data/codex
   # One-shot manifests and private per-Mission-agent Codex homes live outside /app/runs.
