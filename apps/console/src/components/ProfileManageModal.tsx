@@ -175,7 +175,7 @@ export function ProfileManageModal({
                 </div>
                 <div className="acct-kv">
                   <span>Auth</span>
-                  <strong>{clerkAvailable ? "Password + CMUL8 Clerk" : "Password"}</strong>
+                  <strong>{clerkAvailable ? "Password + managed sign-in" : "Password"}</strong>
                 </div>
               </div>
             </div>

@@ -20,7 +20,7 @@ import { mapCmul8RoomPayload } from "./mapper";
 import { ProjectRoom } from "./ProjectRoom";
 
 const NO_PERMISSIONS: ProjectRoomPermissions = { manageTasks: false, reviewTasks: false, reviewGraph: false, handoff: false, invite: false, comment: false };
-const ROOM_REFRESH_MS = 15_000;
+const ROOM_REFRESH_MS = 5_000;
 
 function commandDecision(decision: ReviewDecision): string {
   if (decision === "approved") return "approve";
@@ -29,15 +29,17 @@ function commandDecision(decision: ReviewDecision): string {
 }
 
 function message(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return "Project Room request failed";
+  const raw = error instanceof Error ? error.message : "Mission request failed";
+  if (/permission denied|errno 13/i.test(raw)) return "Mission storage is temporarily unavailable. Your work is safe; retry in a moment.";
+  if (/not found/i.test(raw)) return "That Mission item is no longer available. The latest state has been loaded.";
+  return raw.replace(/^Error:\s*/i, "");
 }
 
 function mentions(body: string): Array<{ ref_type: string; ref_id: string }> {
   return [...new Set([...body.matchAll(/(?:^|\s)@([A-Za-z0-9][A-Za-z0-9_.-]{0,127})/g)].map((match) => match[1]!))].map((ref_id) => ({ ref_type: "actor", ref_id }));
 }
 
-export function ProjectRoomContainer({ projectId, missionAssignments = [] }: { projectId: string; missionAssignments?: MissionAssignment[] }) {
+export function ProjectRoomContainer({ projectId, missionAssignments = [], onOpenChat }: { projectId: string; missionAssignments?: MissionAssignment[]; onOpenChat?: () => void }) {
   const [payload, setPayload] = useState<Cmul8RoomPayload | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error" | "forbidden">("loading");
   const [actionError, setActionError] = useState<string>();
@@ -116,7 +118,7 @@ export function ProjectRoomContainer({ projectId, missionAssignments = [] }: { p
   }, [load]);
 
   const adapter = useMemo<Partial<ProjectRoomFeatureAdapter>>(() => ({
-    addMember: async (memberId, role, revision) => { await mutate(() => addCmul8RoomMember(projectId, { member_id: memberId, role, expected_revision: revision })); },
+    addMember: async (memberEmailOrId, role, revision) => { await mutate(() => addCmul8RoomMember(projectId, { ...(memberEmailOrId.includes("@") ? { member_email: memberEmailOrId } : { member_id: memberEmailOrId }), role, expected_revision: revision })); },
     claimTask: async (taskId, revision) => { await mutate(() => claimCmul8Task(projectId, taskId, revision)); },
     transitionTask: async (taskId, next, revision) => {
       const current = mapped?.room.tasks.find((task) => task.id === taskId);
@@ -132,7 +134,7 @@ export function ProjectRoomContainer({ projectId, missionAssignments = [] }: { p
     },
     submitTaskReview: async (taskId, decision, note, revision) => { await mutate(() => reviewCmul8Task(projectId, taskId, commandDecision(decision), note ?? "", revision)); },
     markInboxRead: async (eventId) => { await mutate(() => markCmul8InboxRead(projectId, eventId)); },
-    reconnect: load,
+    reconnect: async () => { await load("manual"); },
     approveGraph: async (revisionHash) => { await mutate(() => approveCmul8Graph(projectId, revisionHash)); },
     addComment: async (revisionId, body, section): Promise<GraphComment> => {
       const created = await addCmul8Comment(projectId, { body, target_type: "graph_element", target_id: revisionId, graph_revision: revisionId, graph_path: section?.startsWith("/") ? section : `/review/${section ?? "general"}`, mentions: mentions(body) });
@@ -141,5 +143,5 @@ export function ProjectRoomContainer({ projectId, missionAssignments = [] }: { p
     },
   }), [load, mapped, mutate, projectId]);
 
-  return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} missionAssignments={missionAssignments} actionError={actionError} onRetryLoad={() => void load("manual")} />;
+  return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} missionAssignments={missionAssignments} actionError={actionError} onOpenChat={onOpenChat} onRetryLoad={() => void load("manual")} />;
 }

@@ -139,6 +139,40 @@ def test_tenant_admin_bootstrap_is_seeded_as_the_initial_room_owner(monkeypatch,
 	assert [(member["actor_id"], member["role"]) for member in created["room"]["members"]] == [("user_admin", "owner")]
 
 
+def test_room_invite_resolves_workspace_teammate_by_email(monkeypatch, tmp_path):
+	_prepare(monkeypatch, tmp_path)
+	request = SimpleNamespace(url=SimpleNamespace(path="/test"))
+	owner = _context()
+	room = cmul8_routes.create_room("project_api", cmul8_routes.RoomCreateBody(), request, owner)["room"]
+	teammate = User(id="user_finance", email="finance@example.test", name="Priya Shah", password_hash="unused")
+	monkeypatch.setattr(cmul8_routes, "get_user_by_email", lambda email: teammate if email == teammate.email else None)
+	monkeypatch.setattr(cmul8_routes, "get_membership", lambda tenant_id, user_id: object() if (tenant_id, user_id) == ("tenant_api", teammate.id) else None)
+	monkeypatch.setattr(cmul8_routes, "get_user", lambda user_id: teammate if user_id == teammate.id else owner.user)
+
+	updated = cmul8_routes.add_room_member(
+		"project_api", cmul8_routes.RoomMemberBody(member_email="FINANCE@example.test", role="reviewer", expected_revision=room["revision"]), request, owner,
+	)
+	added = next(member for member in updated["members"] if member["actor_id"] == teammate.id)
+	assert added["display_name"] == "Priya Shah"
+	assert added["role"] == "reviewer"
+
+
+def test_room_invite_by_email_requires_workspace_membership(monkeypatch, tmp_path):
+	_prepare(monkeypatch, tmp_path)
+	request = SimpleNamespace(url=SimpleNamespace(path="/test"))
+	owner = _context()
+	room = cmul8_routes.create_room("project_api", cmul8_routes.RoomCreateBody(), request, owner)["room"]
+	outsider = User(id="user_outside", email="outside@example.test", name="Outside", password_hash="unused")
+	monkeypatch.setattr(cmul8_routes, "get_user_by_email", lambda _email: outsider)
+	monkeypatch.setattr(cmul8_routes, "get_membership", lambda _tenant_id, _user_id: None)
+
+	with pytest.raises(HTTPException) as denied:
+		cmul8_routes.add_room_member(
+			"project_api", cmul8_routes.RoomMemberBody(member_email=outsider.email, expected_revision=room["revision"]), request, owner,
+		)
+	assert denied.value.status_code == 403
+
+
 def test_project_room_roles_control_mutations_reviews_and_durable_review_roles(monkeypatch, tmp_path):
 	_prepare(monkeypatch, tmp_path)
 	owner, request = _context(), SimpleNamespace(url=SimpleNamespace(path="/test"))

@@ -8,7 +8,7 @@ export interface RoomTask extends ProjectTask { durableState: DurableTaskState; 
 export interface MissionAssignment { id: string; title: string; status: string; ownerNames: string[]; currentOwner?: string; }
 export interface ProjectRoomPermissions { manageTasks: boolean; reviewTasks: boolean; reviewGraph: boolean; handoff: boolean; invite: boolean; comment: boolean; }
 export interface ProjectRoomFeatureAdapter {
-  addMember(memberId: string, role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver", expectedRevision: number): Promise<void>;
+  addMember(memberEmailOrId: string, role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver", expectedRevision: number): Promise<void>;
   claimTask(taskId: string, expectedRevision: number): Promise<void>;
   transitionTask(taskId: string, state: DurableTaskState, expectedRevision: number): Promise<void>;
   submitTaskReview(taskId: string, decision: ReviewDecision, note: string | undefined, expectedRevision: number): Promise<void>;
@@ -28,5 +28,5 @@ export interface ProjectRoomModel {
 export interface ProjectRoomProps {
   room?: ProjectRoomModel; state?: AsyncState; permissions?: ProjectRoomPermissions;
   missionAssignments?: MissionAssignment[];
-  adapter?: Partial<ProjectRoomFeatureAdapter>; onRetryLoad?: () => void; onOpenGraph?: () => void; onOpenActivity?: () => void; onInvite?: () => void; actionError?: string;
+  adapter?: Partial<ProjectRoomFeatureAdapter>; onRetryLoad?: () => void; onOpenGraph?: () => void; onOpenActivity?: () => void; onOpenChat?: () => void; onInvite?: () => void; actionError?: string;
 }

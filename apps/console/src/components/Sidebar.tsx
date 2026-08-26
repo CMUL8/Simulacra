@@ -121,7 +121,7 @@ export function Sidebar({
           onClick={onHome}
           aria-label="Home"
         >
-          <strong>CMUL8</strong>
+          <strong>Missions</strong>
         </button>
         <button type="button" className="bui-nav-btn" onClick={onNew}>
           <Plus size={16} strokeWidth={1.5} aria-hidden />

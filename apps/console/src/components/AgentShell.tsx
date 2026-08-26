@@ -17,7 +17,7 @@ import {
   Flag,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
-import { createMissionRun, getCmul8Room, getMission, type AgentEvent, type ChatMessage, type Checkpoint, type Cmul8RoomPayload, type DataRoomFile, type MissionOverview, type Snapshot } from "../api";
+import { addCmul8Comment, createMissionRun, getCmul8Room, getMission, subscribeEvents, type AgentEvent, type ChatMessage, type Checkpoint, type Cmul8RoomPayload, type DataRoomFile, type MissionOverview, type Snapshot } from "../api";
 import { userFacingFiles } from "../lib/userFacingFiles";
 import { AnswerBlock } from "./agent/AnswerBlock";
 import { ApprovalCard } from "./agent/ApprovalCard";
@@ -872,18 +872,22 @@ function MessageTurn({
   );
 }
 
-function MissionConversation({ data, onOpenMission, onOpenTasks }: {
+function MissionConversation({ data, room, onOpenMission, onOpenTasks, onOpenFiles }: {
   data: MissionOverview | null;
+  room: Cmul8RoomPayload | null;
   onOpenMission: () => void;
   onOpenTasks: () => void;
+  onOpenFiles: () => void;
 }) {
-  if (!data?.runs.length) return null;
-  const agents = new Map(data.agents.map((agent) => [agent.id, agent]));
+  if (!data?.runs.length && !room?.comments.length) return null;
+  const people = new Map((room?.room.members ?? []).map((member) => [member.actor_id, member.display_name || "Teammate"]));
+  const agents = new Map((data?.agents ?? []).map((agent) => [agent.id, agent]));
   return <section className="mission-conversation" aria-label="Mission work">
-    {data.runs.slice(-20).map((run) => {
-      const runEvents = data.events.filter((event) => event.run_id === run.id && ["agent_started", "agent_completed", "agent_failed", "gate"].includes(event.type));
-      const assigned = run.assigned_agent_ids?.length ? run.assigned_agent_ids.map((id) => agents.get(id)?.name || "Agent") : data.agents.map((agent) => agent.name);
-      const task = run.trigger_snapshot?.note || String(data.mission?.objective || "Run the Mission outcome");
+    {room?.comments.filter((comment) => comment.target_type === "project").slice(-20).map((comment) => <article className="cursor-turn cursor-turn-user mission-human-message" key={comment.id}><div className="mission-turn-label"><span>TEAM MESSAGE</span><em>{people.get(comment.author_id) || "Teammate"}</em></div><div className="cursor-user-bubble"><MarkdownBody text={comment.body} /></div></article>)}
+    {(data?.runs ?? []).slice(-20).map((run) => {
+      const runEvents = (data?.events ?? []).filter((event) => event.run_id === run.id && ["agent_started", "agent_completed", "agent_failed", "gate"].includes(event.type));
+      const assigned = run.assigned_agent_ids?.length ? run.assigned_agent_ids.map((id) => agents.get(id)?.name || "Agent") : (data?.agents ?? []).map((agent) => agent.name);
+      const task = run.trigger_snapshot?.note || String(data?.mission?.objective || "Run the Mission outcome");
       return <Fragment key={run.id}>
         <article className="cursor-turn cursor-turn-user mission-task-turn">
           <div className="mission-turn-label"><span>MISSION TASK</span><em className={run.status}>{run.status.replaceAll("_", " ")}</em></div>
@@ -896,7 +900,7 @@ function MissionConversation({ data, onOpenMission, onOpenTasks }: {
           if (event.type === "agent_completed") {
             const response = typeof event.payload.response === "string" ? event.payload.response : "Work completed and handed to the next teammate.";
             const artifacts = Array.isArray(event.payload.artifacts) ? event.payload.artifacts.length : 0;
-            return <article className="cursor-turn mission-agent-turn" key={event.id}><header><i>{agent?.name?.slice(0, 1).toUpperCase() || "A"}</i><span><strong>{agent?.name || "Mission agent"}</strong><small>{agent?.role || "Agent"} · completed{artifacts ? ` · ${artifacts} output${artifacts === 1 ? "" : "s"}` : ""}</small></span></header><div className="cursor-answer"><AnswerBlock><MarkdownBody text={response} /></AnswerBlock></div>{artifacts ? <button type="button" onClick={onOpenMission}>Review exact outputs</button> : null}</article>;
+            return <article className="cursor-turn mission-agent-turn" key={event.id}><header><i>{agent?.name?.slice(0, 1).toUpperCase() || "A"}</i><span><strong>{agent?.name || "Mission agent"}</strong><small>{agent?.role || "Agent"} · completed{artifacts ? ` · ${artifacts} output${artifacts === 1 ? "" : "s"}` : ""}</small></span></header><div className="cursor-answer"><AnswerBlock><MarkdownBody text={response} /></AnswerBlock></div>{artifacts ? <div className="mission-output-actions"><button type="button" onClick={onOpenMission}>Verify outputs</button><button type="button" onClick={onOpenFiles}>Open files</button></div> : null}</article>;
           }
           const code = typeof event.payload.code === "string" ? event.payload.code : event.type;
           const message = typeof event.payload.message === "string" ? event.payload.message : "This run needs attention before it can continue.";
@@ -937,12 +941,13 @@ export function AgentShell({
   const [observabilityOpen, setObservabilityOpen] = useState(false);
   const [missionOpen, setMissionOpen] = useState(false);
   const [missionFocus, setMissionFocus] = useState<"summary" | "crew">("summary");
-  const [workspaceTab, setWorkspaceTab] = useState<"chat" | "tasks" | "files">("chat");
+  const [workspaceTab, setWorkspaceTab] = useState<"chat" | "work" | "files">("chat");
   const [missionData, setMissionData] = useState<MissionOverview | null>(null);
   const [roomData, setRoomData] = useState<Cmul8RoomPayload | null>(null);
   const [assignAsTask, setAssignAsTask] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [assignmentError, setAssignmentError] = useState("");
+  const [selectedCrew, setSelectedCrew] = useState<{ kind: "agent" | "human"; id: string } | null>(null);
   const project = snapshot.project;
   const isPlan = variant === "plan";
   const hasPreview = Boolean(snapshot.preview_url);
@@ -974,10 +979,15 @@ export function AgentShell({
   const mentionedAgentIds = missionAgents
     .filter((agent) => new RegExp(`(^|\\s)${agentHandle(agent.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$|[.,!?])`, "i").test(input))
     .map((agent) => agent.id);
+  const crewMentioned = /(^|\s)@Crew(?=\s|$|[.,!?])/i.test(input);
+  const mentionedHumans = humanMembers.filter((member) => {
+    const handle = agentHandle(member.display_name || member.actor_id);
+    return new RegExp(`(^|\\s)${handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$|[.,!?])`, "i").test(input);
+  });
 
   useEffect(() => {
-    if (mentionedAgentIds.length) setAssignAsTask(true);
-  }, [mentionedAgentIds.join("|")]);
+    if (mentionedAgentIds.length || crewMentioned) setAssignAsTask(true);
+  }, [mentionedAgentIds.join("|"), crewMentioned]);
 
   const refreshMission = async () => {
     try {
@@ -996,8 +1006,12 @@ export function AgentShell({
       } catch { if (!cancelled) { setMissionData(null); setRoomData(null); } }
     };
     void load();
-    const timer = window.setInterval(() => void load(), 8000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    const wake = () => { if (document.visibilityState !== "hidden") void load(); };
+    const unsubscribe = subscribeEvents(project.id, () => { void load(); });
+    const timer = window.setInterval(wake, 15000);
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("missions:refresh", wake);
+    return () => { cancelled = true; unsubscribe(); window.clearInterval(timer); document.removeEventListener("visibilitychange", wake); window.removeEventListener("missions:refresh", wake); };
   }, [project.id]);
 
   const assignTask = async () => {
@@ -1010,11 +1024,23 @@ export function AgentShell({
     setAssigning(true); setAssignmentError("");
     try {
       await createMissionRun(project.id, input.trim(), mentionedAgentIds);
+      if (mentionedHumans.length) await addCmul8Comment(project.id, { body: `Review requested: ${input.trim()}`, target_type: "project", mentions: mentionedHumans.map((member) => ({ ref_type: "actor", ref_id: member.actor_id })) });
       onInput(""); setAssignAsTask(false);
       await refreshMission();
+      window.dispatchEvent(new Event("missions:refresh"));
     } catch (cause) {
       setAssignmentError(cause instanceof Error ? cause.message : "Could not assign the task");
     } finally { setAssigning(false); }
+  };
+  const sendMessage = async () => {
+    if (!input.trim()) return;
+    if (!mentionedHumans.length) { onSend(); return; }
+    setAssigning(true); setAssignmentError("");
+    try {
+      await addCmul8Comment(project.id, { body: input.trim(), target_type: "project", mentions: mentionedHumans.map((member) => ({ ref_type: "actor", ref_id: member.actor_id })) });
+      onInput(""); await refreshMission();
+    } catch (cause) { setAssignmentError(cause instanceof Error ? cause.message : "Could not send the team message"); }
+    finally { setAssigning(false); }
   };
 
   const mentionAgent = (name: string) => {
@@ -1085,7 +1111,7 @@ export function AgentShell({
           <button type="button" className="icon-btn" onClick={() => { setMissionFocus("crew"); setMissionOpen(true); }} title="Mission crew" aria-pressed={missionOpen && missionFocus === "crew"}>
             <Users size={16} strokeWidth={1.5} />
           </button>
-          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen((value) => !value); }} title={observabilityOpen ? "Return to workspace" : "Open Observability"} aria-pressed={observabilityOpen}>
+          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen((value) => !value); }} title={observabilityOpen ? "Return to Mission" : "Advanced run status"} aria-pressed={observabilityOpen}>
             <Activity size={16} strokeWidth={1.5} />
           </button>
         </div>
@@ -1093,7 +1119,7 @@ export function AgentShell({
 
       {!observabilityOpen ? <nav className="agent-workspace-tabs" aria-label="Mission workspace">
         <button type="button" className={workspaceTab === "chat" ? "active" : ""} onClick={() => setWorkspaceTab("chat")}><MessageSquare size={14} /> Chat</button>
-        <button type="button" className={workspaceTab === "tasks" ? "active" : ""} onClick={() => setWorkspaceTab("tasks")}><ListChecks size={14} /> Tasks</button>
+        <button type="button" className={workspaceTab === "work" ? "active" : ""} onClick={() => setWorkspaceTab("work")}><ListChecks size={14} /> Work</button>
         <button type="button" className={workspaceTab === "files" ? "active" : ""} onClick={() => setWorkspaceTab("files")}><FileText size={14} /> Files{userFacingFiles(files).length ? <em>{userFacingFiles(files).length}</em> : null}</button>
       </nav> : null}
 
@@ -1112,16 +1138,16 @@ export function AgentShell({
         {missionAgents.length ? <ul>{missionAgents.map((agent) => {
           const active = missionData?.runs.find((run) => run.current_agent_id === agent.id && run.status === "running");
           const queued = missionData?.runs.find((run) => run.status === "queued" && (run.assigned_agent_ids?.includes(agent.id) || !run.assigned_agent_ids?.length));
-          return <li key={agent.id}><button type="button" className={mentionedAgentIds.includes(agent.id) ? "selected" : ""} onClick={() => mentionAgent(agent.name)} title={`Assign work to ${agent.name}`}><i>{agent.name.slice(0, 1).toUpperCase()}</i><span><strong>{agent.name}</strong><small>{agent.role}</small></span><em className={active ? "working" : queued ? "queued" : "ready"} /></button>{active || queued ? <small className="agent-work-state">{active ? "Working" : "Queued"}</small> : null}</li>;
+          return <li key={agent.id}><button type="button" className={mentionedAgentIds.includes(agent.id) ? "selected" : ""} onClick={() => setSelectedCrew({ kind: "agent", id: agent.id })} title={`Open ${agent.name}'s profile`}><i>{agent.name.slice(0, 1).toUpperCase()}</i><span><strong>{agent.name}</strong><small>{agent.role}</small></span><em className={active ? "working" : queued ? "queued" : "ready"} /></button><button type="button" className="mission-crew-mention" onClick={() => mentionAgent(agent.name)} title={`Assign work to ${agent.name}`}>@</button>{active || queued ? <small className="agent-work-state">{active ? "Working" : "Queued"}</small> : null}</li>;
         })}</ul> : <button type="button" className="mission-crew-empty" onClick={() => { setMissionFocus("crew"); setMissionOpen(true); }}><Users size={16} /><span>Add your first agent</span></button>}
-        <div className="mission-human-list"><header><span>HUMANS</span><button type="button" onClick={() => setWorkspaceTab("tasks")} title="Invite a human">+</button></header>{humanMembers.length ? humanMembers.map((member) => { const live = roomData?.presence.find((item) => item.actor_id === member.actor_id); return <div key={member.actor_id}><i>{(member.display_name || member.actor_id).slice(0, 1).toUpperCase()}</i><strong>{member.display_name || member.actor_id}</strong><small>{member.role} · {live?.status || member.presence || "offline"}</small></div>; }) : <button type="button" onClick={() => setWorkspaceTab("tasks")}>Invite collaborators</button>}</div>
-        <section className="mission-task-queue"><header><span>ACTIVE WORK</span><strong>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).length || 0}</strong></header>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).slice(-4).reverse().map((run) => <button type="button" key={run.id} onClick={() => setWorkspaceTab("tasks")}><span>{run.trigger_snapshot?.note || "Mission run"}</span><small>{run.status.replaceAll("_", " ")}</small></button>)}</section>
+        <div className="mission-human-list"><header><span>HUMANS</span><button type="button" onClick={() => setWorkspaceTab("work")} title="Invite a human">+</button></header>{humanMembers.length ? humanMembers.map((member) => { const live = roomData?.presence.find((item) => item.actor_id === member.actor_id); return <button type="button" className="mission-human-row" key={member.actor_id} onClick={() => setSelectedCrew({ kind: "human", id: member.actor_id })}><i>{(member.display_name || member.actor_id).slice(0, 1).toUpperCase()}</i><span><strong>{member.display_name || "Teammate"}</strong><small>{member.role} · {live?.status || member.presence || "offline"}</small></span></button>; }) : <button type="button" onClick={() => setWorkspaceTab("work")}>Invite collaborators</button>}</div>
+        <section className="mission-task-queue"><header><span>ACTIVE WORK</span><strong>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).length || 0}</strong></header>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).slice(-4).reverse().map((run) => <button type="button" key={run.id} onClick={() => setWorkspaceTab("work")}><span>{run.trigger_snapshot?.note || "Mission run"}</span><small>{run.status.replaceAll("_", " ")}</small></button>)}</section>
       </aside>
       <div className={`agent-center${workspaceTab !== "chat" || observabilityOpen ? " agent-center-surface" : ""}`}>
         {observabilityOpen ? (
           <ObservabilityContainer projectId={project.id} />
-        ) : workspaceTab === "tasks" ? (
-          <ProjectRoomContainer projectId={project.id} missionAssignments={(missionData?.runs ?? []).map((run) => ({ id: run.id, title: run.trigger_snapshot?.note || "Mission run", status: run.status, ownerNames: run.assigned_agent_ids?.length ? run.assigned_agent_ids.map((id) => missionAgents.find((agent) => agent.id === id)?.name || id) : missionAgents.map((agent) => agent.name), currentOwner: run.current_agent_id ? missionAgents.find((agent) => agent.id === run.current_agent_id)?.name : undefined }))} />
+        ) : workspaceTab === "work" ? (
+          <ProjectRoomContainer projectId={project.id} onOpenChat={() => setWorkspaceTab("chat")} missionAssignments={(missionData?.runs ?? []).map((run) => ({ id: run.id, title: run.trigger_snapshot?.note || "Mission run", status: run.status, ownerNames: run.assigned_agent_ids?.length ? run.assigned_agent_ids.map((id) => missionAgents.find((agent) => agent.id === id)?.name || id) : missionAgents.map((agent) => agent.name), currentOwner: run.current_agent_id ? missionAgents.find((agent) => agent.id === run.current_agent_id)?.name : undefined }))} />
         ) : workspaceTab === "files" ? (
           <MissionFiles files={files} onBack={() => setWorkspaceTab("chat")} />
         ) : (
@@ -1175,8 +1201,10 @@ export function AgentShell({
 
           <MissionConversation
             data={missionData}
+            room={roomData}
             onOpenMission={() => { setMissionFocus("summary"); setMissionOpen(true); }}
-            onOpenTasks={() => setWorkspaceTab("tasks")}
+            onOpenTasks={() => setWorkspaceTab("work")}
+            onOpenFiles={() => setWorkspaceTab("files")}
           />
 
           {showStandalonePlan && (
@@ -1305,19 +1333,20 @@ export function AgentShell({
             </div>
           </div>
           {assignmentError ? <div className="assignment-error" role="alert">{assignmentError}</div> : null}
+          {(assignAsTask || mentionedHumans.length) ? <div className="composer-routing-preview"><strong>{assignAsTask ? "Assignment" : "Team message"}</strong><span>{crewMentioned ? "Whole crew" : mentionedAgentIds.length ? mentionedAgentIds.map((id) => missionAgents.find((agent) => agent.id === id)?.name).filter(Boolean).join(", ") : mentionedHumans.length ? mentionedHumans.map((member) => member.display_name || "Teammate").join(", ") : "Choose a recipient with @"}</span>{mentionedHumans.length && assignAsTask ? <em>{mentionedHumans.map((member) => member.display_name || "Teammate").join(", ")} will be asked to review</em> : null}</div> : null}
           <PromptComposer
             value={input}
             onChange={onInput}
-            onSubmit={assignAsTask ? assignTask : onSend}
+            onSubmit={assignAsTask ? assignTask : sendMessage}
             onCancel={onCancel}
             disabled={project.status === "failed"}
             busy={busy || assigning}
             files={files}
             placeholder="Message the crew — use @ to assign an agent…"
             submitLabel={assignAsTask ? "Assign task" : "Send"}
-            modeTag={mentionedAgentIds.length ? `${mentionedAgentIds.length} agent${mentionedAgentIds.length === 1 ? "" : "s"}` : "Crew"}
-            mentions={missionAgents.map((agent) => ({ id: agent.id, name: agent.name, detail: agent.role, kind: "agent" as const }))}
-            onMentionSelect={(_id, kind) => { if (kind === "agent") setAssignAsTask(true); }}
+            modeTag={assignAsTask ? crewMentioned ? "Whole crew" : mentionedAgentIds.length ? `${mentionedAgentIds.length} agent${mentionedAgentIds.length === 1 ? "" : "s"}` : "Task" : "Message"}
+            mentions={[{ id: "crew", name: "Crew", detail: "Assign the whole agent team", kind: "crew" as const }, ...missionAgents.map((agent) => ({ id: agent.id, name: agent.name, detail: agent.role, kind: "agent" as const })), ...humanMembers.map((member) => ({ id: member.actor_id, name: member.display_name || "Teammate", detail: `Human · ${member.role}`, kind: "human" as const }))]}
+            onMentionSelect={(_id, kind) => { if (kind === "agent" || kind === "crew") setAssignAsTask(true); }}
             asTask={assignAsTask}
             onAsTaskChange={setAssignAsTask}
           />
@@ -1326,9 +1355,27 @@ export function AgentShell({
         )}
       </div>
       </div>
-      {missionOpen ? <MissionPod projectId={project.id} projectTitle={project.app_config.title} projectPrompt={project.prompt} artifactKind={project.artifact_kind} focus={missionFocus} onClose={() => { setMissionOpen(false); void refreshMission(); }} onOpenTasks={() => { setMissionOpen(false); setWorkspaceTab("tasks"); }} onOpenFiles={() => { setMissionOpen(false); setWorkspaceTab("files"); }} /> : null}
+      {missionOpen ? <MissionPod projectId={project.id} projectTitle={project.app_config.title} projectPrompt={project.prompt} artifactKind={project.artifact_kind} focus={missionFocus} onClose={() => { setMissionOpen(false); void refreshMission(); }} onOpenTasks={() => { setMissionOpen(false); setWorkspaceTab("work"); }} onOpenFiles={() => { setMissionOpen(false); setWorkspaceTab("files"); }} /> : null}
+      {selectedCrew ? <CrewProfileDrawer selection={selectedCrew} mission={missionData} room={roomData} onClose={() => setSelectedCrew(null)} onAssign={(name) => { setSelectedCrew(null); mentionAgent(name); }} onOpenWork={() => { setSelectedCrew(null); setWorkspaceTab("work"); }} /> : null}
     </div>
   );
+}
+
+function CrewProfileDrawer({ selection, mission, room, onClose, onAssign, onOpenWork }: {
+  selection: { kind: "agent" | "human"; id: string };
+  mission: MissionOverview | null;
+  room: Cmul8RoomPayload | null;
+  onClose: () => void;
+  onAssign: (name: string) => void;
+  onOpenWork: () => void;
+}) {
+  const agent = selection.kind === "agent" ? mission?.agents.find((item) => item.id === selection.id) : undefined;
+  const human = selection.kind === "human" ? room?.room.members.find((item) => item.actor_id === selection.id) : undefined;
+  const name = agent?.name || human?.display_name || "Teammate";
+  const current = agent ? mission?.runs.find((run) => run.current_agent_id === agent.id && run.status === "running") : undefined;
+  const recent = agent ? (mission?.runs ?? []).filter((run) => run.assigned_agent_ids?.includes(agent.id) || run.current_agent_id === agent.id).slice(-4).reverse() : [];
+  const list = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
+  return <div className="crew-profile-scrim" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="crew-profile" aria-label={`${name} profile`}><header><div><i>{name.slice(0, 1).toUpperCase()}</i><span><small>{selection.kind === "agent" ? "MISSION AGENT" : "HUMAN TEAMMATE"}</small><h2>{name}</h2><p>{agent?.role || human?.role || "Member"}</p></span></div><button type="button" onClick={onClose} aria-label="Close profile">×</button></header><div className="crew-profile__body">{agent ? <><section className="crew-profile__status"><span className={current ? "working" : "ready"} /> <strong>{current ? "Working now" : "Ready"}</strong><small>{current?.trigger_snapshot?.note || "Available for an assignment"}</small></section><section><span>ROLE</span><p>{agent.mandate || "This specialist works within the Mission outcome and assigned scope."}</p></section>{list(agent.responsibilities).length ? <section><span>RESPONSIBILITIES</span><ul>{list(agent.responsibilities).map((item) => <li key={item}>{item}</li>)}</ul></section> : null}<div className="crew-profile__facts"><section><span>DATA ACCESS</span><p>{list(agent.data_scope).join(", ") || "Mission sources"}</p></section><section><span>CAPABILITIES</span><p>{list(agent.tools).join(", ") || "Defined by the Mission plan"}</p></section><section><span>AUTONOMY</span><p>{String(agent.autonomy).replaceAll("_", " ")}</p></section></div>{recent.length ? <section><span>RECENT WORK</span><ul>{recent.map((run) => <li key={run.id}>{run.trigger_snapshot?.note || "Mission assignment"} <small>{run.status.replaceAll("_", " ")}</small></li>)}</ul></section> : null}</> : <><section><span>MISSION ROLE</span><p>{human?.role === "owner" || human?.role === "admin" ? "Can steer the Mission, manage the team, and make consequential decisions." : human?.role === "reviewer" || human?.role === "approver" ? "Reviews evidence and makes designated human decisions." : "Collaborates with the crew and follows Mission work."}</p></section><section><span>PRESENCE</span><p>{human?.presence || "offline"}</p></section></>} </div><footer>{agent ? <button type="button" className="primary" onClick={() => onAssign(name)}>Assign with @{name.replace(/\s+/g, "_")}</button> : null}<button type="button" onClick={onOpenWork}>Open Work</button></footer></aside></div>;
 }
 
 function MissionFiles({ files, onBack }: { files: DataRoomFile[]; onBack: () => void }) {

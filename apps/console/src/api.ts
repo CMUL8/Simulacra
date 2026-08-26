@@ -728,7 +728,7 @@ export async function createCmul8Room(projectId: string): Promise<Cmul8RoomPaylo
   return json(`/projects/${projectId}/cmul8/room`, { method: "POST", body: "{}" });
 }
 
-export async function addCmul8RoomMember(projectId: string, member: { member_id: string; role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver"; expected_revision: number }): Promise<Cmul8RoomPayload["room"]> {
+export async function addCmul8RoomMember(projectId: string, member: { member_id?: string; member_email?: string; role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver"; expected_revision: number }): Promise<Cmul8RoomPayload["room"]> {
   return json(`/projects/${projectId}/cmul8/room/members`, { method: "POST", body: JSON.stringify(member) });
 }
 

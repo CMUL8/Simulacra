@@ -97,7 +97,7 @@ export function mapCmul8RoomPayload(payload: Cmul8RoomPayload, connectionState: 
   // highlights. Do not infer read state for the rest of the event log.
   const inbox = payload.away.highlights.map((item) => eventActivity(item.event, item.unread ? undefined : item.event.timestamp));
   const activity = [
-    ...payload.events.map(eventActivity), ...payload.comments.map(commentActivity), ...payload.reviews.map(reviewActivity),
+    ...payload.events.map((event) => eventActivity(event)), ...payload.comments.map(commentActivity), ...payload.reviews.map(reviewActivity),
   ].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   return {
     room: {

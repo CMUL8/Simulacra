@@ -14,8 +14,8 @@ type Props = {
   files?: DataRoomFile[];
   submitLabel?: string;
   modeTag?: string;
-  mentions?: Array<{ id: string; name: string; detail: string; kind: "agent" | "source" }>;
-  onMentionSelect?: (id: string, kind: "agent" | "source") => void;
+  mentions?: Array<{ id: string; name: string; detail: string; kind: "agent" | "human" | "crew" | "source" }>;
+  onMentionSelect?: (id: string, kind: "agent" | "human" | "crew" | "source") => void;
   asTask?: boolean;
   onAsTaskChange?: (value: boolean) => void;
 };
@@ -62,7 +62,7 @@ export function PromptComposer({
     const pos = el.selectionStart;
     const before = value.slice(0, pos);
     const atPos = before.lastIndexOf("@");
-    const handle = item.kind === "agent" ? item.name.trim().replace(/\s+/g, "_") : item.name;
+    const handle = item.kind === "source" ? item.name : item.name.trim().replace(/\s+/g, "_");
     const tag = `@${handle} `;
     const next = before.slice(0, atPos) + tag + value.slice(pos);
     onChange(next);

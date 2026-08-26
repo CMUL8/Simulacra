@@ -299,7 +299,7 @@ export function LoginPage({
       )}
       {clerkAvailable && onUseClerk && (mode === "login" || mode === "register") && (
         <button type="button" className="ghost-btn wide" onClick={onUseClerk}>
-          Continue with CMUL8 Clerk
+          Continue with Missions sign-in
         </button>
       )}
     </div>

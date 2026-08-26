@@ -196,13 +196,19 @@ export function Landing({
   onDismissError,
 }: Props) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [missionFilter, setMissionFilter] = useState<"all" | "active" | "ready" | "complete">("all");
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const landingRef = useRef<HTMLDivElement>(null);
   const projectsRef = useRef<HTMLElement>(null);
   const sourceCount = pendingFiles.length;
   // Prompt alone is enough — empty/mismatched sources open plan chat to ask for data.
   const canBuild = prompt.trim().length >= 3 && !busy && !guestGateOpen;
-  const recent = projects.slice(0, 12);
+  const recent = projects.slice(0, 12).filter((project) => {
+    if (missionFilter === "active") return Boolean(busyProjectIds[project.id]) || ["plan", "build"].includes(project.phase);
+    if (missionFilter === "complete") return Boolean(project.deployed);
+    if (missionFilter === "ready") return !busyProjectIds[project.id] && !project.deployed;
+    return true;
+  });
   const pills = useMemo(() => pillsForDay(utcDayIndex()), []);
   const gated = !authed && guestGateOpen;
 
@@ -238,7 +244,7 @@ export function Landing({
       <div className="landing-atmosphere" aria-hidden="true" />
       <header className="landing-nav">
         <div className="landing-nav-pill">
-          <span className="landing-nav-brand">CMUL8</span>
+          <span className="landing-nav-brand">Missions</span>
 
           <nav className="landing-nav-links" aria-label="Primary">
             {authed && recent.length > 0 && (
@@ -353,8 +359,9 @@ export function Landing({
           <section className="landing-projects" ref={projectsRef} id="projects" aria-label="Your Missions">
             <div className="landing-projects-head">
               <h2>Your Missions</h2>
-              <span>{projects.length}</span>
+              <span>{recent.length}</span>
             </div>
+            <div className="landing-project-filters" role="tablist" aria-label="Filter Missions">{([ ["all", "All"], ["active", "Active"], ["ready", "Ready"], ["complete", "Complete"] ] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={missionFilter === value} className={missionFilter === value ? "active" : ""} onClick={() => setMissionFilter(value)}>{label}</button>)}</div>
             <ul className="landing-project-grid">
               {recent.map((p) => {
                 const kind = kindKey(p);
@@ -379,7 +386,7 @@ export function Landing({
                       <span className="landing-project-title">{title}</span>
                       {summary ? <span className="landing-project-summary">{summary}</span> : null}
                       <span className="landing-project-foot">
-                        {p.row_count ? <span>{p.row_count.toLocaleString()} rows</span> : <span>No rows yet</span>}
+                        <span>{working ? "Crew working now" : p.deployed ? "Verified output ready" : p.phase === "plan" ? "Setup in progress" : p.phase === "build" ? "Work in progress" : "Ready for the next assignment"}</span>
                         {when ? <span>{when}</span> : null}
                       </span>
                     </button>

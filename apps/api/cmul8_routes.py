@@ -18,7 +18,7 @@ from apps.api.security import audit_request, require_project_access
 from simulacra.collaboration import ActivityInbox, CollaborationService, JsonCollaborationRepository, PresenceRegistry
 from simulacra.collaboration.errors import CollaborationError
 from simulacra.collaboration.models import CommentTargetType, ReviewDecision, TaskState
-from simulacra.demo.identity import AuthContext, get_user
+from simulacra.demo.identity import AuthContext, get_membership, get_user, get_user_by_email
 from simulacra.demo.paths import RUNS_DIR
 from simulacra.demo.runs import load_state, project_dir
 from simulacra.harnesses import HarnessConfig, create_harness
@@ -92,7 +92,8 @@ class RoomCreateBody(BaseModel):
 
 
 class RoomMemberBody(BaseModel):
-	member_id: str
+	member_id: str | None = Field(default=None, min_length=1, max_length=200)
+	member_email: str | None = Field(default=None, min_length=3, max_length=320)
 	role: str = Field(default="member", pattern="^(owner|admin|member|viewer|reviewer|approver)$")
 	expected_revision: int = Field(ge=1)
 
@@ -269,15 +270,25 @@ def add_room_member(
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict[str, Any]:
 	_, service = _collaboration()
+	member_id = body.member_id
+	if body.member_email:
+		user = get_user_by_email(body.member_email.strip().lower())
+		if user is None:
+			raise HTTPException(404, "No workspace teammate uses that email yet. Invite them to the workspace first.")
+		if get_membership(ctx.tenant_id, user.id) is None:
+			raise HTTPException(403, "That person is not a member of this workspace yet.")
+		member_id = user.id
+	if not member_id:
+		raise HTTPException(422, "member_email or member_id is required")
 	try:
 		room = service.add_member(
 			tenant_id=ctx.tenant_id, project_id=project_id, actor_id=ctx.user.id,
-			member_id=body.member_id, role=body.role, expected_revision=body.expected_revision,
-			member_name=_display_name(body.member_id),
+			member_id=member_id, role=body.role, expected_revision=body.expected_revision,
+			member_name=_display_name(member_id),
 		)
 	except CollaborationError as exc:
 		raise _translate(exc) from exc
-	audit_request(request, ctx, "cmul8.room.member_add", project_id=project_id, member_id=body.member_id)
+	audit_request(request, ctx, "cmul8.room.member_add", project_id=project_id, member_id=member_id)
 	return _room_dict(room)
 
 
