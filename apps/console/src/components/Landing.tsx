@@ -65,16 +65,6 @@ function phaseLabel(p: Project): string {
   return p.phase === "build" ? "Building" : p.phase || "Draft";
 }
 
-function kindShort(p: Project): string {
-  const k = p.artifact_kind || "data_app";
-  return FORMAT_OPTIONS.find((f) => f.kind === k)?.label || "App";
-}
-
-function kindKey(p: Project): string {
-  const k = p.artifact_kind || "data_app";
-  return FORMAT_OPTIONS.some((f) => f.kind === k) ? k : "data_app";
-}
-
 const STOCK_TITLES = new Set([
   "Vendor Risk Command Center",
   "Vendor Risk Dashboard",
@@ -196,19 +186,13 @@ export function Landing({
   onDismissError,
 }: Props) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [missionFilter, setMissionFilter] = useState<"all" | "active" | "ready" | "complete">("all");
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const landingRef = useRef<HTMLDivElement>(null);
   const projectsRef = useRef<HTMLElement>(null);
   const sourceCount = pendingFiles.length;
   // Prompt alone is enough — empty/mismatched sources open plan chat to ask for data.
   const canBuild = prompt.trim().length >= 3 && !busy && !guestGateOpen;
-  const recent = projects.slice(0, 12).filter((project) => {
-    if (missionFilter === "active") return Boolean(busyProjectIds[project.id]) || ["plan", "build"].includes(project.phase);
-    if (missionFilter === "complete") return Boolean(project.deployed);
-    if (missionFilter === "ready") return !busyProjectIds[project.id] && !project.deployed;
-    return true;
-  });
+  const recent = projects.slice(0, 12);
   const pills = useMemo(() => pillsForDay(utcDayIndex()), []);
   const gated = !authed && guestGateOpen;
 
@@ -291,7 +275,7 @@ export function Landing({
             ref={promptRef}
             value={prompt}
             onChange={(e) => onPrompt(e.target.value)}
-            placeholder="Describe the outcome, the evidence it should use, and where human judgment belongs…"
+            placeholder="What should this Mission accomplish?"
             rows={4}
             disabled={busy || gated}
             onKeyDown={(e) => {
@@ -361,10 +345,8 @@ export function Landing({
               <h2>Your Missions</h2>
               <span>{recent.length}</span>
             </div>
-            <div className="landing-project-filters" role="tablist" aria-label="Filter Missions">{([ ["all", "All"], ["active", "Active"], ["ready", "Ready"], ["complete", "Complete"] ] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={missionFilter === value} className={missionFilter === value ? "active" : ""} onClick={() => setMissionFilter(value)}>{label}</button>)}</div>
             <ul className="landing-project-grid">
               {recent.map((p) => {
-                const kind = kindKey(p);
                 const title = projectCardTitle(p);
                 const summary = projectCardSummary(p);
                 const when = relativeWhen(p.created_at);
@@ -373,12 +355,11 @@ export function Landing({
                   <li key={p.id}>
                     <button
                       type="button"
-                      className={`landing-project-card kind-${kind}${working ? " working" : ""}`}
+                      className={`landing-project-card${working ? " working" : ""}`}
                       disabled={busy}
                       onClick={() => onOpenProject?.(p.id)}
                     >
                       <span className="landing-project-card-top">
-                        <span className="landing-project-kind">{kindShort(p)}</span>
                         <span className={`landing-project-phase phase-${working ? "working" : p.deployed ? "shipped" : p.phase}`}>
                           {working ? "Working" : phaseLabel(p)}
                         </span>

@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  Activity,
   Copy,
   FileText,
   Globe,
@@ -34,7 +33,6 @@ import { PromptComposer } from "./PromptComposer";
 import { VersionsMenu } from "./VersionsMenu";
 import { WaitStage } from "./WaitStage";
 import { ProjectRoomContainer } from "../features/project-room";
-import { ObservabilityContainer } from "../features/observability";
 import { MissionPod } from "../features/missions";
 
 type Props = {
@@ -938,7 +936,6 @@ export function AgentShell({
   const stickToBottom = useRef(true);
   const prevBusy = useRef(busy);
   const [lastThought, setLastThought] = useState<ThoughtSnapshot | null>(null);
-  const [observabilityOpen, setObservabilityOpen] = useState(false);
   const [missionOpen, setMissionOpen] = useState(false);
   const [missionFocus, setMissionFocus] = useState<"summary" | "crew">("summary");
   const [workspaceTab, setWorkspaceTab] = useState<"chat" | "work" | "files">("chat");
@@ -1111,17 +1108,14 @@ export function AgentShell({
           <button type="button" className="icon-btn" onClick={() => { setMissionFocus("crew"); setMissionOpen(true); }} title="Mission crew" aria-pressed={missionOpen && missionFocus === "crew"}>
             <Users size={16} strokeWidth={1.5} />
           </button>
-          <button type="button" className="icon-btn" onClick={() => { setMissionOpen(false); setObservabilityOpen((value) => !value); }} title={observabilityOpen ? "Return to Mission" : "Advanced run status"} aria-pressed={observabilityOpen}>
-            <Activity size={16} strokeWidth={1.5} />
-          </button>
         </div>
       </header>
 
-      {!observabilityOpen ? <nav className="agent-workspace-tabs" aria-label="Mission workspace">
+      <nav className="agent-workspace-tabs" aria-label="Mission workspace">
         <button type="button" className={workspaceTab === "chat" ? "active" : ""} onClick={() => setWorkspaceTab("chat")}><MessageSquare size={14} /> Chat</button>
         <button type="button" className={workspaceTab === "work" ? "active" : ""} onClick={() => setWorkspaceTab("work")}><ListChecks size={14} /> Work</button>
         <button type="button" className={workspaceTab === "files" ? "active" : ""} onClick={() => setWorkspaceTab("files")}><FileText size={14} /> Files{userFacingFiles(files).length ? <em>{userFacingFiles(files).length}</em> : null}</button>
-      </nav> : null}
+      </nav>
 
       {error && (
         <div className="toast error-toast agent-toast" role="alert">
@@ -1143,10 +1137,8 @@ export function AgentShell({
         <div className="mission-human-list"><header><span>HUMANS</span><button type="button" onClick={() => setWorkspaceTab("work")} title="Invite a human">+</button></header>{humanMembers.length ? humanMembers.map((member) => { const live = roomData?.presence.find((item) => item.actor_id === member.actor_id); return <button type="button" className="mission-human-row" key={member.actor_id} onClick={() => setSelectedCrew({ kind: "human", id: member.actor_id })}><i>{(member.display_name || member.actor_id).slice(0, 1).toUpperCase()}</i><span><strong>{member.display_name || "Teammate"}</strong><small>{member.role} · {live?.status || member.presence || "offline"}</small></span></button>; }) : <button type="button" onClick={() => setWorkspaceTab("work")}>Invite collaborators</button>}</div>
         <section className="mission-task-queue"><header><span>ACTIVE WORK</span><strong>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).length || 0}</strong></header>{missionData?.runs.filter((run) => ["queued", "running", "awaiting_approval"].includes(run.status)).slice(-4).reverse().map((run) => <button type="button" key={run.id} onClick={() => setWorkspaceTab("work")}><span>{run.trigger_snapshot?.note || "Mission run"}</span><small>{run.status.replaceAll("_", " ")}</small></button>)}</section>
       </aside>
-      <div className={`agent-center${workspaceTab !== "chat" || observabilityOpen ? " agent-center-surface" : ""}`}>
-        {observabilityOpen ? (
-          <ObservabilityContainer projectId={project.id} />
-        ) : workspaceTab === "work" ? (
+      <div className={`agent-center${workspaceTab !== "chat" ? " agent-center-surface" : ""}`}>
+        {workspaceTab === "work" ? (
           <ProjectRoomContainer projectId={project.id} onOpenChat={() => setWorkspaceTab("chat")} missionAssignments={(missionData?.runs ?? []).map((run) => ({ id: run.id, title: run.trigger_snapshot?.note || "Mission run", status: run.status, ownerNames: run.assigned_agent_ids?.length ? run.assigned_agent_ids.map((id) => missionAgents.find((agent) => agent.id === id)?.name || id) : missionAgents.map((agent) => agent.name), currentOwner: run.current_agent_id ? missionAgents.find((agent) => agent.id === run.current_agent_id)?.name : undefined }))} />
         ) : workspaceTab === "files" ? (
           <MissionFiles files={files} onBack={() => setWorkspaceTab("chat")} />
@@ -1375,7 +1367,9 @@ function CrewProfileDrawer({ selection, mission, room, onClose, onAssign, onOpen
   const current = agent ? mission?.runs.find((run) => run.current_agent_id === agent.id && run.status === "running") : undefined;
   const recent = agent ? (mission?.runs ?? []).filter((run) => run.assigned_agent_ids?.includes(agent.id) || run.current_agent_id === agent.id).slice(-4).reverse() : [];
   const list = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
-  return <div className="crew-profile-scrim" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="crew-profile" aria-label={`${name} profile`}><header><div><i>{name.slice(0, 1).toUpperCase()}</i><span><small>{selection.kind === "agent" ? "MISSION AGENT" : "HUMAN TEAMMATE"}</small><h2>{name}</h2><p>{agent?.role || human?.role || "Member"}</p></span></div><button type="button" onClick={onClose} aria-label="Close profile">×</button></header><div className="crew-profile__body">{agent ? <><section className="crew-profile__status"><span className={current ? "working" : "ready"} /> <strong>{current ? "Working now" : "Ready"}</strong><small>{current?.trigger_snapshot?.note || "Available for an assignment"}</small></section><section><span>ROLE</span><p>{agent.mandate || "This specialist works within the Mission outcome and assigned scope."}</p></section>{list(agent.responsibilities).length ? <section><span>RESPONSIBILITIES</span><ul>{list(agent.responsibilities).map((item) => <li key={item}>{item}</li>)}</ul></section> : null}<div className="crew-profile__facts"><section><span>DATA ACCESS</span><p>{list(agent.data_scope).join(", ") || "Mission sources"}</p></section><section><span>CAPABILITIES</span><p>{list(agent.tools).join(", ") || "Defined by the Mission plan"}</p></section><section><span>AUTONOMY</span><p>{String(agent.autonomy).replaceAll("_", " ")}</p></section></div>{recent.length ? <section><span>RECENT WORK</span><ul>{recent.map((run) => <li key={run.id}>{run.trigger_snapshot?.note || "Mission assignment"} <small>{run.status.replaceAll("_", " ")}</small></li>)}</ul></section> : null}</> : <><section><span>MISSION ROLE</span><p>{human?.role === "owner" || human?.role === "admin" ? "Can steer the Mission, manage the team, and make consequential decisions." : human?.role === "reviewer" || human?.role === "approver" ? "Reviews evidence and makes designated human decisions." : "Collaborates with the crew and follows Mission work."}</p></section><section><span>PRESENCE</span><p>{human?.presence || "offline"}</p></section></>} </div><footer>{agent ? <button type="button" className="primary" onClick={() => onAssign(name)}>Assign with @{name.replace(/\s+/g, "_")}</button> : null}<button type="button" onClick={onOpenWork}>Open Work</button></footer></aside></div>;
+  const guidance = agent?.autonomy === "assist" ? "Returns work for human review" : agent?.autonomy === "execute_safely" ? "Works inside its approved scope" : "Asks before consequential work";
+  const scope = list(agent?.data_scope).map((item) => item.replace(/\/$/, "").replace("sources", "Mission sources").replace("outputs", "deliverables").replace("app", "Mission app")).join(", ");
+  return <div className="crew-profile-scrim" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="crew-profile" aria-label={`${name} profile`}><header><div><i>{name.slice(0, 1).toUpperCase()}</i><span><small>{selection.kind === "agent" ? "MISSION AGENT" : "HUMAN TEAMMATE"}</small><h2>{name}</h2><p>{agent?.role || human?.role || "Member"}</p></span></div><button type="button" onClick={onClose} aria-label="Close profile">×</button></header><div className="crew-profile__body">{agent ? <><section className="crew-profile__status"><span className={current ? "working" : "ready"} /> <strong>{current ? "Working now" : "Ready"}</strong><small>{current?.trigger_snapshot?.note || "Available for an assignment"}</small></section><section><span>JOB</span><p>{agent.mandate || "This agent works toward the Mission outcome."}</p></section><div className="crew-profile__facts"><section><span>SCOPE</span><p>{scope || "Mission sources and deliverables"}</p></section><section><span>GUIDANCE</span><p>{guidance}</p></section></div>{recent.length ? <section><span>RECENT WORK</span><ul>{recent.map((run) => <li key={run.id}>{run.trigger_snapshot?.note || "Mission assignment"} <small>{run.status.replaceAll("_", " ")}</small></li>)}</ul></section> : null}</> : <><section><span>MISSION ROLE</span><p>{human?.role === "owner" || human?.role === "admin" ? "Can steer the Mission, manage the team, and make consequential decisions." : human?.role === "reviewer" || human?.role === "approver" ? "Reviews evidence and makes designated human decisions." : "Collaborates with the crew and follows Mission work."}</p></section><section><span>PRESENCE</span><p>{human?.presence || "offline"}</p></section></>} </div><footer>{agent ? <button type="button" className="primary" onClick={() => onAssign(name)}>Assign with @{name.replace(/\s+/g, "_")}</button> : null}<button type="button" onClick={onOpenWork}>Open Work</button></footer></aside></div>;
 }
 
 function MissionFiles({ files, onBack }: { files: DataRoomFile[]; onBack: () => void }) {
