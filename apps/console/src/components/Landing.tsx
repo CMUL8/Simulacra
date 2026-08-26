@@ -273,8 +273,8 @@ export function Landing({
           <h1 className="brand-mark">Missions</h1>
         </div>
         <p className="landing-sub">
-          <strong>Where people and AI agents carry work forward together.</strong>
-          <span>Set the outcome. Missions coordinate context, permissions, handoffs, and proof—until the work is verified and done.</span>
+          <strong>Where human judgment and AI agents move work forward together.</strong>
+          <span>Set the mission. Agents carry it through; people guide the decisions, verify the evidence, and approve what ships.</span>
         </p>
 
         {error && (
