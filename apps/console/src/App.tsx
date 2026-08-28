@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   DEFAULT_DESIGN_BRIEF,
   approveProject,
@@ -29,20 +29,32 @@ import {
   type Project,
   type Snapshot,
   type Tenant,
+  type WorkplaceFlags,
 } from "./api";
 import { AgentShell } from "./components/AgentShell";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { Landing } from "./components/Landing";
+import { MissionLoader } from "./components/MissionLoader";
 import { PreviewDrawer } from "./components/PreviewDrawer";
 import { ProfileManageModal, type ProfileTab } from "./components/ProfileManageModal";
 import { Sidebar } from "./components/Sidebar";
 import { ResizableSplit } from "./components/ui/ResizableSplit";
 import { useEventStream } from "./hooks/useEventStream";
+import { WorkplaceShell } from "./features/workplace/shell/WorkplaceShell";
 
 type AppMode = "landing" | "plan" | "workspace";
 
 const LANDING_DRAFT_KEY = "simulacra.landingDraft";
 const SIDEBAR_KEY = "simulacra.sidebarOpen";
+const WORKPLACE_FLAGS_OFF: WorkplaceFlags = {
+  workplace_shell_v1: false,
+  workplace_attention_v1: false,
+  workplace_conversation_v1: false,
+  workplace_files_v1: false,
+  workplace_preview_origin_v1: false,
+  workplace_sse_v1: false,
+  workplace_bootstrap_v1: false,
+};
 
 function readSidebarOpen(): boolean {
   if (typeof window === "undefined") return true;
@@ -72,7 +84,7 @@ type LandingDraft = {
 
 function jobRunning(snap: Snapshot | null, live = true): boolean {
   const status = snap?.job?.status ?? snap?.project.job?.status;
-  // After deploy/restart, state.job can linger as "running" with no live worker
+  // A persisted running status is not active work unless the status endpoint confirms it is live.
   if (!live && (status === "running" || status === "settling")) return false;
   return status === "running" || status === "settling";
 }
@@ -132,6 +144,8 @@ export default function App({
 }) {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [workplaceFlags, setWorkplaceFlags] = useState<WorkplaceFlags | null>(null);
+  const [identityRevision, setIdentityRevision] = useState(0);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [mode, setMode] = useState<AppMode>("landing");
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
@@ -159,12 +173,16 @@ export default function App({
   const [bgNotice, setBgNotice] = useState<string | null>(null);
   const pollById = useRef<Record<string, number>>({});
   const viewedIdRef = useRef<string | null>(null);
+  const legacyRequestEpoch = useRef(0);
+  const legacyAccessRef = useRef(false);
+  const legacyWasEnabledRef = useRef(false);
   const [waitStartedAt, setWaitStartedAt] = useState<number | null>(null);
   const draftBootstrapped = useRef(false);
   const resumeStarted = useRef(false);
 
-  const projectId = snapshot?.project.id ?? null;
-  viewedIdRef.current = projectId;
+  const legacyEnabled = authed === true && workplaceFlags !== null && !workplaceFlags.workplace_shell_v1;
+  legacyAccessRef.current = legacyEnabled;
+  const projectId = legacyEnabled ? snapshot?.project.id ?? null : null;
   const { events: traces } = useEventStream(projectId);
   const running = busy || jobRunning(snapshot, jobLive);
 
@@ -224,11 +242,11 @@ export default function App({
     }
   }, []);
 
-	useEffect(() => {
-		const token = getToken();
-		if (!token && authRequired) {
-			setAuthed(false);
-			return;
+  useEffect(() => {
+    const token = getToken();
+    if (!token && authRequired) {
+      setAuthed(false);
+      return;
     }
     let cancelled = false;
     const timeout = window.setTimeout(() => {
@@ -242,6 +260,7 @@ export default function App({
         window.clearTimeout(timeout);
         setUser(me.user);
         setTenants(me.tenants || []);
+        setWorkplaceFlags(me.workplace_flags || WORKPLACE_FLAGS_OFF);
         if (me.tenant_id) setTenantId(me.tenant_id);
         setAuthed(true);
       })
@@ -255,7 +274,7 @@ export default function App({
       cancelled = true;
       window.clearTimeout(timeout);
     };
-	}, [authRequired]);
+  }, [authRequired, identityRevision]);
 
   // Deep-link password reset: /#reset=spr_…
   useEffect(() => {
@@ -266,9 +285,32 @@ export default function App({
     setProfileOpen(true);
   }, []);
 
+  const captureLegacyEpoch = useCallback((): number | null => (
+    legacyAccessRef.current ? legacyRequestEpoch.current : null
+  ), []);
+
+  const isLegacyEpochCurrent = useCallback((epoch: number | null): epoch is number => (
+    epoch !== null && legacyAccessRef.current && legacyRequestEpoch.current === epoch
+  ), []);
+
+  useEffect(() => {
+    if (!workplaceFlags?.workplace_shell_v1) return;
+    const syncSettingsRoute = () => {
+      const isSettings = window.location.pathname.startsWith("/settings/") || window.location.pathname === "/settings";
+      setProfileOpen(isSettings);
+      if (isSettings) setProfileTab("account");
+    };
+    syncSettingsRoute();
+    window.addEventListener("popstate", syncSettingsRoute);
+    return () => window.removeEventListener("popstate", syncSettingsRoute);
+  }, [workplaceFlags?.workplace_shell_v1]);
+
   const refreshProjects = useCallback(async () => {
+    if (!legacyAccessRef.current) return;
+    const epoch = legacyRequestEpoch.current;
     try {
-      setProjects(await listProjects());
+      const next = await listProjects();
+      if (legacyAccessRef.current && legacyRequestEpoch.current === epoch) setProjects(next);
     } catch {
       /* list failed — keep last known projects */
     }
@@ -289,6 +331,22 @@ export default function App({
     }
   }, []);
 
+  const clearLegacyActivity = useCallback(() => {
+    legacyRequestEpoch.current += 1;
+    legacyAccessRef.current = false;
+    stopPolling();
+    viewedIdRef.current = null;
+    setSnapshot(null);
+    setProjectFiles([]);
+    setProjects([]);
+    setBusy(false);
+    setJobLive(false);
+    setBusyProjects({});
+    setBgNotice(null);
+    setPreviewOpen(false);
+    setMode("landing");
+  }, [stopPolling]);
+
   const markProjectBusy = useCallback((id: string, on: boolean) => {
     setBusyProjects((prev) => {
       if (Boolean(prev[id]) === on) return prev;
@@ -303,13 +361,23 @@ export default function App({
 
   const pollUntilIdle = useCallback(
     (id: string) => {
+      if (!legacyAccessRef.current) return;
+      const epoch = legacyRequestEpoch.current;
       stopPolling(id);
       markProjectBusy(id, true);
       let ticks = 0;
       pollById.current[id] = window.setInterval(async () => {
+        if (!legacyAccessRef.current || legacyRequestEpoch.current !== epoch) {
+          stopPolling(id);
+          return;
+        }
         ticks += 1;
         try {
           const [snap, liveInfo] = await Promise.all([getProject(id), getProjectJob(id)]);
+          if (!legacyAccessRef.current || legacyRequestEpoch.current !== epoch) {
+            stopPolling(id);
+            return;
+          }
           const status = liveInfo.job?.status ?? snap.job?.status ?? snap.project.job?.status ?? "idle";
           const liveRunning = Boolean(liveInfo.live) && isLiveJobStatus(status);
           const staleRunning = !liveInfo.live && isLiveJobStatus(status);
@@ -357,10 +425,20 @@ export default function App({
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
+  useLayoutEffect(() => {
+    if (legacyEnabled) {
+      legacyWasEnabledRef.current = true;
+      return;
+    }
+    if (!legacyWasEnabledRef.current) return;
+    legacyWasEnabledRef.current = false;
+    clearLegacyActivity();
+  }, [clearLegacyActivity, legacyEnabled]);
+
   useEffect(() => {
-    if (!authed) return;
+    if (!legacyEnabled) return;
     refreshProjects();
-  }, [refreshProjects, authed]);
+  }, [legacyEnabled, refreshProjects]);
 
   // Keep sidebar activity markers in sync with list payloads
   useEffect(() => {
@@ -370,7 +448,7 @@ export default function App({
       for (const p of projects) {
         const status = p.job?.status;
         if (isLiveJobStatus(status) && !next[p.id] && !pollById.current[p.id]) {
-          // Stale "running" in state without a live poll — don't flash forever
+          // Persisted running state without a live poll must not flash as current activity.
           continue;
         }
         if (!isLiveJobStatus(status) && next[p.id] && !pollById.current[p.id]) {
@@ -384,23 +462,32 @@ export default function App({
 
   useEffect(() => {
     const id = snapshot?.project.id;
-    if (!id) {
+    if (!legacyEnabled || !id) {
       setProjectFiles([]);
       return;
     }
-    listProjectFiles(id).then(setProjectFiles).catch(() => setProjectFiles([]));
-  }, [snapshot?.project.id]);
+    const epoch = legacyRequestEpoch.current;
+    let cancelled = false;
+    listProjectFiles(id).then((files) => {
+      if (!cancelled && legacyAccessRef.current && legacyRequestEpoch.current === epoch) setProjectFiles(files);
+    }).catch(() => {
+      if (!cancelled && legacyAccessRef.current && legacyRequestEpoch.current === epoch) setProjectFiles([]);
+    });
+    return () => { cancelled = true; };
+  }, [legacyEnabled, snapshot?.project.id]);
 
   // When SSE says done (or sources promoted), refresh snapshot + data room
   useEffect(() => {
+    if (!legacyEnabled) return;
     const last = traces[traces.length - 1];
     if (!last || !projectId) return;
+    const epoch = legacyRequestEpoch.current;
     const promoted =
       last.type === "phase" && /data room|sources/i.test(last.label || "");
     if (last.type === "done" || promoted || (last.type === "error" && last.status === "fail")) {
       getProject(projectId)
         .then((snap) => {
-          if (viewedIdRef.current !== projectId) return;
+          if (!legacyAccessRef.current || legacyRequestEpoch.current !== epoch || viewedIdRef.current !== projectId) return;
           setSnapshot(snap);
           const status = snap.job?.status ?? snap.project.job?.status ?? "idle";
           if (status === "idle" || status === "failed" || status === "cancelled") {
@@ -417,17 +504,21 @@ export default function App({
         })
         .catch(() => undefined);
       listProjectFiles(projectId)
-        .then(setProjectFiles)
+        .then((files) => {
+          if (legacyAccessRef.current && legacyRequestEpoch.current === epoch) setProjectFiles(files);
+        })
         .catch(() => undefined);
     }
-  }, [traces, projectId, markProjectBusy, stopPolling]);
+  }, [legacyEnabled, traces, projectId, markProjectBusy, stopPolling]);
 
   function handleSignOut() {
     const clerkOut = (window as unknown as { __simulacraClerkSignOut?: () => Promise<void> })
       .__simulacraClerkSignOut;
+    clearLegacyActivity();
     clearAuth();
     setAuthed(false);
     setUser(null);
+    setWorkplaceFlags(null);
     setTenants([]);
     setProfileOpen(false);
     setGuestGateOpen(false);
@@ -438,11 +529,22 @@ export default function App({
   }
 
   function handleAuthed(session: AuthSession) {
+    clearLegacyActivity();
     setUser(session.user);
     setTenants(session.tenants || []);
+    setWorkplaceFlags(null);
     setAuthed(true);
     setProfileOpen(false);
     setGuestGateOpen(false);
+    setIdentityRevision((value) => value + 1);
+  }
+
+  function switchWorkplaceTenant(id: string) {
+    clearLegacyActivity();
+    setTenantId(id);
+    closeWorkplaceAccount();
+    setWorkplaceFlags(null);
+    setIdentityRevision((value) => value + 1);
   }
 
   function openGuestAuth(mode: "login" | "register") {
@@ -460,6 +562,8 @@ export default function App({
   }
 
   const handleStartPlanning = useCallback(async () => {
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
     const parts: string[] = [];
     if (goal.trim()) parts.push(`Goal: ${goal.trim()}`);
     if (prompt.trim()) parts.push(prompt.trim());
@@ -480,8 +584,10 @@ export default function App({
       let snap = await createProject(text, goal || prompt.slice(0, 80), brief, {
         artifactKind,
       });
+      if (!isLegacyEpochCurrent(epoch)) return;
       if (pendingFiles.length > 0) {
         snap = await uploadProjectFiles(snap.project.id, pendingFiles, { reingest: true });
+        if (!isLegacyEpochCurrent(epoch)) return;
         setPendingFiles([]);
       }
       const outcome = (goal || prompt).trim();
@@ -492,15 +598,19 @@ export default function App({
           : artifactKind === "slides"
             ? "slide deck"
             : "report";
+      if (!isLegacyEpochCurrent(epoch)) return;
       await bootstrapMission(snap.project.id, {
         title: snap.project.app_config?.title || prompt.slice(0, 80),
         objective: outcome,
         definition_of_done: `Produce a source-grounded ${deliverable}, resolve or clearly flag material exceptions, and obtain human verification of the exact final version.`,
       });
+      if (!isLegacyEpochCurrent(epoch)) return;
+      viewedIdRef.current = snap.project.id;
       setSnapshot(snap);
       setMode(snap.project.phase === "ready" ? "workspace" : "plan");
       setInput("");
       await refreshProjects();
+      if (!isLegacyEpochCurrent(epoch)) return;
       if (snap.job?.status === "running" || snap.project.job?.status === "running") {
         setJobLive(true);
         markProjectBusy(snap.project.id, true);
@@ -511,23 +621,26 @@ export default function App({
         if (snap.project.phase === "ready") setMode("workspace");
       }
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Failed to start plan");
       setBusy(false);
     }
   }, [
     artifactKind,
+    captureLegacyEpoch,
     designBrief,
     goal,
     pendingFiles,
     pollUntilIdle,
     markProjectBusy,
+    isLegacyEpochCurrent,
     prompt,
     refreshProjects,
   ]);
 
   // After guest send → login, continue into the create flow with preserved draft.
   useEffect(() => {
-    if (authed !== true || !resumeBuild || busy) return;
+    if (!legacyEnabled || !resumeBuild || busy) return;
     if (resumeStarted.current) return;
     if (prompt.trim().length < 3) {
       setResumeBuild(false);
@@ -536,14 +649,14 @@ export default function App({
     }
     resumeStarted.current = true;
     void handleStartPlanning();
-  }, [authed, busy, handleStartPlanning, prompt, resumeBuild]);
+  }, [busy, handleStartPlanning, legacyEnabled, prompt, resumeBuild]);
 
   if (authed === null) {
     return (
       <div className="landing landing-boot">
         <div className="landing-content">
           <h1 className="boot-mark">Missions</h1>
-          <p className="landing-boot-status">Opening…</p>
+          <MissionLoader label="Opening workspace" variant="matrix" className="landing-boot-status" />
         </div>
       </div>
     );
@@ -607,6 +720,8 @@ export default function App({
   }
 
   async function loadProject(id: string) {
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
     // Switching projects must not cancel background jobs or clear other polls.
     const leavingId = viewedIdRef.current;
     if (leavingId && leavingId !== id && (busyProjects[leavingId] || pollById.current[leavingId])) {
@@ -620,7 +735,7 @@ export default function App({
     setPreviewOpen(false);
     try {
       const [snap, liveInfo] = await Promise.all([getProject(id), getProjectJob(id)]);
-      if (viewedIdRef.current !== id) return; // raced with another switch
+      if (!isLegacyEpochCurrent(epoch) || viewedIdRef.current !== id) return;
       setSnapshot(snap);
       if (snap.project.design_brief) setDesignBrief(snap.project.design_brief);
       setMode(snap.project.phase === "plan" ? "plan" : "workspace");
@@ -648,11 +763,14 @@ export default function App({
         markProjectBusy(id, false);
       }
       try {
-        setProjectFiles(await listProjectFiles(id));
+        if (!isLegacyEpochCurrent(epoch)) return;
+        const files = await listProjectFiles(id);
+        if (isLegacyEpochCurrent(epoch)) setProjectFiles(files);
       } catch {
         /* ignore */
       }
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Failed to load project");
       setBusy(false);
       setJobLive(false);
@@ -679,57 +797,72 @@ export default function App({
 
   async function handleApprove() {
     if (!snapshot) return;
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
+    const projectId = snapshot.project.id;
     setBusy(true);
     setError(null);
     try {
-      const snap = await approveProject(snapshot.project.id);
+      const snap = await approveProject(projectId);
+      if (!isLegacyEpochCurrent(epoch)) return;
       setSnapshot(snap);
       setMode("workspace");
       setJobLive(true);
-      markProjectBusy(snapshot.project.id, true);
-      pollUntilIdle(snapshot.project.id);
+      markProjectBusy(projectId, true);
+      pollUntilIdle(projectId);
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Build failed");
       setBusy(false);
       setJobLive(false);
-      markProjectBusy(snapshot.project.id, false);
+      markProjectBusy(projectId, false);
     }
   }
 
   async function dispatchChat(text: string) {
     if (!snapshot || !text) return;
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
+    const project = snapshot.project;
     setBusy(true);
-    markProjectBusy(snapshot.project.id, true);
+    markProjectBusy(project.id, true);
     setError(null);
     try {
-      let snap;
+      let snap: Snapshot;
       try {
-        snap = await sendChat(snapshot.project.id, text, snapshot.project.active_chat_id);
+        snap = await sendChat(project.id, text, project.active_chat_id);
+        if (!isLegacyEpochCurrent(epoch)) return;
       } catch (first) {
+        if (!isLegacyEpochCurrent(epoch)) return;
         // Stale chat id on older projects — retry against the project's healed active chat
         const msg = first instanceof Error ? first.message : String(first);
-        if (/unknown chat/i.test(msg) && snapshot.project.active_chat_id) {
-          const fresh = await getProject(snapshot.project.id);
+        if (/unknown chat/i.test(msg) && project.active_chat_id) {
+          const fresh = await getProject(project.id);
+          if (!isLegacyEpochCurrent(epoch)) return;
           setSnapshot(fresh);
           snap = await sendChat(fresh.project.id, text, fresh.project.active_chat_id);
+          if (!isLegacyEpochCurrent(epoch)) return;
         } else {
           throw first;
         }
       }
+      if (!isLegacyEpochCurrent(epoch)) return;
       setSnapshot(snap);
       if (snap.job_id || snap.job?.status === "running" || snap.project.job?.status === "running") {
         setJobLive(true);
-        markProjectBusy(snapshot.project.id, true);
-        pollUntilIdle(snapshot.project.id);
+        markProjectBusy(project.id, true);
+        pollUntilIdle(project.id);
       } else {
         setBusy(false);
-        markProjectBusy(snapshot.project.id, false);
+        markProjectBusy(project.id, false);
         await refreshProjects();
+        if (!isLegacyEpochCurrent(epoch)) return;
       }
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Send failed");
       setBusy(false);
-      markProjectBusy(snapshot.project.id, false);
+      markProjectBusy(project.id, false);
     }
   }
 
@@ -748,20 +881,26 @@ export default function App({
 
   async function handleCancel() {
     if (!snapshot) return;
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
     const id = snapshot.project.id;
     try {
       const snap = await cancelProjectJob(id);
+      if (!isLegacyEpochCurrent(epoch)) return;
       if (viewedIdRef.current === id) setSnapshot(snap);
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       // Soft-fail: still unlock UI even if cancel races with an already-idle job
       setError(err instanceof Error ? err.message : "Stop failed");
       try {
+        if (!isLegacyEpochCurrent(epoch)) return;
         const snap = await getProject(id);
-        if (viewedIdRef.current === id) setSnapshot(snap);
+        if (isLegacyEpochCurrent(epoch) && viewedIdRef.current === id) setSnapshot(snap);
       } catch {
         /* ignore */
       }
     } finally {
+      if (!isLegacyEpochCurrent(epoch)) return;
       stopPolling(id);
       markProjectBusy(id, false);
       if (viewedIdRef.current === id) {
@@ -773,39 +912,53 @@ export default function App({
 
   async function handleRollback(checkpointId?: string) {
     if (!snapshot) return;
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
+    const projectId = snapshot.project.id;
     setBusy(true);
     setError(null);
     try {
-      const snap = await rollbackProject(snapshot.project.id, checkpointId);
+      const snap = await rollbackProject(projectId, checkpointId);
+      if (!isLegacyEpochCurrent(epoch)) return;
       setSnapshot(snap);
       if (snap.preview_url) {
         setPreviewOpen(true);
         setPreviewRefresh((n) => n + 1);
       }
       await refreshProjects();
+      if (!isLegacyEpochCurrent(epoch)) return;
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Restore failed");
     } finally {
-      setBusy(false);
+      if (isLegacyEpochCurrent(epoch)) setBusy(false);
     }
   }
 
   async function handleDeploy() {
     if (!snapshot) return;
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
+    const projectId = snapshot.project.id;
     setBusy(true);
     setError(null);
     try {
-      const snap = await deployProject(snapshot.project.id);
+      const snap = await deployProject(projectId);
+      if (!isLegacyEpochCurrent(epoch)) return;
       setSnapshot(snap);
       await refreshProjects();
+      if (!isLegacyEpochCurrent(epoch)) return;
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Deploy failed");
     } finally {
-      setBusy(false);
+      if (isLegacyEpochCurrent(epoch)) setBusy(false);
     }
   }
 
   async function handleSelectChat(projectId: string, chatId: string) {
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
     viewedIdRef.current = projectId;
     setError(null);
     try {
@@ -813,7 +966,7 @@ export default function App({
         activateChat(projectId, chatId),
         getProjectJob(projectId),
       ]);
-      if (viewedIdRef.current !== projectId) return;
+      if (!isLegacyEpochCurrent(epoch) || viewedIdRef.current !== projectId) return;
       setSnapshot(snap);
       mergeProjectMeta(snap);
       setMode(snap.project.phase === "ready" ? "workspace" : "plan");
@@ -826,21 +979,26 @@ export default function App({
         if (!pollById.current[projectId]) pollUntilIdle(projectId);
       }
       try {
-        setProjectFiles(await listProjectFiles(projectId));
+        if (!isLegacyEpochCurrent(epoch)) return;
+        const files = await listProjectFiles(projectId);
+        if (isLegacyEpochCurrent(epoch)) setProjectFiles(files);
       } catch {
         /* ignore */
       }
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Could not open chat");
     }
   }
 
   async function handleNewChat(projectId: string) {
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
     viewedIdRef.current = projectId;
     setError(null);
     try {
       const snap = await createChat(projectId, { title: "Chat" });
-      if (viewedIdRef.current !== projectId) return;
+      if (!isLegacyEpochCurrent(epoch) || viewedIdRef.current !== projectId) return;
       setSnapshot(snap);
       mergeProjectMeta(snap);
       setMode(snap.project.phase === "ready" ? "workspace" : "plan");
@@ -850,19 +1008,26 @@ export default function App({
       setBusy(stillBusy);
       setJobLive(stillBusy);
       await refreshProjects();
+      if (!isLegacyEpochCurrent(epoch)) return;
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Could not create chat");
     }
   }
 
   async function handleDeleteChat(projectId: string, chatId: string) {
+    const epoch = captureLegacyEpoch();
+    if (epoch === null) return;
     setError(null);
     try {
       const snap = await deleteChat(projectId, chatId);
+      if (!isLegacyEpochCurrent(epoch)) return;
       setSnapshot(snap);
       mergeProjectMeta(snap);
       await refreshProjects();
+      if (!isLegacyEpochCurrent(epoch)) return;
     } catch (err) {
+      if (!isLegacyEpochCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : "Could not delete chat");
     }
   }
@@ -896,6 +1061,17 @@ export default function App({
   function openAccount(tab: ProfileTab = "account") {
     setProfileTab(tab);
     setProfileOpen(true);
+  }
+
+  function closeWorkplaceAccount() {
+    setProfileOpen(false);
+    if (!window.location.pathname.startsWith("/settings")) return;
+    const state = window.history.state as { workplaceReturnTo?: unknown } | null;
+    const returnTo = typeof state?.workplaceReturnTo === "string" && state.workplaceReturnTo.startsWith("/")
+      ? state.workplaceReturnTo
+      : "/missions?state=active";
+    window.history.replaceState({}, "", returnTo);
+    window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
   function persistSidebar(open: boolean) {
@@ -941,6 +1117,48 @@ export default function App({
       onSelect: () => void loadProject(p.id),
     })),
   ];
+
+  if (authed && workplaceFlags === null) {
+    return (
+      <div className="landing landing-boot">
+        <div className="landing-content">
+          <h1 className="boot-mark">Missions</h1>
+          <MissionLoader label="Opening workspace" variant="matrix" className="landing-boot-status" />
+        </div>
+      </div>
+    );
+  }
+
+  if (authed && workplaceFlags?.workplace_shell_v1) {
+    return (
+      <>
+        <WorkplaceShell
+          attentionEnabled={workplaceFlags.workplace_attention_v1}
+          conversationEnabled={workplaceFlags.workplace_conversation_v1}
+          filesEnabled={workplaceFlags.workplace_files_v1}
+          previewEnabled={workplaceFlags.workplace_preview_origin_v1}
+          sseEnabled={workplaceFlags.workplace_sse_v1}
+          currentHumanId={user?.id || ""}
+          onSearch={() => undefined}
+          onSettings={() => openAccount("account")}
+        />
+        <ProfileManageModal
+          open={profileOpen}
+          onClose={closeWorkplaceAccount}
+          user={user}
+          tenants={tenants}
+          tenantId={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id}
+          onTenant={switchWorkplaceTenant}
+          clerkEnabled={clerkEnabled}
+          clerkAvailable={clerkAvailable}
+          onUseClerk={onUseClerk}
+          onAuthed={handleAuthed}
+          onSignOut={handleSignOut}
+          initialTab={profileTab}
+        />
+      </>
+    );
+  }
 
   if (mode === "landing") {
     const bgBusyCount = Object.keys(busyProjects).length;
@@ -989,10 +1207,7 @@ export default function App({
           user={user}
           tenants={tenants}
           tenantId={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id}
-          onTenant={(id) => {
-            setTenantId(id);
-            refreshProjects();
-          }}
+          onTenant={switchWorkplaceTenant}
           clerkEnabled={clerkEnabled}
           clerkAvailable={clerkAvailable}
           onUseClerk={onUseClerk}
@@ -1091,6 +1306,8 @@ export default function App({
             onDeploy={handleDeploy}
             busy={running}
             refreshToken={previewRefresh}
+            previewEnabled={Boolean(workplaceFlags?.workplace_preview_origin_v1)}
+            onAccessLost={clearLegacyActivity}
           />
         }
       />
@@ -1107,10 +1324,7 @@ export default function App({
         user={user}
         tenants={tenants}
         tenantId={tenants.find((t) => t.id === getTenantId())?.id || tenants[0]?.id}
-        onTenant={(id) => {
-          setTenantId(id);
-          refreshProjects();
-        }}
+        onTenant={switchWorkplaceTenant}
         clerkEnabled={clerkEnabled}
         clerkAvailable={clerkAvailable}
         onUseClerk={onUseClerk}

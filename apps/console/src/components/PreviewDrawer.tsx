@@ -1,6 +1,6 @@
 import { ExternalLink, PanelRightClose, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { Snapshot } from "../api";
+import { useEffect, useState } from "react";
+import { ApiError, exchangeMissionPreview, type Snapshot } from "../api";
 
 type Tab = "preview" | "data";
 
@@ -12,43 +12,9 @@ type Props = {
   onDeploy?: () => void;
   busy?: boolean;
   refreshToken?: number;
+  previewEnabled?: boolean;
+  onAccessLost?: () => void;
 };
-
-/** Same-origin preview path (no localhost). */
-export function resolvePreviewSrc(raw: string | null | undefined, bust = 0): string | null {
-  if (!raw) return null;
-  if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(raw)) return null;
-  const apiBase = import.meta.env.VITE_API_BASE ?? (import.meta.env.PROD ? "" : "http://127.0.0.1:8000");
-  let href: string;
-  if (raw.startsWith("http://") || raw.startsWith("https://")) {
-    href = raw;
-  } else {
-    const base = String(apiBase).replace(/\/$/, "");
-    const origin =
-      base === "" || base === "/api"
-        ? import.meta.env.PROD
-          ? ""
-          : "http://127.0.0.1:8000"
-        : base;
-    href = `${origin}${raw.startsWith("/") ? raw : `/${raw}`}`;
-  }
-  const u = new URL(href, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-  u.searchParams.set("v", String(bust || Date.now() % 1_000_000));
-  return u.toString();
-}
-
-function displayUrl(href: string): string {
-  try {
-    const u = new URL(href);
-    const path = `${u.pathname}${u.search}`.replace(/[?&]v=[^&]+/, "").replace(/[?&]$/, "");
-    const host = u.host && u.host !== window.location.host ? u.host : "";
-    const shown = host ? `${host}${path}` : path || "/";
-    if (shown.length <= 52) return shown;
-    return `${shown.slice(0, 28)}…${shown.slice(-20)}`;
-  } catch {
-    return href;
-  }
-}
 
 /** Preview as a workspace pane — not a modal overlay. */
 export function PreviewDrawer({
@@ -59,9 +25,15 @@ export function PreviewDrawer({
   onDeploy,
   busy,
   refreshToken = 0,
+  previewEnabled = true,
+  onAccessLost,
 }: Props) {
   const [tab, setTab] = useState<Tab>("preview");
   const [frameKey, setFrameKey] = useState(0);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [accessLost, setAccessLost] = useState(false);
   const project = snapshot?.project;
   const canDeploy =
     Boolean(onDeploy) &&
@@ -75,16 +47,39 @@ export function PreviewDrawer({
     if (refreshToken) setFrameKey((k) => k + 1);
   }, [refreshToken]);
 
-  const previewUrl = useMemo(
-    () => resolvePreviewSrc(snapshot?.preview_url, frameKey + refreshToken),
-    [snapshot?.preview_url, frameKey, refreshToken],
-  );
+  useEffect(() => {
+    const projectId = snapshot?.project.id;
+    if (!open || !projectId || !previewEnabled) {
+      setPreviewUrl(null);
+      setPreviewLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setPreviewUrl(null);
+    setPreviewError(null);
+    setAccessLost(false);
+    setPreviewLoading(true);
+    void exchangeMissionPreview(projectId, controller.signal)
+      .then((session) => { if (!controller.signal.aborted) setPreviewUrl(session.previewUrl); })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          setAccessLost(true);
+          onAccessLost?.();
+        }
+        setPreviewError(error instanceof ApiError && (error.status === 401 || error.status === 403)
+          ? "You no longer have access to this Mission."
+          : error instanceof ApiError && error.status === 404
+            ? "No verified preview yet."
+            : "The verified preview is temporarily unavailable.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setPreviewLoading(false); });
+    return () => controller.abort();
+  }, [frameKey, onAccessLost, open, previewEnabled, snapshot?.project.id]);
 
   if (!open) return null;
 
-  const emptyCopy = snapshot?.preview_url?.includes("127.0.0.1")
-    ? "This project still points at an old local preview. Start a new project, or Start over."
-    : hasData
+  const emptyCopy = hasData
       ? "Preview appears here when the draft is ready."
       : "Sources aren't loaded yet. Add data, then send a message — the preview fills in here.";
 
@@ -92,23 +87,7 @@ export function PreviewDrawer({
     <aside className="preview-pane" aria-label="Preview">
       <header className="preview-drawer-head">
         <div className="preview-address">
-          {previewUrl ? (
-            <button
-              type="button"
-              className="preview-address-url"
-              title="Copy preview URL"
-              onClick={() => {
-                const abs = previewUrl.startsWith("http")
-                  ? previewUrl
-                  : `${window.location.origin}${previewUrl}`;
-                void navigator.clipboard?.writeText(abs);
-              }}
-            >
-              {displayUrl(previewUrl)}
-            </button>
-          ) : (
-            <span className="preview-address-url mute">No preview yet</span>
-          )}
+          <span className="preview-address-url mute">{previewUrl ? "Verified preview" : previewLoading ? "Preparing preview…" : previewEnabled ? "No preview yet" : "Preview unavailable"}</span>
         </div>
         <div className="preview-drawer-actions">
           {hasData ? (
@@ -150,7 +129,7 @@ export function PreviewDrawer({
               >
                 <RefreshCw size={14} strokeWidth={1.5} />
               </button>
-              <a href={previewUrl} target="_blank" rel="noreferrer" className="icon-btn" title="Open in tab">
+              <a href={previewUrl} target="_blank" rel="noreferrer" className="icon-btn" title="Open verified preview in a new tab">
                 <ExternalLink size={14} strokeWidth={1.5} />
               </a>
             </>
@@ -169,13 +148,14 @@ export function PreviewDrawer({
               src={previewUrl}
               title="App preview"
               className="preview-drawer-frame"
+              sandbox="allow-scripts allow-forms allow-same-origin"
             />
           ) : (
             <div className="preview-drawer-empty">
-              <p>{emptyCopy}</p>
+              <p role={previewError ? "alert" : previewLoading ? "status" : undefined}>{previewError || (previewLoading ? "Preparing a secure preview…" : emptyCopy)}</p>
             </div>
           ))}
-        {tab === "data" && (
+        {tab === "data" && !accessLost && (
           <div className="data-table-wrap drawer-data">
             {hasData ? (
               <>
@@ -203,7 +183,7 @@ export function PreviewDrawer({
               </>
             ) : (
               <div className="preview-drawer-empty">
-                <p>No rows yet. They show up here once sources are in the data room.</p>
+              <p>No rows yet. They appear here once the Mission has source data.</p>
               </div>
             )}
           </div>

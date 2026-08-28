@@ -13,6 +13,7 @@ from .models import (
 	Comment,
 	CommentTargetType,
 	Member,
+	Invitation,
 	ProjectRoom,
 	Review,
 	ReviewDecision,
@@ -29,7 +30,7 @@ _TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
 	TaskState.PROPOSED: frozenset({TaskState.READY, TaskState.CANCELLED}),
 	TaskState.READY: frozenset({TaskState.WORKING, TaskState.BLOCKED, TaskState.CANCELLED}),
 	TaskState.WORKING: frozenset({TaskState.IN_REVIEW, TaskState.BLOCKED, TaskState.FAILED, TaskState.CANCELLED}),
-	TaskState.IN_REVIEW: frozenset({TaskState.WORKING, TaskState.DONE, TaskState.FAILED, TaskState.CANCELLED}),
+	TaskState.IN_REVIEW: frozenset({TaskState.WORKING, TaskState.FAILED, TaskState.CANCELLED}),
 	TaskState.BLOCKED: frozenset({TaskState.READY, TaskState.WORKING, TaskState.FAILED, TaskState.CANCELLED}),
 	TaskState.FAILED: frozenset({TaskState.READY, TaskState.CANCELLED}),
 	TaskState.DONE: frozenset(),
@@ -41,21 +42,70 @@ _REVIEW_ROLES = frozenset({"owner", "admin", "reviewer", "approver"})
 
 
 class CollaborationService:
-	def __init__(self, repository: CollaborationRepository):
+	def __init__(self, repository: CollaborationRepository, *, conversation_clock=None, conversation_id_factory=None):
 		self.repository = repository
+		from .conversation import ConversationService
+		kwargs = {}
+		if conversation_clock is not None:
+			kwargs["clock"] = conversation_clock
+		if conversation_id_factory is not None:
+			kwargs["id_factory"] = conversation_id_factory
+		self._conversation = ConversationService(repository, **kwargs)
+
+	def create_conversation_message(self, **kwargs):
+		return self._conversation.create_message(**kwargs)
+
+	def edit_conversation_message(self, **kwargs):
+		return self._conversation.edit_message(**kwargs)
+
+	def delete_conversation_message(self, **kwargs):
+		return self._conversation.delete_message(**kwargs)
+
+	def reply_to_conversation_message(self, **kwargs):
+		return self._conversation.reply_message(**kwargs)
+
+	def conversation_reply_response_view(self, **kwargs):
+		return self._conversation.reply_response_view(**kwargs)
+
+	def put_conversation_reaction(self, **kwargs):
+		return self._conversation.put_reaction(**kwargs)
+
+	def delete_conversation_reaction(self, **kwargs):
+		return self._conversation.delete_reaction(**kwargs)
+
+	def put_saved_conversation_message(self, **kwargs):
+		return self._conversation.put_saved(**kwargs)
+
+	def delete_saved_conversation_message(self, **kwargs):
+		return self._conversation.delete_saved(**kwargs)
+
+	def conversation_messages(self, tenant_id: str, project_id: str):
+		return self._conversation.messages(tenant_id, project_id)
+
+	def conversation_roots(self, tenant_id: str, project_id: str):
+		return self._conversation.roots(tenant_id, project_id)
+
+	def conversation_replies(self, tenant_id: str, project_id: str, parent_message_id: str):
+		return self._conversation.replies(tenant_id, project_id, parent_message_id)
+
+	def conversation_message_view(self, tenant_id: str, project_id: str, message_id: str, authenticated_human_actor_id: str):
+		return self._conversation.message_view(tenant_id, project_id, message_id, authenticated_human_actor_id)
+
+	def conversation_audits(self, tenant_id: str, project_id: str):
+		return self._conversation.audits(tenant_id, project_id)
 
 	def _room_member(self, tenant_id: str, project_id: str, actor_id: str) -> Member:
 		room = self.repository.get_room(tenant_id, project_id)
-		for member in room.members:
-			if member.actor_id == actor_id:
-				return member
+		member = self.repository.visible_member(room, actor_id)
+		if member is not None:
+			return member
 		raise AuthorizationError("actor is not a project room member")
 
 	@contextmanager
 	def mutation_authority_lock(self, *, tenant_id: str, project_id: str, actor_id: str):
 		"""Serialize a final owner/admin check with an external durable commit."""
 		with self.repository.room_lock(tenant_id, project_id) as room:
-			member = next((item for item in room.members if item.actor_id == actor_id), None)
+			member = self.repository.visible_member(room, actor_id)
 			if member is None or member.role not in {"owner", "admin"}:
 				raise AuthorizationError("a Project Room owner or admin is required for project mutation")
 			yield
@@ -120,6 +170,29 @@ class CollaborationService:
 		updated = self.repository.save_room(updated, expected_revision)
 		self._emit(tenant_id=tenant_id, project_id=project_id, actor_id=actor_id,
 			action="room.member_added", payload={"category": "activity", "member_id": member_id, "role": role})
+		return updated
+
+	def revoke_invitation(
+		self, *, tenant_id: str, project_id: str, actor_id: str, invitation_id: str,
+		client_request_id: str, expected_revision: int,
+	) -> Invitation:
+		invitation, _created = self.repository.revoke_pending_invitation(
+			tenant_id=tenant_id, project_id=project_id, actor_id=actor_id,
+			invitation_id=invitation_id, client_request_id=client_request_id,
+			expected_revision=expected_revision,
+		)
+		return invitation
+
+	def remove_member(self, *, tenant_id: str, project_id: str, actor_id: str, member_id: str,
+		client_request_id: str, expected_room_revision: int) -> ProjectRoom:
+		"""Owner/admin removal, with a recoverable owner always remaining."""
+		updated, created = self.repository.remove_room_member_idempotent(
+			tenant_id=tenant_id, project_id=project_id, actor_id=actor_id, member_id=member_id,
+			client_request_id=client_request_id, expected_room_revision=expected_room_revision,
+		)
+		if created:
+			self._emit(tenant_id=tenant_id, project_id=project_id, actor_id=actor_id,
+				action="room.member_removed", payload={"category": "activity", "member_id": member_id})
 		return updated
 
 	def create_task(
@@ -267,43 +340,38 @@ class CollaborationService:
 	def review_task(
 		self, *, tenant_id: str, project_id: str, task_id: str, reviewer_id: str,
 		decision: ReviewDecision | str, expected_revision: int, reviewer_role: str | None = None,
-		actor_type: ActorType | str = ActorType.HUMAN, body: str = "", allow_self_review: bool = False,
+		actor_type: ActorType | str = ActorType.HUMAN, body: str = "",
 	) -> tuple[Review, Task]:
 		member = self._room_member(tenant_id, project_id, reviewer_id)
 		task = self.repository.get_task(tenant_id, project_id, task_id)
 		if task.revision != expected_revision:
 			raise ConflictError(f"stale task revision: expected {expected_revision}, current {task.revision}")
 		choice = ReviewDecision(decision)
-		if task.owner_id == reviewer_id and not allow_self_review:
+		actor = ActorType(actor_type)
+		if actor != ActorType.HUMAN:
+			raise AuthorizationError("task review requires a human reviewer")
+		if task.owner_id == reviewer_id:
 			raise AuthorizationError("task owner cannot review their own work")
-		if ActorType(actor_type) == ActorType.HUMAN and member.role not in _REVIEW_ROLES:
+		if member.role not in _REVIEW_ROLES:
 			raise AuthorizationError("task review requires an owner, admin, approver, or reviewer role")
 		if choice == ReviewDecision.ROLLBACK:
 			if task.state != TaskState.DONE:
 				raise InvalidTransitionError("rollback requires a done task")
-			new_state = TaskState.WORKING
 		elif task.state != TaskState.IN_REVIEW:
 			raise InvalidTransitionError("review decisions require a task in review")
-		elif choice == ReviewDecision.APPROVE:
-			new_state = TaskState.DONE
-		elif choice == ReviewDecision.REJECT:
-			new_state = TaskState.FAILED
-		elif choice == ReviewDecision.REQUEST_CHANGES:
-			new_state = TaskState.WORKING
-		else:
-			new_state = TaskState.IN_REVIEW
 		review = Review(
 			id=new_id("review"), tenant_id=tenant_id, project_id=project_id, task_id=task_id,
 			reviewer_id=reviewer_id, reviewer_role=member.role,
-			actor_type=ActorType(actor_type), decision=choice, body=body.strip(), task_revision=task.revision,
+			actor_type=actor, decision=choice, body=body.strip(), task_revision=task.revision,
 		)
-		updated = replace(task, state=new_state, revision=task.revision + 1, updated_at=iso_now(),
-			activity=[*task.activity, {"action": "reviewed", "decision": choice.value,
-			"actor_id": reviewer_id, "role": review.reviewer_role, "at": iso_now()}])
-		updated = self.repository.save_task(updated, expected_revision)
-		self.repository.create_review(review)
+		review, updated = self.repository.commit_task_review(
+			review,
+			expected_task_revision=expected_revision,
+			expected_task_state=task.state,
+			allowed_reviewer_roles=_REVIEW_ROLES,
+		)
 		self._emit(tenant_id=tenant_id, project_id=project_id, actor_id=reviewer_id,
 			action="task.reviewed", result="rejected" if choice == ReviewDecision.REJECT else "succeeded",
-			task=updated, actor_type=ActorType(actor_type), payload={"category": "reviews", "decision": choice.value, "reviewer_role": member.role,
+			task=updated, actor_type=actor, payload={"category": "reviews", "decision": choice.value, "reviewer_role": member.role,
 			"owner_id": task.owner_id, "target_type": "task", "target_id": task.id})
 		return review, updated

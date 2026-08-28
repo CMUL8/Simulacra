@@ -15,7 +15,7 @@ export interface InventoryItem {
 export interface TelemetryEvent {
   id: string; entity_kind: ObservabilityKind; entity_id: string; entity_name: string; signal: string;
   status: "succeeded" | "failed" | "warning" | "running"; started_at: string; duration_ms: number; trace_id?: string;
-  environment: string; message?: string;
+  environment?: string; message?: string;
 }
 export interface EntityDetail {
   item: InventoryItem; recent_events: TelemetryEvent[]; related_applications: string[]; related_workflows: string[];

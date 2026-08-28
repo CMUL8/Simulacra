@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE,
   status TEXT NOT NULL DEFAULT 'active',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  verified_email TEXT,
+  verified_email_at TIMESTAMPTZ,
+  provider_subject TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memberships (
@@ -38,6 +41,8 @@ CREATE TABLE IF NOT EXISTS memberships (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'member',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  transaction_id TEXT,
+  visibility_state TEXT NOT NULL DEFAULT 'committed',
   PRIMARY KEY (tenant_id, user_id)
 );
 
@@ -140,6 +145,13 @@ def migrate() -> dict[str, Any]:
 		return {"backend": "json", "migrated": False}
 	with connection() as conn:
 		conn.execute(SCHEMA_SQL)
+		# Existing deployments may already have these tables; all W6 fields are
+		# expand-only and legacy rows retain committed visibility.
+		conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_email TEXT")
+		conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_email_at TIMESTAMPTZ")
+		conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS provider_subject TEXT")
+		conn.execute("ALTER TABLE memberships ADD COLUMN IF NOT EXISTS transaction_id TEXT")
+		conn.execute("ALTER TABLE memberships ADD COLUMN IF NOT EXISTS visibility_state TEXT NOT NULL DEFAULT 'committed'")
 	log.info("postgres schema ready")
 	return {"backend": "postgres", "migrated": True}
 

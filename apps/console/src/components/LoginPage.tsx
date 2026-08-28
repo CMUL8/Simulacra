@@ -1,6 +1,11 @@
 import { SignIn, SignUp } from "@clerk/clerk-react";
 import { useEffect, useState } from "react";
-import { forgotPassword, login, register, resetPassword, type AuthSession } from "../api";
+import { acceptCmul8Invitation, forgotPassword, login, register, resetPassword, type AuthSession } from "../api";
+import {
+  clearMissionInvitation,
+  missionInvitationFromLocation,
+  rememberMissionInvitationFromLocation,
+} from "../features/team/missionInvitation";
 
 type Props = {
   onAuthed: (session: AuthSession) => void;
@@ -33,6 +38,7 @@ export function LoginPage({
   initialMode = "login",
 }: Props) {
   const bootToken = tokenFromLocation();
+  const [invitation] = useState(() => missionInvitationFromLocation());
   const [mode, setMode] = useState<Mode>(bootToken ? "reset" : initialMode);
   const [clerkMode, setClerkMode] = useState<"sign-in" | "sign-up">(
     initialMode === "register" ? "sign-up" : "sign-in",
@@ -43,7 +49,6 @@ export function LoginPage({
   const [resetToken, setResetToken] = useState(bootToken);
   const [resetLink, setResetLink] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [tenantName, setTenantName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -88,7 +93,14 @@ export function LoginPage({
       const session =
         mode === "login"
           ? await login(email, password)
-          : await register(email, password, name, tenantName.trim() || undefined);
+          : await register(email, password, name);
+      if (invitation) {
+        await acceptCmul8Invitation(invitation.missionId, invitation.invitationId, {
+          client_request_id: invitation.clientRequestId,
+          token: invitation.token,
+        });
+        clearMissionInvitation();
+      }
       onAuthed(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Auth failed");
@@ -153,7 +165,7 @@ export function LoginPage({
       ? "We’ll create a one-time link for your account"
       : mode === "reset"
         ? "This link works once and expires in about an hour"
-        : "Human-led agent teams";
+        : invitation ? "Sign in to join this Mission" : "Human-led agent teams";
 
   const passwordBlock = !clerkEnabled && (
     <div className={embedded ? "login-embed" : "login-card"}>
@@ -163,6 +175,7 @@ export function LoginPage({
           <p className="login-sub">{sub}</p>
         </>
       )}
+      {invitation && (mode === "login" || mode === "register") ? <div className="login-invitation" role="status"><strong>You’re joining a Mission</strong><span>Sign in with the invited email. Missions will finish joining you securely.</span></div> : null}
       {(mode === "login" || mode === "register") && (
         <div className="login-tabs">
           <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
@@ -183,16 +196,6 @@ export function LoginPage({
             <label>
               Your name
               <input value={name} onChange={(e) => setName(e.target.value)} disabled={busy} autoComplete="name" />
-            </label>
-            <label>
-              Workspace name
-              <input
-                value={tenantName}
-                onChange={(e) => setTenantName(e.target.value)}
-                placeholder="Acme Risk"
-                disabled={busy}
-                required
-              />
             </label>
           </>
         )}
@@ -298,7 +301,10 @@ export function LoginPage({
         </button>
       )}
       {clerkAvailable && onUseClerk && (mode === "login" || mode === "register") && (
-        <button type="button" className="ghost-btn wide" onClick={onUseClerk}>
+        <button type="button" className="ghost-btn wide" onClick={() => {
+          rememberMissionInvitationFromLocation();
+          onUseClerk();
+        }}>
           Continue with Missions sign-in
         </button>
       )}

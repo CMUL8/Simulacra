@@ -1,0 +1,32 @@
+@import url("./tokens.css");
+
+.mission-button {
+  align-items: center;
+  background: var(--mission-color-accent);
+  border: 1px solid transparent;
+  border-radius: var(--mission-radius-sm);
+  color: var(--mission-color-canvas);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 650;
+  gap: var(--mission-space-2);
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: var(--mission-space-2) var(--mission-space-4);
+  transition: filter var(--mission-motion-fast) ease, transform var(--mission-motion-fast) ease;
+}
+
+.mission-button:hover { filter: brightness(1.08); }
+.mission-button:active { transform: translateY(1px); }
+.mission-button:disabled { cursor: not-allowed; opacity: 0.5; }
+.mission-button:focus-visible { outline: 3px solid var(--mission-color-focus); outline-offset: 3px; }
+
+[data-state="ready"] { --mission-state-color: var(--mission-color-success); }
+[data-state="needs-human"] { --mission-state-color: var(--mission-color-warning); }
+[data-state="blocked"],
+[aria-invalid="true"] { --mission-state-color: var(--mission-color-danger); }
+
+.mission-state {
+  border-inline-start: 3px solid var(--mission-state-color, var(--mission-color-border));
+}

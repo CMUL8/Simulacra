@@ -96,7 +96,6 @@ export type DataRoomFile = {
   type: string;
   status?: string;
   detail?: string;
-  sha256?: string;
   row_count?: number;
 };
 
@@ -134,7 +133,6 @@ export type PlanPreview = {
     skipped?: string[];
     ok_files?: number;
   };
-  fingerprint?: string;
   source_room?: {
     empty?: boolean;
     row_count?: number;
@@ -178,19 +176,8 @@ export type Project = {
   active_checkpoint: number;
   plan_preview: PlanPreview;
   design_brief?: DesignBrief;
-  prime?: {
-    session_id?: string | null;
-    model?: string | null;
-    source?: string;
-    last_error?: string | null;
-    status?: string;
-    steps?: number;
-    /** Observed from Prime chat envelope: await_user | build | iterate | research */
-    request?: string | null;
-    brief?: string | null;
-  };
+  /** Legacy-shell execution status. Workplace views use durable Mission projections. */
   job?: JobState;
-  sandbox?: SandboxStatus | Record<string, unknown>;
   created_at?: string;
 };
 
@@ -198,6 +185,7 @@ export type Snapshot = {
   project: Project;
   preview_data: { columns: string[]; rows: Record<string, unknown>[]; row_count: number };
   preview_url: string | null;
+  /** Legacy-shell execution status. */
   job?: JobState;
   job_id?: string;
   status?: string;
@@ -244,6 +232,7 @@ export type AuthUser = {
   name: string;
   is_platform_admin?: boolean;
   status?: string;
+  avatar_url?: string | null;
 };
 
 export type AuthSession = {
@@ -253,6 +242,221 @@ export type AuthSession = {
   tenants: Tenant[];
   tenant_id: string;
 };
+
+export type WorkplaceFlags = {
+  workplace_shell_v1: boolean;
+  workplace_attention_v1: boolean;
+  workplace_conversation_v1: boolean;
+  workplace_files_v1: boolean;
+  workplace_preview_origin_v1: boolean;
+  workplace_sse_v1: boolean;
+  workplace_bootstrap_v1: boolean;
+};
+
+export type MissionSummary = {
+  id: string;
+  title: string;
+  outcome_summary: string;
+  public_state: string;
+  updated_at: string;
+  human_count: number;
+  agent_count: number;
+  active_work_count: number;
+  needs_human_count: number;
+  verified_output_count: number;
+  current_human_permissions: string[];
+};
+
+export type AttentionItem = {
+  id: string;
+  mission_id: string;
+  type: string;
+  title: string;
+  summary: string;
+  source_event_id: string;
+  subject_id: string;
+  priority: number;
+  actionable: boolean;
+  read: boolean;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+  deep_link: string;
+  allowed_actions: string[];
+};
+
+export type WorkBucket = "needs_you" | "in_progress" | "ready_for_review" | "done" | "stopped";
+export type WorkView = "list" | "board";
+
+export type WorkAssignee = {
+  id: string;
+  display_name: string;
+  kind: "human" | "agent";
+  avatar_url: string | null;
+};
+
+export type WorkActionTarget = {
+  kind: "task" | "approval" | "output" | "run" | "plan";
+  id: string;
+  revision: number;
+  run_revision?: number;
+  next_states?: string[];
+  file_id?: string;
+};
+
+export type WorkItem = {
+  source_type: string;
+  source_id: string;
+  mission_id: string;
+  revision: number;
+  title: string;
+  summary: string;
+  state: WorkBucket;
+  assignee: WorkAssignee | null;
+  created_at: string;
+  updated_at: string;
+  allowed_actions: string[];
+  action_targets: Record<string, WorkActionTarget>;
+};
+
+export type WorkViewFilters = {
+  bucket?: WorkBucket;
+  mission_id?: string;
+  assignee_id?: string;
+};
+
+export type WorkViewPreference = {
+  scope: string;
+  view: WorkView;
+  filters: WorkViewFilters;
+  revision: number;
+  updated_at: string | null;
+};
+
+export type NotificationPreference = {
+  event_selection: string;
+  channels: string[];
+  digest: string;
+  muted_mission_ids: string[];
+  revision: number;
+  updated_at: string | null;
+};
+
+export type WorkplacePreferences = {
+  work_view_preferences: WorkViewPreference[];
+  notification_preference: NotificationPreference;
+};
+
+export type MissionFileItem = {
+  id: string;
+  mission_id: string;
+  kind: "source" | "output" | "evidence";
+  name: string;
+  media_type: string;
+  size: number;
+  sha256: string;
+  state: string;
+  version: number;
+  parent_output_id?: string | null;
+  run_id?: string | null;
+  producer_id: string | null;
+  producer: { id: string; display_name?: string } | null;
+  verifier: { id: string; display_name?: string } | null;
+  source_ids: string[];
+  introduced_by_message_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  previewable: boolean;
+  downloadable: boolean;
+  allowed_actions?: string[];
+  action_targets?: Record<string, WorkActionTarget>;
+};
+
+export type PreviewSession = {
+  previewOrigin: string;
+  previewUrl: string;
+};
+
+export type ConversationAuthor = {
+  id: string;
+  kind: "human" | "agent" | "system";
+  display_name: string;
+  avatar_url: string | null;
+};
+
+export type ConversationMessage = {
+  id: string;
+  mission_id: string;
+  kind: string;
+  author: ConversationAuthor;
+  body: string | null;
+  created_at: string;
+  edited_at: string | null;
+  thread: { reply_count: number; latest_replies: ConversationMessage[] };
+  reactions: Array<{
+    reaction: "acknowledge" | "check" | "question" | "celebrate";
+    count: number;
+    reacted: boolean;
+  }>;
+  saved: boolean;
+  links: { work_item_id: string | null; run_id: string | null; output_id: string | null };
+};
+
+export type ConversationWorkItem = {
+  id: string;
+  title: string;
+  state: string;
+  assignee_agent_ids?: string[];
+  reviewer_human_ids?: string[];
+  allowed_actions: string[];
+  [key: string]: unknown;
+};
+
+export type ConversationPage = {
+  items: ConversationMessage[];
+  next_before: string | null;
+};
+
+export type ConversationReplyPage = ConversationPage;
+
+export type ConversationSendRequest = {
+  client_request_id: string;
+  body: string;
+  mode: "message" | "assignment";
+  assignee_agent_ids: string[];
+  reviewer_human_ids: string[];
+  source_message_id: null;
+};
+
+export type ConversationSendResponse = {
+  message: ConversationMessage;
+  work_item: ConversationWorkItem | null;
+};
+
+export type ConversationReplyRequest = {
+  client_request_id: string;
+  body: string;
+};
+
+export type ConversationMutationRequest = {
+  client_request_id: string;
+};
+
+export type WorkspaceWakeUp = {
+  id: string;
+  type: string;
+  mission_id: string;
+  occurred_at: string;
+};
+
+export type WorkspaceEventStreamOptions = {
+  lastEventId: string | null;
+  signal: AbortSignal;
+  onOpen: () => void;
+  onWakeUp: (event: WorkspaceWakeUp) => void;
+};
+
+export type WorkspaceEventStream = (options: WorkspaceEventStreamOptions) => Promise<void>;
 
 export function getTenantId(): string {
   // Empty until login/me sets a real workspace — never invent "default".
@@ -307,14 +511,18 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
     const raw = await res.text();
     let message = raw || res.statusText;
     try {
-      const parsed = JSON.parse(raw) as { detail?: unknown };
+      const parsed = JSON.parse(raw) as { detail?: unknown; message?: unknown };
       if (typeof parsed.detail === "string" && parsed.detail.trim()) message = parsed.detail;
+      else if (parsed.detail && typeof parsed.detail === "object" && "message" in parsed.detail
+        && typeof parsed.detail.message === "string" && parsed.detail.message.trim()) message = parsed.detail.message;
+      else if (typeof parsed.message === "string" && parsed.message.trim()) message = parsed.message;
     } catch {
       /* Non-JSON errors already have the most useful available message. */
     }
-    const friendly = message
-      .replace(/Operation Graph revision is not approved exactly:\s*[0-9a-f]{64}/i, "Review and approve the current Operation Graph before starting this Mission.")
-      .replace(/An exactly approved Operation Graph revision is required before building/i, "Review and approve the current Operation Graph before building.");
+	const friendly = message
+	  .replace(/(?:Operation\s+Graph\s+)?revision is not approved exactly:\s*[0-9a-f]{64}/i, "Review and approve the current Mission plan before starting this Mission.")
+	  .replace(/(?:An\s+)?exactly approved(?:\s+Operation\s+Graph)? .+ revision is required before building/i, "Review and approve the current Mission plan before building.")
+	  .replace(/project room owner or admin required/i, "Only a Mission owner or admin can do that.");
     throw new ApiError(res.status, friendly);
   }
   if (res.status === 204) return undefined as T;
@@ -335,11 +543,11 @@ export async function register(
   email: string,
   password: string,
   name = "",
-  tenantName?: string,
+  _tenantName?: string,
 ): Promise<AuthSession> {
   const data = await json<AuthSession>("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ email, password, name, tenant_name: tenantName }),
+    body: JSON.stringify({ email, password, name }),
   });
   setToken(data.token);
   if (data.tenant_id) setTenantId(data.tenant_id);
@@ -367,9 +575,276 @@ export async function fetchMe(): Promise<{
   tenant_id: string;
   role: string;
   tenants: Tenant[];
+  workplace_flags?: WorkplaceFlags;
 }> {
   return json("/auth/me");
 }
+
+export async function listMissionSummaries(state: "active" | "all", cursor?: string | null): Promise<{
+  items: MissionSummary[];
+  next_cursor: string | null;
+}> {
+  const params = new URLSearchParams({ state });
+  if (cursor) params.set("cursor", cursor);
+  return json(`/missions?${params.toString()}`);
+}
+
+export async function listWorkspaceAttention(filter: "actionable" | "all", cursor?: string | null): Promise<{
+  items: AttentionItem[];
+  next_cursor: string | null;
+  unread_count: number;
+  actionable_count: number;
+}> {
+  const params = new URLSearchParams({ filter });
+  if (cursor) params.set("cursor", cursor);
+  return json(`/workspace/attention?${params.toString()}`);
+}
+
+export async function markWorkspaceAttentionRead(eventId: string, expectedRevision: number): Promise<{ item: AttentionItem }> {
+  return json("/workspace/attention/read", {
+    method: "POST",
+    body: JSON.stringify({ event_id: eventId, expected_revision: expectedRevision }),
+  });
+}
+
+export async function listWorkspaceWork(filters: WorkViewFilters = {}, cursor?: string | null): Promise<{
+  items: WorkItem[];
+  next_cursor: string | null;
+}> {
+  const params = new URLSearchParams({ limit: "50" });
+  if (filters.bucket) params.set("bucket", filters.bucket);
+  if (filters.mission_id) params.set("mission_id", filters.mission_id);
+  if (filters.assignee_id) params.set("assignee_id", filters.assignee_id);
+  if (cursor) params.set("cursor", cursor);
+  return json(`/workspace/work?${params.toString()}`);
+}
+
+export async function getWorkspacePreferences(): Promise<WorkplacePreferences> {
+  return json("/workspace/preferences");
+}
+
+export async function putNotificationPreference(body: {
+  expected_revision: number;
+  event_selection: string;
+  channels: string[];
+  digest: string;
+  muted_mission_ids: string[];
+}): Promise<{ notification_preference: NotificationPreference }> {
+  return json("/workspace/preferences/notifications", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function putWorkViewPreference(body: {
+  expected_revision: number;
+  scope: string;
+  view: WorkView;
+  filters: WorkViewFilters;
+}): Promise<{ work_view_preference: WorkViewPreference }> {
+  return json("/workspace/preferences/work-view", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listMissionFiles(projectId: string, kind: "all" | MissionFileItem["kind"] = "all"): Promise<{
+  items: MissionFileItem[];
+}> {
+  const params = new URLSearchParams({ kind });
+  return json(`/projects/${encodeURIComponent(projectId)}/files?${params.toString()}`);
+}
+
+export function missionFileContentUrl(projectId: string, fileId: string, disposition: "inline" | "attachment"): string {
+  return `${API}/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/content?disposition=${disposition}`;
+}
+
+export async function fetchMissionFileContent(projectId: string, fileId: string, disposition: "inline" | "attachment" = "inline"): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const tenantId = getTenantId();
+  const token = getToken();
+  if (tenantId) headers["X-Tenant-Id"] = tenantId;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(missionFileContentUrl(projectId, fileId, disposition), { headers, cache: "no-store" });
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) throw new ApiError(response.status, "You no longer have access to this Mission.");
+    throw new ApiError(response.status, disposition === "inline" ? "This file cannot be previewed right now." : "This file cannot be downloaded right now.");
+  }
+  return response.blob();
+}
+
+export async function exchangeMissionPreview(projectId: string, signal?: AbortSignal): Promise<PreviewSession> {
+  const exchange = await json<{ exchange_id: string; exchange_proof: string; preview_origin: string }>(
+    `/projects/${encodeURIComponent(projectId)}/preview/exchanges`,
+    { method: "POST", body: "{}", signal },
+  );
+  const previewOrigin = new URL(exchange.preview_origin).origin;
+  const response = await fetch(`${previewOrigin}/preview/exchange`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ exchange_id: exchange.exchange_id, exchange_proof: exchange.exchange_proof }),
+    signal,
+  });
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) throw new ApiError(response.status, "You no longer have access to this Mission.");
+    throw new ApiError(response.status, "The verified preview is temporarily unavailable.");
+  }
+  return {
+    previewOrigin,
+    previewUrl: `${previewOrigin}/projects/${encodeURIComponent(projectId)}/preview/`,
+  };
+}
+
+export async function getMissionConversation(projectId: string, before?: string | null, limit = 50): Promise<ConversationPage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before) params.set("before", before);
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation?${params.toString()}`);
+}
+
+export async function postMissionConversationMessage(projectId: string, body: ConversationSendRequest): Promise<ConversationSendResponse> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function patchMissionConversationMessage(projectId: string, messageId: string, body: Record<string, unknown>): Promise<{ message: ConversationMessage }> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteMissionConversationMessage(projectId: string, messageId: string, body: Record<string, unknown>): Promise<{ message: ConversationMessage }> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}`, {
+    method: "DELETE",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function postMissionConversationReply(
+  projectId: string,
+  messageId: string,
+  body: ConversationReplyRequest,
+): Promise<{ message: ConversationMessage }> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/replies`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getMissionConversationReplies(
+  projectId: string,
+  messageId: string,
+  before?: string | null,
+  limit = 50,
+): Promise<ConversationReplyPage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before) params.set("before", before);
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/replies?${params.toString()}`);
+}
+
+export async function putMissionConversationReaction(
+  projectId: string,
+  messageId: string,
+  reaction: ConversationMessage["reactions"][number]["reaction"],
+  body: ConversationMutationRequest,
+): Promise<{ message: ConversationMessage }> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(reaction)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteMissionConversationReaction(
+  projectId: string,
+  messageId: string,
+  reaction: ConversationMessage["reactions"][number]["reaction"],
+  body: ConversationMutationRequest,
+): Promise<{ message: ConversationMessage }> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(reaction)}`, {
+    method: "DELETE",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function putMissionConversationSaved(
+  projectId: string,
+  messageId: string,
+  body: ConversationMutationRequest,
+): Promise<{ saved: boolean }> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/saved`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteMissionConversationSaved(
+  projectId: string,
+  messageId: string,
+  body: ConversationMutationRequest,
+): Promise<{ saved: boolean }> {
+  return json(`/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/saved`, {
+    method: "DELETE",
+    body: JSON.stringify(body),
+  });
+}
+
+function authenticatedStreamHeaders(lastEventId: string | null): Headers {
+  const headers = new Headers({ Accept: "text/event-stream" });
+  const tenantId = getTenantId();
+  const token = getToken();
+  if (tenantId) headers.set("X-Tenant-Id", tenantId);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (lastEventId) headers.set("Last-Event-ID", lastEventId);
+  return headers;
+}
+
+function dispatchSseBlock(block: string, onWakeUp: (event: WorkspaceWakeUp) => void): void {
+  let eventId = "";
+  const data: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("id:")) eventId = line.slice(3).trim();
+    if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  }
+  if (!data.length) return;
+  try {
+    const value = JSON.parse(data.join("\n")) as Partial<WorkspaceWakeUp>;
+    const id = typeof value.id === "string" && value.id ? value.id : eventId;
+    if (!id || typeof value.type !== "string" || typeof value.mission_id !== "string" || typeof value.occurred_at !== "string") return;
+    onWakeUp({ id, type: value.type, mission_id: value.mission_id, occurred_at: value.occurred_at });
+  } catch {
+    /* A malformed wake-up is ignored; durable reads remain authoritative. */
+  }
+}
+
+export const openWorkspaceEventStream: WorkspaceEventStream = async ({ lastEventId, signal, onOpen, onWakeUp }) => {
+  const response = await fetch(`${API}/workspace/events`, {
+    method: "GET",
+    headers: authenticatedStreamHeaders(lastEventId),
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok || !response.body) throw new ApiError(response.status, "Live updates are temporarily unavailable.");
+  onOpen();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || "";
+      blocks.forEach((block) => dispatchSseBlock(block, onWakeUp));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!signal.aborted) throw new ApiError(503, "Live updates are temporarily unavailable.");
+};
 
 export async function listProjects(): Promise<Project[]> {
   const data = await json<{ projects: Project[] }>("/projects");
@@ -377,14 +852,15 @@ export async function listProjects(): Promise<Project[]> {
 }
 
 export type MissionAgent = Record<string, unknown> & {
-  id: string; name: string; role: string; mandate: string; autonomy: string;
+  id: string; name: string; role: string; mandate: string; scope: "sources" | "documents" | "app"; autonomy: string;
 };
-export type MissionRunSummary = Record<string, unknown> & {
-  id: string; status: string; assigned_agent_ids?: string[]; current_agent_id?: string | null;
-  trigger_snapshot?: { note?: string; [key: string]: unknown };
-  progress?: { completed?: number; total?: number; [key: string]: unknown };
-  error?: { code?: string; message?: string; [key: string]: unknown } | null;
-  active_approval_id?: string | null; revision: number; created_at?: string; updated_at?: string;
+export type MissionRunSummary = {
+  id: string; mission_id?: string; status: string; assigned_agent_ids?: string[];
+  completed_agent_ids?: string[]; current_agent_id?: string | null;
+  trigger_snapshot?: { type?: string; note?: string };
+  error?: { code: string; message: string } | null;
+  active_approval_id?: string | null; revision: number; started_at?: string | null;
+  completed_at?: string | null; created_at?: string; updated_at?: string;
 };
 export type MissionEvent = {
   id: string; run_id: string; type: string; timestamp: string;
@@ -394,28 +870,32 @@ export type MissionApproval = Record<string, unknown> & {
   id: string; run_id: string; agent_id?: string; status: string; revision: number;
   created_at?: string; updated_at?: string;
 };
+export type MissionDeliverable = {
+  id: string; mission_id?: string; type?: string; name: string; producer_id: string;
+  version: number; state: string; verified_by?: string | null;
+  verified_at?: string | null; supersedes_id?: string | null;
+  created_at?: string; updated_at?: string;
+};
 export type MissionOverview = {
   mission: Record<string, unknown> | null;
   agents: MissionAgent[];
   runs: MissionRunSummary[];
   triggers: Record<string, unknown>[];
-  deliverables: Record<string, unknown>[];
+	deliverables: MissionDeliverable[];
   events: MissionEvent[];
   approvals: MissionApproval[];
-  runtime: "codex";
+	crew_recommendations?: MissionAgentRecommendation[];
   readiness: {
     graph: {
       status: "missing" | "pending_approval" | "approved" | "invalid";
       revision: number | null;
-      revision_hash: string | null;
     };
     crew_count: number;
   };
 };
-export type MissionBudget = { max_steps?: number; wall_timeout_seconds?: number };
-export type MissionAgentInput = { name: string; role: string; mandate: string; responsibilities: string[]; data_scope: string[]; tools: string[]; autonomy: "assist" | "execute_safely" | "operate_with_checkpoints"; escalation_actor_id?: string | null; budget: MissionBudget };
+export type MissionAgentInput = { name: string; role: string; mandate: string; scope: "sources" | "documents" | "app"; autonomy: "assist" | "execute_safely" | "operate_with_checkpoints" };
+export type MissionAgentRecommendation = MissionAgentInput & { slug?: string; rationale?: string };
 export type MissionTriggerInput = { type: "manual" | "cron" | "condition"; cron?: string; condition?: { fact: string; operator: string; value: string | number | boolean }; timezone?: string; concurrency_policy?: "queue" | "skip" | "replace" | "merge"; enabled?: boolean };
-export type MissionDeliverable = { id: string; name: string; version: number; content_hash: string; state: string; revision: number; producer_id: string };
 
 export async function getMission(projectId: string): Promise<MissionOverview> {
   return json(`/projects/${projectId}/mission`);
@@ -437,8 +917,8 @@ export async function createMissionTrigger(projectId: string, body: MissionTrigg
   return json<Record<string, unknown>>(`/projects/${projectId}/mission/automation`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function verifyMissionDeliverable(projectId: string, deliverableId: string, contentHash: string, expectedRevision: number) {
-  return json<MissionDeliverable>(`/projects/${projectId}/mission/deliverables/${deliverableId}/verify`, { method: "POST", body: JSON.stringify({ content_hash: contentHash, expected_revision: expectedRevision }) });
+export async function verifyMissionDeliverable(projectId: string, deliverableId: string, expectedVersion: number) {
+  return json<MissionDeliverable>(`/projects/${projectId}/mission/deliverables/${deliverableId}/verify`, { method: "POST", body: JSON.stringify({ decision: "verify", expected_version: expectedVersion }) });
 }
 
 export async function createMissionRun(projectId: string, triggerNote = "", agentIds: string[] = []) {
@@ -615,7 +1095,6 @@ export async function reingestProjectSources(id: string): Promise<Snapshot> {
 
 export async function getProjectSources(id: string): Promise<{
   files: DataRoomFile[];
-  fingerprint: string;
   profile?: DataProfile;
   extract?: PlanPreview["extract"];
   row_count?: number;
@@ -631,11 +1110,14 @@ export type Cmul8MemberRecord = {
   actor_id: string;
   role: string;
   display_name?: string;
-  actor_type?: "human" | "builder_agent" | "runtime_agent" | "system" | string;
-  presence?: "active" | "away" | "offline" | string;
-  current_task?: string;
-  last_seen_at?: string;
+  actor_type?: "human" | "agent";
   joined_at?: string;
+};
+
+export type Cmul8InvitationSummary = {
+  id: string;
+  status: "pending" | "accepted" | "revoked" | "expired";
+  revision: number;
 };
 
 export type Cmul8TaskRecord = {
@@ -646,8 +1128,6 @@ export type Cmul8TaskRecord = {
   owner_id?: string | null;
   collaborator_ids?: string[];
   acceptance_criteria?: string[];
-  operation_graph_version?: string | null;
-  application_version?: string | null;
   revision: number;
   created_at?: string;
   updated_at?: string;
@@ -656,10 +1136,11 @@ export type Cmul8TaskRecord = {
 export type Cmul8ReviewRecord = {
   id: string;
   task_id: string;
-  reviewer_id: string;
-  reviewer_role?: string;
+  author_id: string;
+  author_name?: string;
+  role?: string;
   decision: "approve" | "request_changes" | "question" | "reject" | "rollback" | string;
-  body?: string;
+  comment?: string;
   task_revision?: number;
   created_at: string;
   updated_at?: string;
@@ -669,12 +1150,8 @@ export type Cmul8CommentRecord = {
   id: string;
   author_id: string;
   body: string;
-  target_type: "project" | "task" | "graph_element" | string;
-  target_id: string;
-  task_id?: string | null;
-  graph_path?: string | null;
-  graph_revision?: string | null;
-  mentions?: Array<{ ref_type: string; ref_id: string }>;
+  status: "posted" | string;
+  plan_revision?: number | null;
   created_at: string;
   updated_at?: string;
 };
@@ -684,40 +1161,23 @@ export type Cmul8DomainEventRecord = {
   actor_type: string;
   actor_id: string;
   task_id?: string | null;
-  operation_graph_version?: string | null;
-  application_version?: string | null;
-  environment_id?: string | null;
   action: string;
   result: string;
   timestamp: string;
-  correlation_id?: string | null;
-  trace_id?: string | null;
-  payload?: Record<string, unknown>;
-};
-
-export type Cmul8GraphRecord = {
-  schema_version: string;
-  tenant_id: string;
-  project_id: string;
-  revision: number;
-  revision_hash: string;
-  created_at: string;
-  updated_at: string;
-  graph: Record<string, unknown>;
+  reviewer_role?: string;
 };
 
 export type Cmul8RoomPayload = {
-  room: { id: string; project_id: string; members: Cmul8MemberRecord[]; revision: number; created_at?: string; updated_at?: string };
+  room: { id: string; members: Cmul8MemberRecord[]; revision: number; created_at?: string; updated_at?: string };
   project: { id: string; name: string; objective: string };
   tasks: Cmul8TaskRecord[];
   comments: Cmul8CommentRecord[];
   reviews: Cmul8ReviewRecord[];
   events: Cmul8DomainEventRecord[];
-  operation_graph?: Cmul8GraphRecord | null;
-  operation_graph_approvals: Array<{ approval_id: string; revision_hash: string; actor_id: string; decision: string; created_at: string; updated_at?: string }>;
+  mission_plan?: { revision: number; objective: string; steps: string[]; human_checkpoints: string[]; status: "pending_approval" | "approved" } | null;
   away: { since?: string | null; total: number; unread: number; counts: Record<string, number>; highlights: Array<{ position: number; category: string; unread: boolean; event: Cmul8DomainEventRecord; deep_link: Record<string, string | null> }> };
   permissions: { manage_tasks: boolean; review_tasks: boolean; review_graph: boolean; invite: boolean; comment: boolean };
-  presence: Array<{ actor_id: string; status: "active" | "away"; location?: string | null; last_seen_at: string; expires_at: string }>;
+  presence: Array<{ actor_id: string; status: "online" | "away" | "offline"; last_seen_at: string | null }>;
 };
 
 export async function getCmul8Room(projectId: string): Promise<Cmul8RoomPayload> {
@@ -732,8 +1192,24 @@ export async function addCmul8RoomMember(projectId: string, member: { member_id?
   return json(`/projects/${projectId}/cmul8/room/members`, { method: "POST", body: JSON.stringify(member) });
 }
 
-export async function heartbeatCmul8Presence(projectId: string, status: "active" | "away" = "active"): Promise<void> {
-  await json(`/projects/${projectId}/cmul8/presence`, { method: "POST", body: JSON.stringify({ status }) });
+export async function createCmul8Invitation(projectId: string, body: { client_request_id: string; email: string; role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver" }): Promise<{ invitation: Cmul8InvitationSummary & { expires_at: string }; token: string }> {
+  return json(`/projects/${projectId}/cmul8/room/invitations`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function acceptCmul8Invitation(projectId: string, invitationId: string, body: { client_request_id: string; token: string }): Promise<{ invitation: Cmul8InvitationSummary; membership: Pick<Cmul8MemberRecord, "actor_id" | "role"> }> {
+  return json(`/projects/${projectId}/cmul8/room/invitations/${encodeURIComponent(invitationId)}/accept`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function revokeCmul8Invitation(projectId: string, invitationId: string, body: { client_request_id: string; expected_revision: number }): Promise<{ invitation: Cmul8InvitationSummary }> {
+  return json(`/projects/${projectId}/cmul8/room/invitations/${encodeURIComponent(invitationId)}/revoke`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function removeCmul8RoomMember(projectId: string, actorId: string, body: { client_request_id: string; expected_room_revision: number }): Promise<Cmul8RoomPayload["room"]> {
+  return json(`/projects/${projectId}/cmul8/room/members/${encodeURIComponent(actorId)}/remove`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function heartbeatCmul8Presence(projectId: string): Promise<{ presence: Cmul8RoomPayload["presence"][number] }> {
+  return json(`/projects/${projectId}/cmul8/room/presence`, { method: "POST" });
 }
 
 export async function markCmul8InboxRead(projectId: string, eventId?: string): Promise<{ last_read_position: number; updated_at: string }> {
@@ -741,7 +1217,7 @@ export async function markCmul8InboxRead(projectId: string, eventId?: string): P
   return json(`/projects/${projectId}/cmul8/inbox/read${query}`, { method: "POST" });
 }
 
-export async function createCmul8Task(projectId: string, task: { title: string; objective: string; acceptance_criteria: string[]; owner_id?: string; operation_graph_version?: string }): Promise<Cmul8TaskRecord> {
+export async function createCmul8Task(projectId: string, task: { title: string; objective: string; acceptance_criteria: string[]; owner_id?: string }): Promise<Cmul8TaskRecord> {
   return json(`/projects/${projectId}/cmul8/tasks`, { method: "POST", body: JSON.stringify(task) });
 }
 
@@ -761,18 +1237,15 @@ export async function reviewCmul8Task(projectId: string, taskId: string, decisio
   });
 }
 
-export async function addCmul8Comment(projectId: string, body: { body: string; target_type: "project" | "task" | "graph_element"; target_id?: string; task_id?: string; graph_path?: string; graph_revision?: string; mentions?: Array<{ ref_type: string; ref_id: string }> }): Promise<Cmul8CommentRecord> {
+export async function addCmul8Comment(projectId: string, body: { body: string; plan_revision?: number }): Promise<Cmul8CommentRecord> {
   return json(`/projects/${projectId}/cmul8/comments`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function createCmul8GraphRevision(projectId: string, graph: Record<string, unknown>, expectedRevisionHash?: string): Promise<Cmul8GraphRecord> {
-  return json(`/projects/${projectId}/cmul8/operation-graph/revisions`, { method: "POST", body: JSON.stringify({ graph, expected_revision_hash: expectedRevisionHash }) });
+export async function approveCurrentMissionPlan(projectId: string, expectedRevision: number): Promise<void> {
+  await json(`/projects/${projectId}/cmul8/operation-graph/current/approve`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) });
 }
 
-export async function approveCmul8Graph(projectId: string, revisionHash: string): Promise<void> {
-  await json(`/projects/${projectId}/cmul8/operation-graph/revisions/${encodeURIComponent(revisionHash)}/approve`, { method: "POST", body: "{}" });
-}
-
+/** Legacy project-shell approval. The workplace shell does not call this route. */
 export async function approveProject(id: string): Promise<Snapshot> {
   return json(`/projects/${id}/approve`, { method: "POST" });
 }
@@ -821,9 +1294,11 @@ export async function cancelProjectJob(id: string): Promise<Snapshot> {
   return json(`/projects/${id}/cancel`, { method: "POST" });
 }
 
+/** Legacy project-shell liveness check. The workplace shell does not call this route. */
 export async function getProjectJob(id: string): Promise<{ job: JobState; live: boolean }> {
   return json(`/projects/${id}/job`);
 }
+
 
 export async function patchDesignBrief(id: string, designBrief: DesignBrief): Promise<Snapshot> {
   return json(`/projects/${id}/design-brief`, {

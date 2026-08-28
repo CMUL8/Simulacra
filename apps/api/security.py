@@ -9,6 +9,31 @@ from fastapi import Depends, Header, HTTPException, Query, Request
 
 from simulacra.demo.enterprise_audit import emit_audit
 from simulacra.demo.identity import AuthContext, ensure_bootstrap, resolve_auth
+
+
+class InvitationAcceptPrincipal:
+	"""Credential-scoped enrollment identity, deliberately not an AuthContext."""
+	def __init__(self, *, actor_id: str, verified_email: str, provider_subject: str) -> None:
+		self.actor_id = actor_id
+		self.verified_email = verified_email
+		self.provider_subject = provider_subject
+
+
+def require_invitation_accept_authenticated_email(
+	authorization: Annotated[str | None, Header()] = None,
+) -> InvitationAcceptPrincipal:
+	"""Verify only enrollment proof; do not resolve or create tenant membership."""
+	if not authorization or not authorization.lower().startswith("bearer "):
+		raise HTTPException(404, {"code": "invitation_unavailable", "message": "This invitation is unavailable."})
+	token = authorization.split(" ", 1)[1].strip()
+	try:
+		from simulacra.demo.clerk_auth import ensure_verified_invitation_user, local_invitation_fixture_principal, verified_invitation_email
+		fixture = local_invitation_fixture_principal(token)
+		subject, email = fixture if fixture is not None else verified_invitation_email(token)
+		user = ensure_verified_invitation_user(subject, email)
+		return InvitationAcceptPrincipal(actor_id=user.id, verified_email=email, provider_subject=subject)
+	except Exception as exc:  # intentionally indistinguishable from every unavailable invitation
+		raise HTTPException(404, {"code": "invitation_unavailable", "message": "This invitation is unavailable."}) from exc
 from simulacra.demo.runs import load_state
 
 

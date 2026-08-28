@@ -7,11 +7,15 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
+
+import fcntl
 
 from .paths import REPO_ROOT
 from .tenants import assert_tenant_active, create_tenant, default_tenant_id, get_tenant, list_tenants
@@ -38,6 +42,10 @@ PERMISSIONS: dict[str, Role] = {
 	"platform:admin": "owner",  # checked separately via is_platform_admin
 }
 
+_MEMBERSHIP_LOCKS: dict[str, threading.RLock] = {}
+_MEMBERSHIP_LOCKS_GUARD = threading.Lock()
+_MEMBERSHIP_LOCK_DEPTH = threading.local()
+
 
 @dataclass
 class User:
@@ -48,6 +56,10 @@ class User:
 	is_platform_admin: bool = False
 	status: str = "active"
 	created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+	avatar_url: str | None = None
+	verified_email: str | None = None
+	verified_email_at: str | None = None
+	provider_subject: str | None = None
 
 	def public(self) -> dict[str, Any]:
 		return {
@@ -57,6 +69,7 @@ class User:
 			"is_platform_admin": self.is_platform_admin,
 			"status": self.status,
 			"created_at": self.created_at,
+			"avatar_url": self.avatar_url,
 		}
 
 
@@ -66,6 +79,8 @@ class Membership:
 	user_id: str
 	role: Role = "member"
 	created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+	transaction_id: str | None = None
+	visibility_state: str = "committed"
 
 
 @dataclass
@@ -144,6 +159,79 @@ def _memberships() -> dict[str, Any]:
 	return _load(MEMBERSHIPS_PATH, {"memberships": []})
 
 
+@contextmanager
+def membership_store_lock(tenant_id: str, user_id: str) -> Iterator[None]:
+	"""Serialize one tenant/user membership across JSON or PostgreSQL writers.
+
+	The acceptance coordinator holds this lock while it publishes the matching
+	room child. Ordinary membership writers use the same lock, so authority
+	cannot change between the admission precheck and its collaboration write.
+	"""
+	key = f"{tenant_id}\0{user_id}"
+	depths = getattr(_MEMBERSHIP_LOCK_DEPTH, "depths", {})
+	if depths.get(key, 0):
+		depths[key] += 1
+		_MEMBERSHIP_LOCK_DEPTH.depths = depths
+		try:
+			yield
+		finally:
+			depths[key] -= 1
+		return
+	with _MEMBERSHIP_LOCKS_GUARD:
+		local = _MEMBERSHIP_LOCKS.setdefault(key, threading.RLock())
+	with local:
+		from .db import using_postgres
+		if using_postgres():
+			# Session advisory locks coordinate all application instances while
+			# the actual CRUD helpers keep their existing short transactions.
+			from .db import connection
+			lock_key = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big", signed=True)
+			with connection() as conn:
+				conn.execute("SELECT pg_advisory_lock(%s)", (lock_key,))
+				depths[key] = 1
+				_MEMBERSHIP_LOCK_DEPTH.depths = depths
+				try:
+					yield
+				finally:
+					depths.pop(key, None)
+					conn.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
+			return
+		lock_dir = DATA_DIR / ".identity-membership-locks"
+		lock_dir.mkdir(parents=True, exist_ok=True)
+		lock_path = lock_dir / f"{hashlib.sha256(key.encode()).hexdigest()}.lock"
+		fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+		try:
+			fcntl.flock(fd, fcntl.LOCK_EX)
+			depths[key] = 1
+			_MEMBERSHIP_LOCK_DEPTH.depths = depths
+			try:
+				yield
+			finally:
+				depths.pop(key, None)
+		finally:
+			fcntl.flock(fd, fcntl.LOCK_UN)
+			os.close(fd)
+
+
+def get_membership_record(tenant_id: str, user_id: str) -> Membership | None:
+	"""Coordinator-only raw membership lookup, including hidden rows."""
+	from .db import using_postgres
+	if using_postgres():
+		from .pg_store import pg_list_memberships
+		rows = pg_list_memberships(tenant_id=tenant_id, user_id=user_id)
+	else:
+		rows = [
+			row for row in _memberships().get("memberships", [])
+			if row.get("tenant_id") == tenant_id and row.get("user_id") == user_id
+		]
+	if not rows:
+		return None
+	row = dict(rows[0])
+	row.setdefault("transaction_id", None)
+	row.setdefault("visibility_state", "committed")
+	return Membership(**row)
+
+
 def _keys() -> dict[str, Any]:
 	return _load(KEYS_PATH, {"keys": []})
 
@@ -198,6 +286,7 @@ def create_user(
 	password: str,
 	*,
 	name: str = "",
+	avatar_url: str | None = None,
 	is_platform_admin: bool = False,
 ) -> User:
 	email = email.strip().lower()
@@ -209,6 +298,7 @@ def create_user(
 		name=name.strip() or email.split("@")[0],
 		password_hash=_hash_password(password),
 		is_platform_admin=is_platform_admin,
+		avatar_url=avatar_url,
 	)
 	from .db import using_postgres
 
@@ -223,27 +313,31 @@ def create_user(
 	return user
 
 
-def add_membership(tenant_id: str, user_id: str, role: Role = "member") -> Membership:
-	get_tenant(tenant_id)
-	get_user(user_id)
-	from .db import using_postgres
+def add_membership(tenant_id: str, user_id: str, role: Role = "member", *, transaction_id: str | None = None,
+	visibility_state: str = "committed") -> Membership:
+	with membership_store_lock(tenant_id, user_id):
+		get_tenant(tenant_id)
+		get_user(user_id)
+		from .db import using_postgres
 
-	if using_postgres():
-		from .pg_store import pg_upsert_membership
+		if using_postgres():
+			from .pg_store import pg_upsert_membership
 
-		m = Membership(tenant_id=tenant_id, user_id=user_id, role=role)
-		pg_upsert_membership(asdict(m))
+			m = Membership(tenant_id=tenant_id, user_id=user_id, role=role, transaction_id=transaction_id, visibility_state=visibility_state)
+			pg_upsert_membership(asdict(m))
+			return m
+		store = _memberships()
+		for raw in store["memberships"]:
+			if raw["tenant_id"] == tenant_id and raw["user_id"] == user_id:
+				raw["role"] = role
+				raw["transaction_id"] = transaction_id
+				raw["visibility_state"] = visibility_state
+				_save(MEMBERSHIPS_PATH, store)
+				return Membership(**raw)
+		m = Membership(tenant_id=tenant_id, user_id=user_id, role=role, transaction_id=transaction_id, visibility_state=visibility_state)
+		store["memberships"].append(asdict(m))
+		_save(MEMBERSHIPS_PATH, store)
 		return m
-	store = _memberships()
-	for raw in store["memberships"]:
-		if raw["tenant_id"] == tenant_id and raw["user_id"] == user_id:
-			raw["role"] = role
-			_save(MEMBERSHIPS_PATH, store)
-			return Membership(**raw)
-	m = Membership(tenant_id=tenant_id, user_id=user_id, role=role)
-	store["memberships"].append(asdict(m))
-	_save(MEMBERSHIPS_PATH, store)
-	return m
 
 
 def list_memberships(*, tenant_id: str | None = None, user_id: str | None = None) -> list[Membership]:
@@ -252,14 +346,20 @@ def list_memberships(*, tenant_id: str | None = None, user_id: str | None = None
 	if using_postgres():
 		from .pg_store import pg_list_memberships
 
-		return [Membership(**m) for m in pg_list_memberships(tenant_id=tenant_id, user_id=user_id)]
+		return [membership for membership in (Membership(**m) for m in pg_list_memberships(tenant_id=tenant_id, user_id=user_id))
+			if _membership_visible(membership)]
 	out: list[Membership] = []
 	for raw in _memberships().get("memberships", []):
 		if tenant_id and raw["tenant_id"] != tenant_id:
 			continue
 		if user_id and raw["user_id"] != user_id:
 			continue
-		out.append(Membership(**raw))
+		row = dict(raw)
+		row.setdefault("transaction_id", None)
+		row.setdefault("visibility_state", "committed")
+		membership = Membership(**row)
+		if _membership_visible(membership):
+			out.append(membership)
 	return out
 
 
@@ -269,21 +369,71 @@ def get_membership(tenant_id: str, user_id: str) -> Membership | None:
 	return None
 
 
-def remove_membership(tenant_id: str, user_id: str) -> None:
+def _membership_visible(membership: Membership) -> bool:
+	if membership.transaction_id is None:
+		return True
+	if membership.visibility_state != "committed":
+		return False
+	try:
+		from simulacra.collaboration.invitation_acceptance import is_acceptance_complete_for_tenant
+		return is_acceptance_complete_for_tenant(membership.tenant_id, membership.transaction_id)
+	except Exception:
+		return False
+
+
+def update_membership_visibility(tenant_id: str, user_id: str, transaction_id: str, visibility_state: str) -> None:
+	"""Internal coordinator mutation; normal membership readers remain filtered."""
+	with membership_store_lock(tenant_id, user_id):
+		from .db import using_postgres
+		if using_postgres():
+			from .pg_store import pg_update_membership_visibility
+			pg_update_membership_visibility(tenant_id, user_id, transaction_id, visibility_state)
+			return
+		store = _memberships()
+		for row in store["memberships"]:
+			if row.get("tenant_id") == tenant_id and row.get("user_id") == user_id and row.get("transaction_id") == transaction_id:
+				row["visibility_state"] = visibility_state
+				_save(MEMBERSHIPS_PATH, store)
+				return
+		raise KeyError(user_id)
+
+
+def record_verified_provider_identity(user_id: str, provider_subject: str, verified_email: str) -> User:
+	"""Persist server-verified provider proof without granting a membership."""
+	verified_email = verified_email.strip().lower()
 	from .db import using_postgres
-
 	if using_postgres():
-		from .pg_store import pg_delete_membership
+		from .pg_store import pg_record_verified_provider_identity
+		return User(**pg_record_verified_provider_identity(user_id, provider_subject, verified_email))
+	store = _users()
+	for row in store["users"]:
+		if row["id"] == user_id:
+			if row.get("provider_subject") not in {None, provider_subject}:
+				raise PermissionError("verified identity subject mismatch")
+			row["provider_subject"] = provider_subject
+			row["verified_email"] = verified_email
+			row["verified_email_at"] = _now().isoformat()
+			_save(USERS_PATH, store)
+			return User(**row)
+	raise KeyError(user_id)
 
-		pg_delete_membership(tenant_id, user_id)
-		return
-	store = _memberships()
-	store["memberships"] = [
-		m
-		for m in store["memberships"]
-		if not (m["tenant_id"] == tenant_id and m["user_id"] == user_id)
-	]
-	_save(MEMBERSHIPS_PATH, store)
+
+def remove_membership(tenant_id: str, user_id: str) -> None:
+	with membership_store_lock(tenant_id, user_id):
+		from .db import using_postgres
+
+		if using_postgres():
+			from .pg_store import pg_delete_membership
+
+			pg_delete_membership(tenant_id, user_id)
+			return
+		store = _memberships()
+		store["memberships"] = [
+			m
+			for m in store["memberships"]
+			if not (m["tenant_id"] == tenant_id and m["user_id"] == user_id)
+		]
+		_save(MEMBERSHIPS_PATH, store)
 
 
 def create_api_key(user_id: str, *, name: str = "default", tenant_id: str | None = None) -> tuple[str, dict[str, Any]]:
@@ -563,7 +713,10 @@ def register_user(
 		assert_tenant_active(invite_tenant_id)
 		add_membership(invite_tenant_id, user.id, "member")
 	else:
-		tenant = create_tenant(tenant_name or f"{user.name}'s workspace")
+		# Password sign-up no longer needs a workspace field. Keep the legacy
+		# argument for API compatibility, but always produce a bounded personal name.
+		personal_name = (tenant_name or f"{user.name}'s Mission").strip()[:120]
+		tenant = create_tenant(personal_name or "My Mission")
 		add_membership(tenant.id, user.id, "owner")
 	token = create_session(user.id)
 	return user, token

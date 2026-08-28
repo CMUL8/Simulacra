@@ -1,0 +1,46 @@
+@import url("../../../design/tokens.css");
+
+.attention-inbox {
+  border-block-start: 1px solid var(--mission-color-border);
+  margin: auto;
+  max-width: 72rem;
+  min-width: 0;
+}
+
+.attention-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-block-end: 1px solid var(--mission-color-border);
+  color: var(--mission-color-fg);
+  cursor: pointer;
+  display: flex;
+  gap: var(--mission-space-4);
+  justify-content: space-between;
+  min-height: 4.5rem;
+  min-width: 0;
+  padding: var(--mission-space-4);
+  text-align: start;
+  width: 100%;
+}
+
+.attention-row:hover { background: var(--mission-color-surface); }
+.attention-row.is-read { color: var(--mission-color-muted); }
+.attention-row-copy { display: grid; flex: 1 1 auto; gap: var(--mission-space-1); min-width: 0; }
+.attention-row-copy strong,
+.attention-row-copy small { overflow-wrap: anywhere; }
+.attention-row-copy small,
+.attention-action,
+.attention-next,
+.attention-kicker { color: var(--mission-color-muted); }
+.attention-kicker { display: flex; flex-wrap: wrap; font-size: 0.75rem; gap: var(--mission-space-3); letter-spacing: 0.04em; text-transform: uppercase; }
+.attention-row-meta { align-items: flex-end; display: grid; flex: 0 0 auto; gap: var(--mission-space-1); justify-items: end; }
+.attention-action,
+.attention-next { font-size: 0.8125rem; }
+.attention-action.is-actionable { color: var(--mission-color-warning); font-weight: 700; }
+.attention-next { color: var(--mission-color-accent); }
+
+@media (max-width: 40rem) {
+  .attention-row { align-items: flex-start; flex-direction: column; }
+  .attention-row-meta { align-items: flex-start; justify-items: start; }
+}

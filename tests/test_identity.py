@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -58,6 +60,21 @@ def test_register_creates_tenant():
 	tenants = user_tenants(user)
 	assert any(t["name"] == "Acme" for t in tenants)
 	assert token.startswith("sst_")
+
+
+def test_register_derives_personal_mission_name_without_workspace():
+	from simulacra.demo.identity import register_user, user_tenants
+
+	user, _ = register_user("first.last@example.com", "password12345", name="First Last")
+	assert any(t["name"] == "First Last's Mission" for t in user_tenants(user))
+
+
+def test_clerk_avatar_claim_requires_bounded_http_url():
+	from simulacra.demo.clerk_auth import _trusted_avatar_url
+
+	assert _trusted_avatar_url({"image_url": "https://images.example/avatar.png"}) == "https://images.example/avatar.png"
+	assert _trusted_avatar_url({"image_url": "file:///private/avatar.png"}) is None
+	assert _trusted_avatar_url({"image_url": "https://images.example/" + "a" * 2048}) is None
 
 
 def test_stale_default_tenant_header_recovers():
@@ -128,6 +145,108 @@ def test_only_admins_and_owners_can_approve_projects():
 	with pytest.raises(PermissionError):
 		member.require("project:approve")
 	AuthContext(user=user, tenant_id="tenant_review", role="admin", auth_via="test").require("project:approve")
+
+
+def _invitation_claims(subject="subject_1", email="invitee@example.test", *, verified=True, proof_subject=None):
+	return {"sub": subject, "proof": {"verified": verified, "email": email, "subject": proof_subject}}
+
+
+def _mock_invitation_decoder(monkeypatch, result):
+	from simulacra.demo import clerk_auth
+	def decode(*_args, **_kwargs):
+		if isinstance(result, Exception): raise result
+		return result
+	monkeypatch.setitem(sys.modules, "jose", types.SimpleNamespace(jwt=types.SimpleNamespace(decode=decode)))
+	monkeypatch.setattr(clerk_auth, "_fetch_jwks", lambda: {"keys": []})
+	monkeypatch.setenv("CLERK_ISSUER", "https://issuer.example")
+	monkeypatch.setenv("CLERK_AUDIENCE", "audience")
+	monkeypatch.setenv("CLERK_INVITATION_EMAIL_CLAIM", "proof")
+
+
+def test_clerk_session_verification_uses_exact_configured_issuer_and_audience(monkeypatch):
+	from simulacra.demo import clerk_auth
+	seen = {}
+	def decode(*_args, **kwargs):
+		seen.update(kwargs)
+		return {"sub": "subject_1"}
+	monkeypatch.setitem(sys.modules, "jose", types.SimpleNamespace(jwt=types.SimpleNamespace(decode=decode)))
+	monkeypatch.setattr(clerk_auth, "_fetch_jwks", lambda: {"keys": []})
+	monkeypatch.setenv("CLERK_ISSUER", "https://issuer.example")
+	monkeypatch.setenv("CLERK_AUDIENCE", "missions-console")
+
+	assert clerk_auth.verify_clerk_jwt("session-token")["sub"] == "subject_1"
+	assert seen["issuer"] == "https://issuer.example"
+	assert seen["audience"] == "missions-console"
+	assert seen["options"] == {"verify_aud": True, "verify_iss": True, "verify_exp": True}
+
+
+def test_clerk_session_verification_rejects_missing_config_in_production(monkeypatch):
+	from simulacra.demo.clerk_auth import verify_clerk_jwt
+	monkeypatch.setenv("SIMULACRA_ENVIRONMENT", "production")
+	monkeypatch.delenv("CLERK_ISSUER", raising=False)
+	monkeypatch.delenv("CLERK_AUDIENCE", raising=False)
+	with pytest.raises(PermissionError):
+		verify_clerk_jwt("session-token")
+
+
+def test_clerk_invitation_principal_rejects_invalid_signature(monkeypatch):
+	from simulacra.demo.clerk_auth import verified_invitation_email
+	_mock_invitation_decoder(monkeypatch, ValueError("bad signature"))
+	with pytest.raises(PermissionError): verified_invitation_email("bad")
+
+
+def test_clerk_invitation_principal_rejects_expired_token(monkeypatch):
+	from simulacra.demo.clerk_auth import verified_invitation_email
+	_mock_invitation_decoder(monkeypatch, ValueError("expired"))
+	with pytest.raises(PermissionError): verified_invitation_email("expired")
+
+
+def test_clerk_invitation_principal_rejects_missing_subject(monkeypatch):
+	from simulacra.demo.clerk_auth import verified_invitation_email
+	_mock_invitation_decoder(monkeypatch, _invitation_claims(subject=""))
+	with pytest.raises(PermissionError): verified_invitation_email("missing-subject")
+
+
+def test_clerk_invitation_principal_rejects_missing_trusted_email_proof_config(monkeypatch):
+	from simulacra.demo.clerk_auth import verified_invitation_email
+	monkeypatch.delenv("CLERK_ISSUER", raising=False); monkeypatch.delenv("CLERK_AUDIENCE", raising=False)
+	monkeypatch.delenv("CLERK_INVITATION_EMAIL_CLAIM", raising=False)
+	with pytest.raises(PermissionError): verified_invitation_email("missing-config")
+
+
+def test_clerk_provider_lookup_is_bound_to_verified_subject():
+	from simulacra.demo.clerk_auth import ensure_verified_invitation_user
+	from simulacra.demo.identity import create_user
+	create_user("bound@example.test", "password12345")
+	first = ensure_verified_invitation_user("provider_subject_a", "bound@example.test")
+	assert first.provider_subject == "provider_subject_a"
+	with pytest.raises(PermissionError): ensure_verified_invitation_user("provider_subject_b", "bound@example.test")
+
+
+def test_clerk_invitation_principal_rejects_invalid_issuer_or_audience(monkeypatch):
+	from simulacra.demo.clerk_auth import verified_invitation_email
+	_mock_invitation_decoder(monkeypatch, ValueError("issuer/audience mismatch"))
+	with pytest.raises(PermissionError): verified_invitation_email("wrong-issuer")
+
+
+@pytest.mark.parametrize("claims", [_invitation_claims(verified=False), _invitation_claims(email="subject_1@users.example")])
+def test_clerk_invitation_principal_rejects_unverified_or_synthetic_fallback_email(monkeypatch, claims):
+	from simulacra.demo.clerk_auth import verified_invitation_email
+	_mock_invitation_decoder(monkeypatch, claims)
+	with pytest.raises(PermissionError): verified_invitation_email("unverified")
+
+
+def test_clerk_invitation_principal_rejects_subject_mismatch(monkeypatch):
+	from simulacra.demo.clerk_auth import verified_invitation_email
+	_mock_invitation_decoder(monkeypatch, _invitation_claims(proof_subject="other_subject"))
+	with pytest.raises(PermissionError): verified_invitation_email("subject-mismatch")
+
+
+def test_local_invitation_email_verification_is_denied_in_production(monkeypatch):
+	from simulacra.demo.clerk_auth import local_invitation_fixture_principal
+	monkeypatch.setenv("SIMULACRA_ENABLE_LOCAL_INVITATION_FIXTURE", "1")
+	monkeypatch.setenv("SIMULACRA_ENVIRONMENT", "production")
+	assert local_invitation_fixture_principal("subject_1|invitee@example.test") is None
 
 
 def test_project_quota():

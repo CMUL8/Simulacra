@@ -21,6 +21,20 @@ from .models import (
 from .repository import JsonMissionRepository, MissionConflictError, MissionNotFoundError
 
 ACTIVE_RUN_STATUSES = {"queued", "preparing", "running", "awaiting_approval", "verifying"}
+_ADMISSION_SEAL = object()
+
+
+class _AssignmentAdmission:
+    """Unforgeable coordinator-minted capability, never a public callback."""
+    def __init__(self, predicate: Callable[[str, str], bool], seal: object) -> None:
+        self._predicate, self._seal = predicate, seal
+
+    def allows(self, transaction_id: str, run_id: str) -> bool:
+        return self._seal is _ADMISSION_SEAL and bool(self._predicate(transaction_id, run_id))
+
+
+def _mint_assignment_admission(predicate: Callable[[str, str], bool]) -> _AssignmentAdmission:
+    return _AssignmentAdmission(predicate, _ADMISSION_SEAL)
 # This deliberately mirrors models._SECRET_VALUE, which rejects public Mission
 # inputs. Provider output is untrusted too: redact it before events, results, or
 # trajectory exports can persist it. Query-key variants are common in URLs and
@@ -312,7 +326,8 @@ class MissionService:
         for old, _ in stale: records["events"].pop(old, None)
         if stale: records.setdefault("retention", {}).update({"dropped_events": int(records.setdefault("retention", {}).get("dropped_events", 0)) + len(stale)})
 
-    def claim_next(self, tenant_id: str, project_id: str, worker_id: str, lease_seconds: int = 900) -> MissionRun | None:
+    def claim_next(self, tenant_id: str, project_id: str, worker_id: str, lease_seconds: int = 900,
+                   assignment_admission: object | None = None) -> MissionRun | None:
         """Atomically claim one safe queued run. Expired started work is uncertain."""
         def mutate(records: dict[str, Any]) -> MissionRun | None:
             self._mission(records); point = datetime.now(UTC)
@@ -345,6 +360,11 @@ class MissionService:
             for raw in records["runs"].values():
                 run = MissionRun.from_dict(raw)
                 if run.status != "queued": continue
+                if run.assignment_transaction_id and not (
+                    isinstance(assignment_admission, _AssignmentAdmission)
+                    and assignment_admission.allows(run.assignment_transaction_id, run.id)
+                ):
+                    continue
                 run.status = "running"; run.started_at = run.started_at or now(); run.lease_owner = worker_id
                 run.lease_until = (point + timedelta(seconds=max(30, lease_seconds))).isoformat(); run.error = None
                 self._touch(run); self._event(records, run, "run_claimed", {"worker": worker_id})
@@ -459,6 +479,7 @@ class MissionService:
                     ):
                         raise MissionConflictError("invalid Mission artifact evidence")
                     captured = dict(evidence)
+                    captured["run_id"] = run.id
                     if failed_run:
                         # A candidate from an interrupted/failed turn is never
                         # indistinguishable from a successful delivery.
@@ -578,6 +599,63 @@ class MissionService:
             tenant_id, project_id,
             lambda records: self._create_run_locked(records, tenant_id, project_id, safe_trigger, profile, occurrence_key, verified_contract_revision, assigned_agent_ids),
         )
+
+    def create_assignment_pending_run(self, tenant_id: str, project_id: str, *, run_id: str,
+                                      transaction_id: str, trigger: Mapping[str, Any],
+                                      graph_revision: str, assigned_agent_ids: list[str]) -> MissionRun:
+        """Coordinator-only deterministic child creation; public create_run is unchanged."""
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            mission = self._mission(records)
+            safe_trigger = _safe_value(trigger)
+            if not isinstance(safe_trigger, Mapping):
+                raise MissionConflictError("assignment run trigger is invalid")
+            existing = records["runs"].get(run_id)
+            if existing:
+                run = MissionRun.from_dict(existing)
+                if (
+                    run.id != run_id or run.tenant_id != tenant_id or run.project_id != project_id
+                    or run.mission_id != mission.id or run.assignment_transaction_id != transaction_id
+                    or run.trigger_snapshot != safe_trigger or run.contract_revision != graph_revision
+                    or run.assigned_agent_ids != list(assigned_agent_ids)
+                ):
+                    raise MissionConflictError("assignment run identity conflict")
+                return run
+            available = {str(row.get("id")) for row in records["agents"].values() if row.get("mission_id") == mission.id}
+            if any(agent not in available for agent in assigned_agent_ids):
+                raise MissionConflictError("assigned Mission agent does not belong to this Mission")
+            run = MissionRun(
+                id=run_id, tenant_id=tenant_id, project_id=project_id, mission_id=mission.id,
+                trigger_snapshot=dict(safe_trigger), contract_revision=graph_revision,
+                execution_profile=self._profile(), assigned_agent_ids=list(assigned_agent_ids),
+                status="pending_commit", assignment_transaction_id=transaction_id,
+            )
+            records["runs"][run.id] = run.to_dict()
+            return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
+
+    def activate_assignment_run(self, tenant_id: str, project_id: str, *, run_id: str,
+                                transaction_id: str) -> MissionRun:
+        def mutate(records: dict[str, Any]) -> MissionRun:
+            run = MissionRun.from_dict(records["runs"][run_id])
+            mission = self._mission(records)
+            if run.assignment_transaction_id != transaction_id:
+                raise MissionConflictError("assignment run identity conflict")
+            if run.status == "pending_commit":
+                # PREPARED children must not change the public Mission contract.
+                # The durable COMMIT_DECIDED path is the first place this run can
+                # admit its pinned approved revision for ordinary worker claims.
+                if mission.approved_contract_revision != run.contract_revision:
+                    mission.approved_contract_revision = run.contract_revision
+                    mission.revision += 1
+                    mission.updated_at = now()
+                    records["mission"] = mission.to_dict()
+                run.status = "queued"
+                self._touch(run)
+                records["runs"][run.id] = run.to_dict()
+            # A recovered COMPLETE journal must not rewind work that became
+            # queued/running/terminal after its original publication.
+            return run
+        return self.repository.mutate(tenant_id, project_id, mutate)
 
     def triggers(self, tenant_id: str, project_id: str) -> list[AutomationTrigger]:
         return self._records(tenant_id, project_id, "triggers", AutomationTrigger)

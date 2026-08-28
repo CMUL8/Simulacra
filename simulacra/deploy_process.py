@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.request
 import threading
+from datetime import UTC, datetime
 from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,6 +21,54 @@ from urllib.parse import urlparse
 WORKER_SOCKET = Path(os.environ.get("CMUL8_WORKER_SOCKET", "/tmp/cmul8-worker.sock"))
 _MAX_DISCOVERY_STATE_BYTES = 8 * 1024 * 1024
 _DEFAULT_MISSION_CRON_INTERVAL_SECONDS = 15.0
+
+
+def _configured_notification_adapter() -> object | None:
+	"""Build an explicitly configured real provider, never the test adapter."""
+	specification = os.environ.get("SIMULACRA_NOTIFICATION_ADAPTER_FACTORY", "").strip()
+	if not specification:
+		return None
+	module_name, separator, attribute_name = specification.partition(":")
+	if not separator or not module_name or not attribute_name:
+		return None
+	try:
+		from importlib import import_module
+		from simulacra.collaboration.notifications import DeterministicNotificationAdapter
+
+		factory = getattr(import_module(module_name), attribute_name)
+		adapter = factory()
+		if isinstance(adapter, DeterministicNotificationAdapter):
+			return None
+		if not callable(getattr(adapter, "deliver", None)):
+			return None
+		return adapter
+	except Exception:
+		return None
+
+
+def _notification_tick(tenant_id: str, project_id: str) -> None:
+	"""Bounded worker-only projection/delivery; never invoked by API routes."""
+	try:
+		from simulacra.collaboration.notifications import NotificationOutbox
+		from simulacra.collaboration.repository import JsonCollaborationRepository
+		from simulacra.demo.paths import RUNS_DIR
+		from simulacra.workplace.preferences import JsonWorkplacePreferenceRepository
+		control = RUNS_DIR / ".cmul8-control"
+		outbox = NotificationOutbox(control / ".notifications")
+		repository = JsonCollaborationRepository(control)
+		preferences = JsonWorkplacePreferenceRepository(RUNS_DIR / ".workplace-control" / "preferences")
+		outbox.project(repository, tenant_id=tenant_id, project_id=project_id, preferences=preferences)
+		# Provider delivery is opt-in and requires a real adapter factory. Missing or
+		# invalid configuration leaves rows pending for a later retry.
+		if os.environ.get("SIMULACRA_NOTIFICATION_DELIVERY_ENABLED") == "1":
+			adapter = _configured_notification_adapter()
+			if adapter is not None:
+				outbox.deliver(
+					tenant_id=tenant_id, project_id=project_id, adapter=adapter,
+					repository=repository, preferences=preferences,
+				)
+	except Exception:
+		pass
 
 
 def _mission_cron_interval_seconds() -> float:
@@ -46,18 +95,24 @@ def _mission_cron_scheduler(
 	tenant_only: str | None = None,
 	discover: object | None = None,
 	interval_seconds: float | None = None,
+	initial_workers: list[tuple[object, str, str]] | None = None,
 ) -> None:
 	"""Run cron discovery independently from job consumption and health probes."""
 	discover_workers = discover or _discovered_mission_workers
 	interval = _mission_cron_interval_seconds() if interval_seconds is None else max(0.01, interval_seconds)
+	first = True
 	while not stop_event.is_set():
-		try:
-			workers = discover_workers(  # type: ignore[operator]
-				project_only=project_only,
-				tenant_only=tenant_only,
-			)
-		except Exception:
-			workers = []
+		if first and initial_workers is not None:
+			workers = initial_workers
+		else:
+			try:
+				workers = discover_workers(  # type: ignore[operator]
+					project_only=project_only,
+					tenant_only=tenant_only,
+				)
+			except Exception:
+				workers = []
+		first = False
 		for mission_worker, tenant_id, project_id in workers:
 			if stop_event.is_set():
 				break
@@ -242,8 +297,10 @@ def _runtime_roots_ready() -> bool:
 
 def _discovered_mission_workers(*, project_only: str | None = None, tenant_only: str | None = None) -> list[tuple[object, str, str]]:
     """Discover only self-consistent project-scoped Mission control files."""
+    from simulacra.collaboration import JsonCollaborationRepository
     from simulacra.collaboration.models import validate_scope_id
     from simulacra.missions import JsonMissionRepository, MissionService, MissionWorker
+    from simulacra.workplace import AssignmentCoordinator
     try:
         if project_only is not None: validate_scope_id(project_only, "project_id")
         if tenant_only is not None: validate_scope_id(tenant_only, "tenant_id")
@@ -295,7 +352,12 @@ def _discovered_mission_workers(*, project_only: str | None = None, tenant_only:
             try: workspace_record = _read_discovery_json(workspace, ("state.json",))
             except (OSError, ValueError, json.JSONDecodeError): continue
             if workspace_record.get("id") != project_id or workspace_record.get("tenant_id") != tenant_id: continue
-            output.append((MissionWorker(MissionService(JsonMissionRepository(control_root)), workspace), tenant_id, project_id))
+            service = MissionService(JsonMissionRepository(control_root))
+            coordinator = AssignmentCoordinator(
+                JsonCollaborationRepository(runs_root / ".cmul8-control"), service, workspace,
+                runs_root=runs_root, clock=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            )
+            output.append((MissionWorker(service, workspace, coordinator=coordinator), tenant_id, project_id))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
     return output
@@ -325,6 +387,16 @@ def worker() -> int:
 			pass
 	configured_project = os.environ.get("CMUL8_PROJECT_ID", "").strip() or None
 	configured_tenant = os.environ.get("CMUL8_TENANT_ID", "").strip() or None
+	# Import/discover both planes serially before any scheduler thread starts.
+	# This prevents Python import-lock contention during process startup.
+	if explicit_requested:
+		initial_runtime_workers = [explicit_worker] if explicit_worker is not None else []
+	else:
+		initial_runtime_workers = _discovered_runtime_workers()
+	initial_mission_workers = _discovered_mission_workers(
+		project_only=configured_project if explicit_requested else None,
+		tenant_only=configured_tenant if explicit_requested else None,
+	)
 	cron_stop = threading.Event()
 	cron_thread = threading.Thread(
 		target=_mission_cron_scheduler,
@@ -332,6 +404,7 @@ def worker() -> int:
 			"stop_event": cron_stop,
 			"project_only": configured_project if explicit_requested else None,
 			"tenant_only": configured_tenant if explicit_requested else None,
+			"initial_workers": initial_mission_workers,
 		},
 		daemon=True,
 		name="mission-cron-scheduler",
@@ -345,11 +418,12 @@ def worker() -> int:
 	signal.signal(signal.SIGTERM, stop)
 	signal.signal(signal.SIGINT, stop)
 	try:
+		first_worker_iteration = True
 		while running:
-			if explicit_requested:
-				workers = [explicit_worker] if explicit_worker is not None else []
-			else:
-				workers = _discovered_runtime_workers()
+			workers = initial_runtime_workers if first_worker_iteration else (
+				[explicit_worker] if explicit_requested and explicit_worker is not None else []
+				if explicit_requested else _discovered_runtime_workers()
+			)
 			for runtime_worker in workers:
 				try:
 					runtime_worker.run_once()
@@ -359,16 +433,18 @@ def worker() -> int:
 					pass
 			# Mission state is its own durable queue. Explicit project mode remains
 			# confined to the configured project rather than discovering neighbors.
-			mission_workers = _discovered_mission_workers(
+			mission_workers = initial_mission_workers if first_worker_iteration else _discovered_mission_workers(
 				project_only=configured_project if explicit_requested else None,
 				tenant_only=configured_tenant if explicit_requested else None,
 			)
+			first_worker_iteration = False
 			for mission_worker, tenant_id, project_id in mission_workers:
 				key = (tenant_id, project_id)
 				thread = mission_threads.get(key)
 				if (thread is None or not thread.is_alive()) and len([item for item in mission_threads.values() if item.is_alive()]) < 2:
 					thread = threading.Thread(target=mission_worker.run_once, args=(tenant_id, project_id), daemon=True, name=f"mission-{project_id[:24]}")
 					mission_threads[key] = thread; thread.start()
+				_notification_tick(tenant_id, project_id)
 			for key, thread in list(mission_threads.items()):
 				if not thread.is_alive(): mission_threads.pop(key, None)
 			try:

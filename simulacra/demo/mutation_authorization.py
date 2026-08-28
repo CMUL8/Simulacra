@@ -19,10 +19,12 @@ def require_room_mutation_authority(
 	if not actor_id:
 		raise PermissionError("a Project Room owner or admin is required for project mutation")
 	try:
-		room = JsonCollaborationRepository(_collaboration_root).get_room(tenant_id, project_id)
+		repository = JsonCollaborationRepository(_collaboration_root)
+		room = repository.get_room(tenant_id, project_id)
 	except CollaborationError as exc:
 		raise PermissionError("a Project Room owner or admin is required for project mutation") from exc
-	if not any(member.actor_id == actor_id and member.role in {"owner", "admin"} for member in room.members):
+	member = repository.visible_member(room, actor_id)
+	if member is None or member.role not in {"owner", "admin"}:
 		raise PermissionError("a Project Room owner or admin is required for project mutation")
 
 

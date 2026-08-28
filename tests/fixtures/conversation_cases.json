@@ -1,0 +1,12 @@
+{
+  "fixed_at": "2026-01-02T09:00:00Z",
+  "cases": {
+    "root_and_reply": { "root_id": "message_root", "reply_id": "message_reply", "reply_to": "message_root" },
+    "duplicate_request": { "client_request_id": "request_duplicate", "expected_message_id": "message_once" },
+    "ordered_two_agent_assignment": { "message_id": "message_assign", "agent_ids": ["agent_analyst", "agent_editor"], "expected_order": ["agent_analyst", "agent_editor"] },
+    "edit_delete_audit": { "message_id": "message_audit", "revisions": ["created", "edited", "deleted"] },
+    "tombstone_link_preservation": { "deleted_message_id": "message_deleted", "reply_id": "message_survives", "expected_body": null },
+    "reactions": { "message_id": "message_react", "reactions": [{ "emoji": "check", "human_ids": ["human_ada", "human_maya"] }] },
+    "private_saves": { "message_id": "message_saved", "saved_by": ["human_ada"], "not_visible_to": ["human_maya"] }
+  }
+}

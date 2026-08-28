@@ -40,6 +40,24 @@ def test_preflight_accepts_contract_and_reports_all_failures():
     assert set(result.checked) == set(REQUIRED)
 
 
+@pytest.mark.parametrize("preview_origin", [
+    "https://preview.example.test/not-an-origin",
+    "https://preview.example.test:invalid-port",
+    "https://human@preview.example.test",
+])
+def test_preflight_fails_closed_for_malformed_preview_origins(preview_origin: str):
+    environment = valid_environment() | {
+        "CMUL8_WORKPLACE_PREVIEW_ORIGIN_V1": "true",
+        "CONTROL_ORIGIN": "https://app.example.test",
+        "PREVIEW_ORIGIN": preview_origin,
+        "PREVIEW_REGISTRABLE_DOMAIN": "example.test",
+        "CMUL8_PREVIEW_EXCHANGE_SECRET": "test-secret",
+    }
+    result = validate_environment(environment)
+    assert not result.ok
+    assert any("preview origin" in error for error in result.errors)
+
+
 def test_smoke_checks_are_injected_ordered_and_do_not_short_circuit():
     observed: list[str] = []
     checks = {}

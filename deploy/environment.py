@@ -71,7 +71,54 @@ def validate_environment(environment: Mapping[str, str], *, resolve_hosts: bool 
         )
     if environment.get("CMUL8_TLS_REQUIRED", "true").lower() not in {"true", "1", "yes"}:
         warnings.append("TLS is not marked required")
+    preview_enabled = environment.get("CMUL8_WORKPLACE_PREVIEW_ORIGIN_V1", "").lower() in {"1", "true", "yes"}
+    control_origin = environment.get("CONTROL_ORIGIN") or environment.get("CMUL8_CONTROL_ORIGIN")
+    preview_origin = environment.get("PREVIEW_ORIGIN") or environment.get("CMUL8_PREVIEW_ORIGIN")
+    preview_secret = environment.get("CMUL8_PREVIEW_EXCHANGE_SECRET") or environment.get("SIMULACRA_PREVIEW_EXCHANGE_SECRET")
+    if preview_enabled or control_origin or preview_origin:
+        control = _safe_origin(control_origin)
+        preview = _safe_origin(preview_origin)
+        if control is None or preview is None:
+            errors.append("preview origin requires exact control and preview HTTPS/HTTP origins")
+        elif control.scheme != "https" or preview.scheme != "https":
+            errors.append("preview origin requires HTTPS on both control and preview hosts")
+        elif control.hostname == preview.hostname or not _same_site(
+            control.hostname, preview.hostname,
+            environment.get("PREVIEW_REGISTRABLE_DOMAIN") or environment.get("CMUL8_PREVIEW_REGISTRABLE_DOMAIN"),
+        ):
+            errors.append("preview origin must use a same-site distinct hostname from control")
+        if preview_enabled and not preview_secret:
+            errors.append("CMUL8_PREVIEW_EXCHANGE_SECRET is required when preview origin is enabled")
     return PreflightResult(not errors, tuple(errors), tuple(warnings), tuple(REQUIRED))
+
+
+def _safe_origin(value: str | None):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = urlparse(value.strip())
+        # Accessing ``port`` is deliberate: urllib otherwise accepts a malformed
+        # port in a URL that cannot be an exact browser origin.
+        _ = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"} or not parsed.hostname
+        or parsed.username or parsed.password or parsed.path not in {"", "/"}
+        or parsed.query or parsed.fragment
+    ):
+        return None
+    return parsed
+
+
+def _same_site(first: str | None, second: str | None, registrable_domain: str | None) -> str | None:
+    if not first or not second or not isinstance(registrable_domain, str):
+        return None
+    domain = registrable_domain.lower().strip(".")
+    labels = domain.split(".")
+    if len(labels) < 2 or any(not label or not label.replace("-", "").isalnum() for label in labels):
+        return None
+    return domain if first.lower().endswith(f".{domain}") and second.lower().endswith(f".{domain}") and first != second else None
 
 
 def redacted_environment(environment: Mapping[str, str]) -> dict[str, str]:

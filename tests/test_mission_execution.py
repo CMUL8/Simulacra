@@ -65,6 +65,39 @@ def _force_trigger_due(service: MissionService, trigger_id: str, due_at: str) ->
     )
 
 
+def test_pending_commit_or_queued_before_complete_is_never_claimed(tmp_path: Path):
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    agent = service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    pending = service.create_assignment_pending_run(
+        "tenant_1", "project_1", run_id="run_pending_commit", transaction_id="txn_pending_commit",
+        trigger={"type": "conversation_assignment"}, graph_revision="revision_1", assigned_agent_ids=[agent.id],
+    )
+    assert pending.status == "pending_commit"
+    assert service.claim_next("tenant_1", "project_1", "worker") is None
+    service.activate_assignment_run("tenant_1", "project_1", run_id=pending.id, transaction_id="txn_pending_commit")
+    assert service.claim_next("tenant_1", "project_1", "worker") is None
+    # A public callback is not an admission capability and cannot bypass the
+    # coordinator's durable COMPLETE check.
+    assert service.claim_next("tenant_1", "project_1", "worker", assignment_admission=lambda _identifier: True) is None
+
+
+def test_pending_assignment_keeps_prior_contract_until_irreversible_activation(tmp_path: Path):
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    agent = service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    prior, pinned = "revision_prior", "revision_pinned"
+    _record_mission_contract(service, prior)
+    pending = service.create_assignment_pending_run(
+        "tenant_1", "project_1", run_id="run_pending_contract", transaction_id="txn_pending_contract",
+        trigger={"type": "conversation_assignment"}, graph_revision=pinned, assigned_agent_ids=[agent.id],
+    )
+    assert pending.contract_revision == pinned
+    assert service.mission("tenant_1", "project_1").approved_contract_revision == prior
+    service.activate_assignment_run("tenant_1", "project_1", run_id=pending.id, transaction_id="txn_pending_contract")
+    assert service.mission("tenant_1", "project_1").approved_contract_revision == pinned
+
+
 def test_automatic_cron_is_once_only_across_ticks_and_worker_replicas(tmp_path: Path):
     revision = _approved_workspace(tmp_path)
     root = tmp_path / "control"

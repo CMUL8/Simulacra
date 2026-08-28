@@ -93,6 +93,9 @@ def pg_list_users() -> list[dict[str, Any]]:
 			"is_platform_admin": bool(r["is_platform_admin"]),
 			"status": r["status"],
 			"created_at": _iso(r["created_at"]),
+			"verified_email": r.get("verified_email"),
+			"verified_email_at": _iso(r.get("verified_email_at")) if r.get("verified_email_at") else None,
+			"provider_subject": r.get("provider_subject"),
 		}
 		for r in rows
 	]
@@ -111,6 +114,9 @@ def pg_get_user(user_id: str) -> dict[str, Any] | None:
 		"is_platform_admin": bool(r["is_platform_admin"]),
 		"status": r["status"],
 		"created_at": _iso(r["created_at"]),
+		"verified_email": r.get("verified_email"),
+		"verified_email_at": _iso(r.get("verified_email_at")) if r.get("verified_email_at") else None,
+		"provider_subject": r.get("provider_subject"),
 	}
 
 
@@ -128,8 +134,8 @@ def pg_insert_user(data: dict[str, Any]) -> None:
 	with connection() as conn:
 		conn.execute(
 			"""
-			INSERT INTO users (id, email, name, password_hash, is_platform_admin, status, created_at)
-			VALUES (%(id)s, %(email)s, %(name)s, %(password_hash)s, %(is_platform_admin)s, %(status)s, %(created_at)s)
+			INSERT INTO users (id, email, name, password_hash, is_platform_admin, status, created_at, verified_email, verified_email_at, provider_subject)
+			VALUES (%(id)s, %(email)s, %(name)s, %(password_hash)s, %(is_platform_admin)s, %(status)s, %(created_at)s, %(verified_email)s, %(verified_email_at)s, %(provider_subject)s)
 			""",
 			{
 				"id": data["id"],
@@ -139,6 +145,7 @@ def pg_insert_user(data: dict[str, Any]) -> None:
 				"is_platform_admin": bool(data.get("is_platform_admin", False)),
 				"status": data.get("status", "active"),
 				"created_at": data.get("created_at") or datetime.now(UTC).isoformat(),
+				"verified_email": data.get("verified_email"), "verified_email_at": data.get("verified_email_at"), "provider_subject": data.get("provider_subject"),
 			},
 		)
 
@@ -149,6 +156,15 @@ def pg_update_user_password(user_id: str, password_hash: str) -> None:
 			"UPDATE users SET password_hash = %s WHERE id = %s",
 			(password_hash, user_id),
 		)
+
+
+def pg_record_verified_provider_identity(user_id: str, provider_subject: str, verified_email: str) -> dict[str, Any]:
+	with connection() as conn:
+		row = conn.execute("SELECT provider_subject FROM users WHERE id = %s FOR UPDATE", (user_id,)).fetchone()
+		if not row or row.get("provider_subject") not in {None, provider_subject}:
+			raise PermissionError("verified identity subject mismatch")
+		conn.execute("UPDATE users SET provider_subject = %s, verified_email = %s, verified_email_at = NOW() WHERE id = %s", (provider_subject, verified_email, user_id))
+	return pg_get_user(user_id)  # type: ignore[return-value]
 
 
 # ── Memberships ──────────────────────────────────────────────────────
@@ -173,6 +189,8 @@ def pg_list_memberships(
 			"user_id": r["user_id"],
 			"role": r["role"],
 			"created_at": _iso(r["created_at"]),
+			"transaction_id": r.get("transaction_id"),
+			"visibility_state": r.get("visibility_state") or "committed",
 		}
 		for r in rows
 	]
@@ -182,15 +200,16 @@ def pg_upsert_membership(data: dict[str, Any]) -> None:
 	with connection() as conn:
 		conn.execute(
 			"""
-			INSERT INTO memberships (tenant_id, user_id, role, created_at)
-			VALUES (%(tenant_id)s, %(user_id)s, %(role)s, %(created_at)s)
-			ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role
+			INSERT INTO memberships (tenant_id, user_id, role, created_at, transaction_id, visibility_state)
+			VALUES (%(tenant_id)s, %(user_id)s, %(role)s, %(created_at)s, %(transaction_id)s, %(visibility_state)s)
+			ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role, transaction_id = EXCLUDED.transaction_id, visibility_state = EXCLUDED.visibility_state
 			""",
 			{
 				"tenant_id": data["tenant_id"],
 				"user_id": data["user_id"],
 				"role": data.get("role", "member"),
 				"created_at": data.get("created_at") or datetime.now(UTC).isoformat(),
+				"transaction_id": data.get("transaction_id"), "visibility_state": data.get("visibility_state", "committed"),
 			},
 		)
 
@@ -201,6 +220,11 @@ def pg_delete_membership(tenant_id: str, user_id: str) -> None:
 			"DELETE FROM memberships WHERE tenant_id = %s AND user_id = %s",
 			(tenant_id, user_id),
 		)
+
+
+def pg_update_membership_visibility(tenant_id: str, user_id: str, transaction_id: str, visibility_state: str) -> None:
+	with connection() as conn:
+		conn.execute("UPDATE memberships SET visibility_state = %s WHERE tenant_id = %s AND user_id = %s AND transaction_id = %s", (visibility_state, tenant_id, user_id, transaction_id))
 
 
 # ── Sessions ─────────────────────────────────────────────────────────

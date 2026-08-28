@@ -18,7 +18,7 @@ export function OperationGraphReview({ revision, state = "ready", canReview = fa
   async function submitComment() { if (!adapter?.addComment || !comment.trim()) return; setPending(true); try { await adapter.addComment(revision!.id, comment.trim(), tab); setComment(""); } finally { setPending(false); } }
   return (
     <section className="cm-graph" aria-labelledby="cm-graph-title">
-      <header className="cm-graph__header"><div><span className="cm-graph__eyebrow">Operation Graph · revision {revision.revision}</span><h2 id="cm-graph-title">{revision.title}</h2><p>{revision.objective}</p></div><span className={`cm-graph__review cm-graph__review--${revision.review.state}`}>{revision.review.state.replace("_", " ")}</span></header>
+	  <header className="cm-graph__header"><div><span className="cm-graph__eyebrow">Mission plan · revision {revision.revision}</span><h2 id="cm-graph-title">{revision.title}</h2><p>{revision.objective}</p></div><span className={`cm-graph__review cm-graph__review--${revision.review.state}`}>{revision.review.state.replace("_", " ")}</span></header>
       <nav className="cm-graph__tabs" aria-label="Graph review views">{(["business", "technical", "impact"] as const).map((item) => <button type="button" key={item} aria-current={tab === item ? "page" : undefined} onClick={() => setTab(item)}>{item}</button>)}</nav>
       <div className="cm-graph__layout"><div className="cm-graph__main">
         {tab === "business" ? <div className="cm-graph__sections">{revision.businessSections.map((section) => <article key={section.id} id={`graph-${section.id}`}><h3>{section.title}</h3><p>{section.body}</p></article>)}</div> : null}

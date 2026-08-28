@@ -1,0 +1,23 @@
+{
+  "tenant": { "id": "tenant_demo", "display_name": "Demo workspace" },
+  "missions": [
+    { "id": "mission_close", "title": "Close the month", "status": "active", "created_at": "2026-01-02T09:00:00Z", "updated_at": "2026-01-02T09:05:00Z" },
+    { "id": "mission_report", "title": "Publish the operating report", "status": "needs_human", "created_at": "2026-01-02T09:01:00Z", "updated_at": "2026-01-02T09:06:00Z" },
+    { "id": "mission_code", "title": "Improve the review app", "status": "draft", "created_at": "2026-01-02T09:02:00Z", "updated_at": "2026-01-02T09:07:00Z" }
+  ],
+  "humans": [
+    { "id": "human_ada", "display_name": "Ada", "role": "owner" },
+    { "id": "human_maya", "display_name": "Maya", "role": "member" }
+  ],
+  "agents": [
+    { "id": "agent_analyst", "display_name": "Analyst", "role": "Reconciliation analyst", "status": "working" },
+    { "id": "agent_editor", "display_name": "Editor", "role": "Report editor", "status": "ready" }
+  ],
+  "approvals": [
+    { "id": "approval_publish", "mission_id": "mission_report", "title": "Approve report publication", "status": "pending", "requested_at": "2026-01-02T09:04:00Z" }
+  ],
+  "outputs": [
+    { "id": "output_staged", "mission_id": "mission_code", "name": "review.html", "status": "staged", "sha256": "2a7f8d81", "created_at": "2026-01-02T09:03:00Z" },
+    { "id": "output_verified", "mission_id": "mission_report", "name": "weekly-report.md", "status": "verified", "sha256": "82f77840", "created_at": "2026-01-02T09:07:00Z" }
+  ]
+}

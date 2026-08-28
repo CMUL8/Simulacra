@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
 import queue
+import re
+import zipfile
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from apps.api.security import audit_request, get_auth, require_perm, require_project_access
+from apps.api.file_routes import authorized_file_inventory
+from apps.api.workplace_routes import router as workplace_router
 from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
 from simulacra.demo.checkpoints import list_checkpoints
 from simulacra.demo.design_brief import merge_brief, update_project_brief
@@ -77,26 +81,189 @@ from simulacra.demo.tenants import (
 )
 from simulacra.env import load_dotenv
 from simulacra.resolve import resolve_prime_agent
+from simulacra.workplace.config import workplace_flags_for_tenant
 from simulacra.operation_graph import OperationGraphStore
 from simulacra.operation_graph.errors import OperationGraphError, UnapprovedRevisionError
 from simulacra.collaboration.errors import CollaborationError
+from simulacra.missions import JsonMissionRepository, MissionService
 from apps.api.cmul8_routes import router as cmul8_router
 from apps.api.mission_routes import router as mission_router
+from apps.api.preference_routes import router as preference_router
+from apps.api.preview_routes import preview_origin_config, preview_origin_hostname, router as preview_router
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("simulacra.api")
 _collaboration_root = RUNS_DIR / ".cmul8-control"
+_mission_root = RUNS_DIR / ".mission-control"
+
+
+def _public_text(value: Any) -> Any:
+	if isinstance(value, str):
+		value = re.sub(r"operation\s+graph", "Mission plan", value, flags=re.IGNORECASE)
+		return re.sub(r"codex", "agent", value, flags=re.IGNORECASE)
+	if isinstance(value, list):
+		return [_public_text(item) for item in value]
+	if isinstance(value, dict):
+		return {key: _public_text(item) for key, item in value.items()}
+	return value
+
+
+def _public_job(value: Any) -> dict[str, Any] | None:
+	if not isinstance(value, dict):
+		return None
+	return _public_text({key: value[key] for key in {"id", "kind", "status", "cancel_requested", "label"} if key in value})
+
+
+def _public_source_file(value: Any) -> dict[str, Any]:
+	if not isinstance(value, dict):
+		return {}
+	return {
+		key: value[key]
+		for key in {"name", "size", "type", "status", "detail", "row_count"}
+		if key in value
+	}
+
+
+def _public_source_profile(value: Any) -> dict[str, Any] | None:
+	if not isinstance(value, dict):
+		return None
+	return {
+		key: value[key]
+		for key in {
+			"row_count", "columns", "vendors", "themes", "high_risk", "medium_risk", "low_risk",
+			"regions", "owners", "source_files", "empty_room", "suggested_primary",
+			"suggested_must_have", "nuance_notes",
+		}
+		if key in value
+	}
+
+
+def _public_extract(value: Any) -> dict[str, Any] | None:
+	if not isinstance(value, dict):
+		return None
+	return {key: value[key] for key in {"row_count", "errors", "skipped", "ok_files"} if key in value}
+
+
+def _public_plan_preview(value: Any) -> dict[str, Any]:
+	if not isinstance(value, dict):
+		return {}
+	public = {key: value[key] for key in {
+		"row_count", "high_risk", "medium_risk", "low_risk", "vendors", "themes",
+		"summary", "sample_rows",
+	} if key in value}
+	if isinstance(value.get("files"), list):
+		public["files"] = [_public_source_file(item) for item in value["files"] if isinstance(item, dict)]
+	if (extract := _public_extract(value.get("extract"))) is not None:
+		public["extract"] = extract
+	if isinstance(value.get("source_room"), dict):
+		public["source_room"] = {
+			key: value["source_room"][key]
+			for key in {"empty", "row_count", "file_count", "file_names", "vendors", "looks_like_vendor_sample"}
+			if key in value["source_room"]
+		}
+	return _public_text(public)
+
+
+def _public_project_snapshot(value: dict[str, Any]) -> dict[str, Any]:
+	"""Project HTTP view: keep workspace state, never runner/session state."""
+	if not isinstance(value.get("project"), dict) and isinstance(value.get("id"), str):
+		# Compatibility for narrow internal callers that return only a project id.
+		return {"id": value["id"]}
+	raw_project = value.get("project") if isinstance(value.get("project"), dict) else {}
+	project = {key: raw_project[key] for key in {
+		"id", "prompt", "goal", "tenant_id", "phase", "plan_approved", "status", "artifact_kind",
+		"gates_status", "deployed", "deploy_url", "chat", "active_chat_id", "chats", "chat_index",
+		"app_config", "row_count", "checkpoints", "active_checkpoint", "design_brief", "created_at",
+	} if key in raw_project}
+	if isinstance(project.get("chat"), list):
+		project["chat"] = [
+			{key: item[key] for key in {"role", "content", "at"} if key in item}
+			for item in project["chat"] if isinstance(item, dict)
+		]
+	for thread_key in ("chats", "chat_index"):
+		if not isinstance(project.get(thread_key), list):
+			continue
+		project[thread_key] = [
+			{
+				**{key: item[key] for key in {"id", "title", "created_at", "updated_at", "message_count", "artifact_kind", "artifact_mode", "active"} if key in item},
+				**({"messages": [{key: message[key] for key in {"role", "content", "at"} if key in message} for message in item["messages"] if isinstance(message, dict)]} if isinstance(item.get("messages"), list) else {}),
+			}
+			for item in project[thread_key] if isinstance(item, dict)
+		]
+	project["plan_preview"] = _public_plan_preview(raw_project.get("plan_preview"))
+	public: dict[str, Any] = {
+		"project": _public_text(project),
+		"preview_data": _public_text(value.get("preview_data") if isinstance(value.get("preview_data"), dict) else {"columns": [], "rows": [], "row_count": 0}),
+		"preview_url": _public_text(value.get("preview_url")) if value.get("preview_url") is not None else None,
+	}
+	for key in {"status", "cancelled", "already_idle"}:
+		if key in value:
+			public[key] = _public_text(value[key])
+	return public
+
+
+def _public_project_event(value: Any) -> dict[str, Any]:
+	"""Safe event feed shape shared by JSON polling and SSE."""
+	if not isinstance(value, dict):
+		return {}
+	event_type = str(value.get("type") or "phase")
+	status = str(value.get("status") or "running")
+	if event_type == "tool":
+		return {"id": value.get("id"), "ts": value.get("ts"), "type": "phase", "label": "Mission work", "detail": "Progress update", "status": status if status in {"running", "done", "fail"} else "running"}
+	label = str(_public_text(value.get("label") or "Mission update"))
+	detail = str(_public_text(value.get("detail") or ""))
+	if re.search(r"provider|runtime|model|session|tool|invocation|lease|sandbox", f"{label} {detail}", re.IGNORECASE):
+		label, detail = "Mission update", "Progress update"
+	return {"id": value.get("id"), "ts": value.get("ts"), "type": event_type if event_type in {"phase", "think", "gate", "message", "error", "done"} else "phase", "label": label, "detail": detail, "status": status if status in {"running", "done", "fail"} else "running"}
+
+
+def _public_project_audit(project_id: str) -> dict[str, Any]:
+	"""Audit evidence for humans; durable control-plane files never leave disk."""
+	snapshot = _public_project_snapshot(project_snapshot(project_id))
+	project = snapshot.get("project") if isinstance(snapshot.get("project"), dict) else {}
+	project_evidence = {
+		key: project[key] for key in {
+			"id", "prompt", "goal", "phase", "plan_approved", "status", "artifact_kind",
+			"gates_status", "deployed", "deploy_url", "app_config", "row_count", "created_at",
+		} if key in project
+	}
+	checkpoints = [
+		{key: item[key] for key in {"id", "label", "created_at", "current", "has_files"} if key in item}
+		for item in list_checkpoints(project_id)
+	]
+	deliverables: list[dict[str, Any]] = []
+	try:
+		state = load_state(project_id)
+		for item in MissionService(JsonMissionRepository(_mission_root)).deliverables(state.tenant_id, project_id):
+			row = item.to_dict()
+			deliverables.append({
+				key: row[key] for key in {
+					"id", "name", "type", "version", "state", "verified_by",
+					"verified_at", "created_at", "updated_at",
+				} if key in row
+			})
+	except Exception:
+		# A project can predate Missions; its ordinary project evidence still exports.
+		pass
+	return {
+		"project": _public_text(project_evidence),
+		"events": [_public_project_event(item) for item in list_events(project_id)],
+		"checkpoints": _public_text(checkpoints),
+		"deliverables": _public_text(deliverables),
+	}
 
 
 def _require_room_graph_authority(project_id: str, ctx: AuthContext) -> None:
 	"""Require current durable room ownership before graph approval or build."""
 	tenant_id = ctx.tenant_id if ctx.tenant_id != "*" else load_state(project_id).tenant_id
 	try:
-		room = JsonCollaborationRepository(_collaboration_root).get_room(tenant_id, project_id)
+		repository = JsonCollaborationRepository(_collaboration_root)
+		room = repository.get_room(tenant_id, project_id)
 	except CollaborationError as exc:
 		raise HTTPException(403, "project room owner or admin role required for Operation Graph mutations") from exc
-	if not any(member.actor_id == ctx.user.id and member.role in {"owner", "admin"} for member in room.members):
+	member = repository.visible_member(room, ctx.user.id)
+	if member is None or member.role not in {"owner", "admin"}:
 		raise HTTPException(403, "project room owner or admin role required for Operation Graph mutations")
 
 
@@ -134,13 +301,31 @@ def _job_conflict_http(exc: Exception) -> HTTPException:
 app = FastAPI(title="Simulacra API", version="0.8.0")
 app.include_router(cmul8_router)
 app.include_router(mission_router)
-app.add_middleware(
-	CORSMiddleware,
-	allow_origins=["*"],
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
-)
+app.include_router(workplace_router)
+app.include_router(preference_router)
+app.include_router(preview_router)
+
+
+@app.middleware("http")
+async def _isolate_preview_origin(request: Request, call_next):
+	"""The preview host is an untrusted app origin, never a control API host."""
+	preview_host = preview_origin_hostname()
+	if preview_host is not None and request.url.hostname == preview_host:
+		path = request.url.path
+		allowed = (
+			(request.method in {"OPTIONS", "POST"} and path == "/preview/exchange")
+			or (
+				request.method == "GET"
+				and bool(re.fullmatch(r"/projects/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}/preview(?:/.*)?", path))
+			)
+		)
+		if not allowed:
+			return Response(
+				content=json.dumps({"code": "preview_unavailable", "message": "Preview is unavailable."}),
+				status_code=404,
+				media_type="application/json",
+			)
+	return await call_next(request)
 
 
 @app.on_event("startup")
@@ -234,50 +419,29 @@ class ApiKeyBody(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-	from simulacra.demo.clerk_auth import clerk_enabled
-	from simulacra.demo.prime_hook import prime_enabled
-
-	sb = sandbox_status()
 	return {
 		"status": "ok",
-		"product": "simulacra",
-		"prime": "enabled" if prime_enabled() else "off",
-		"sandbox": sb.get("active"),
-		"auth_required": auth_required(),
-		"identity": db_health(),
-		"siem": siem_status(),
-		"clerk": clerk_enabled(),
-		"version": "0.8.0",
+		"ready": True,
 	}
 
 
 @app.get("/ready")
 def ready() -> dict[str, Any]:
-	checks: dict[str, bool] = {"runs_dir": True}
-	try:
-		resolve_prime_agent(prefer_source=True)
-		checks["prime_binary"] = True
-	except Exception:
-		checks["prime_binary"] = False
-	from simulacra.demo.prime_hook import prime_enabled
-
-	checks["prime_flag"] = prime_enabled()
-	checks["bootstrap"] = True
 	ensure_bootstrap()
-	return {"ready": True, "checks": checks, "sandbox": sandbox_status()}
+	return {"ready": True}
 
 
 @app.get("/healthz")
 def liveness() -> dict[str, str]:
-	return {"status": "live", "service": "cmul8-api"}
+	return {"status": "live"}
 
 
 @app.get("/readyz")
 def readiness() -> dict[str, Any]:
 	identity = db_health()
 	if not identity.get("ok", identity.get("status") in {"ok", "healthy"}):
-		raise HTTPException(503, "database is not ready")
-	return {"status": "ready", "service": "cmul8-api", "identity": identity}
+		raise HTTPException(503, "service is not ready")
+	return {"status": "ready"}
 
 
 # ── Auth ─────────────────────────────────────────────────────────────
@@ -365,6 +529,7 @@ def auth_me(ctx: Annotated[AuthContext, Depends(get_auth)]) -> dict:
 		"role": ctx.role,
 		"auth_via": ctx.auth_via,
 		"tenants": user_tenants(ctx.user),
+		"workplace_flags": workplace_flags_for_tenant(ctx.tenant_id),
 	}
 
 
@@ -595,21 +760,10 @@ def project_files(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	from simulacra.demo.sources import list_source_files
-
-	files = [
-		{
-			"name": s.name,
-			"size": s.size,
-			"type": s.type,
-			"status": s.status,
-			"detail": s.detail,
-			"sha256": s.sha256[:16] if s.sha256 else "",
-			"row_count": s.row_count,
-		}
-		for s in list_source_files(project_id)
-	]
-	return {"files": files}
+	# Keep legacy callers on the authorized Mission file projection.  The mounted
+	# workplace route normally wins by registration order; this bridge remains
+	# correct if that order changes and preserves the historical ``files`` key.
+	return authorized_file_inventory(project_id, kind="all", ctx=ctx)
 
 
 @app.get("/projects/{project_id}/sources")
@@ -617,15 +771,17 @@ def get_sources(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	from simulacra.demo.sources import content_fingerprint, list_source_files
-
+	inventory = authorized_file_inventory(project_id, kind="source", ctx=ctx)
 	state = load_state(project_id)
 	preview = state.plan_preview or {}
+	# Loading legacy project details happens outside the file projection lock.
+	# Re-authorize immediately before publishing either file or detail data so a
+	# human removed during that load receives no stale Mission response.
+	inventory = authorized_file_inventory(project_id, kind="source", ctx=ctx)
 	return {
-		"files": [s.to_dict() for s in list_source_files(project_id)],
-		"fingerprint": content_fingerprint(project_id),
-		"profile": preview.get("profile"),
-		"extract": preview.get("extract"),
+		"files": inventory["files"],
+		"profile": _public_source_profile(preview.get("profile")),
+		"extract": _public_extract(preview.get("extract")),
 		"row_count": preview.get("row_count") or state.row_count,
 	}
 
@@ -649,7 +805,7 @@ def delete_source(
 		start_reingest(project_id)
 	except ValueError as exc:
 		raise HTTPException(409, str(exc)) from exc
-	return project_snapshot(project_id)
+	return _public_project_snapshot(project_snapshot(project_id))
 
 
 @app.post("/projects/{project_id}/sources/reingest")
@@ -665,7 +821,7 @@ def post_reingest(
 	except ValueError as exc:
 		raise HTTPException(409, str(exc)) from exc
 	audit_request(request, ctx, "sources.reingest", project_id=project_id)
-	return project_snapshot(project_id)
+	return _public_project_snapshot(project_snapshot(project_id))
 
 
 @app.get("/projects/{project_id}/events")
@@ -673,7 +829,7 @@ def get_events(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	return {"events": list_events(project_id)}
+	return {"events": [_public_project_event(item) for item in list_events(project_id)]}
 
 
 @app.get("/projects/{project_id}/events/stream")
@@ -687,7 +843,7 @@ async def stream_events(
 			while True:
 				try:
 					evt = await asyncio.to_thread(q.get, True, 25)
-					yield f"data: {json.dumps(evt, default=str)}\n\n"
+					yield f"data: {json.dumps(_public_project_event(evt), default=str)}\n\n"
 				except queue.Empty:
 					yield ": heartbeat\n\n"
 		finally:
@@ -705,17 +861,7 @@ def project_audit(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	root = project_dir(project_id) / "audit"
-	out: dict = {}
-	for name in ("gates.json", "deploy.json", "policy_snapshot.json", "sandbox.json"):
-		path = root / name
-		if path.exists():
-			out[name.replace(".json", "")] = json.loads(path.read_text())
-	manifest = project_dir(project_id) / "outputs" / "manifest.json"
-	if manifest.exists():
-		out["manifest"] = json.loads(manifest.read_text())
-	out["checkpoints"] = list_checkpoints(project_id)
-	return out
+	return _public_project_audit(project_id)
 
 
 @app.get("/projects/{project_id}/audit/export")
@@ -723,14 +869,22 @@ def export_audit(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> FileResponse:
-	path = export_audit_zip(project_id)
-	return FileResponse(path, filename=path.name, media_type="application/zip")
+	bundle = _public_project_audit(project_id)
+	archive = io.BytesIO()
+	with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+		zf.writestr("audit.json", json.dumps(bundle, sort_keys=True, default=str, indent=2))
+		zf.writestr("events.json", json.dumps(bundle["events"], sort_keys=True, default=str, indent=2))
+		zf.writestr("deliverables.json", json.dumps(bundle["deliverables"], sort_keys=True, default=str, indent=2))
+	return Response(
+		content=archive.getvalue(), media_type="application/zip",
+		headers={"Content-Disposition": f'attachment; filename="{project_id}-audit.zip"'},
+	)
 
 
 @app.get("/projects")
 def get_projects(ctx: Annotated[AuthContext, Depends(require_perm("project:read"))]) -> dict:
 	def _list_item(p):
-		d = p.to_dict()
+		d = _public_project_snapshot({"project": p.to_dict()})["project"]
 		d["chat_index"] = chat_summaries(p)
 		# Sidebar only needs chat metadata — full transcript loads with the project
 		d["chat"] = []
@@ -789,7 +943,7 @@ def post_project(
 		# Exclude the project we just created from soft-dup noise when it's the only match
 		if warnings:
 			snap["warnings"] = warnings
-		return snap
+		return _public_project_snapshot(snap)
 	except HTTPException:
 		raise
 	except PermissionError as exc:
@@ -812,7 +966,7 @@ def post_plan(
 ) -> dict:
 	"""Compat alias for the provider-neutral main chat."""
 	try:
-		return start_follow_up(project_id, body.message, chat_id=body.chat_id, actor_id=ctx.user.id)
+		return _public_project_snapshot(start_follow_up(project_id, body.message, chat_id=body.chat_id, actor_id=ctx.user.id))
 	except ValueError as exc:
 		raise _job_conflict_http(exc) from exc
 	except Exception as exc:
@@ -824,7 +978,7 @@ def get_project(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	return project_snapshot(project_id)
+	return _public_project_snapshot(project_snapshot(project_id))
 
 
 @app.get("/projects/{project_id}/job")
@@ -832,8 +986,7 @@ def get_project_job(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	live = get_job(project_id)
-	return {"job": job_snapshot(project_id), "live": live is not None and live.status == "running"}
+	raise HTTPException(410, "Mission progress is available in the workspace.")
 
 
 @app.post("/projects/{project_id}/cancel")
@@ -848,7 +1001,7 @@ def post_cancel(
 		audit_request(request, ctx, "project.cancel", project_id=project_id)
 	# Never 409 for "nothing to cancel" — console treats Stop as always safe
 	return {
-		**project_snapshot(project_id),
+		**_public_project_snapshot(project_snapshot(project_id)),
 		"cancelled": bool(result.get("ok") and not result.get("already_idle")),
 		"already_idle": bool(result.get("already_idle")),
 	}
@@ -861,7 +1014,7 @@ def patch_design_brief(
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 ) -> dict:
 	update_project_brief(project_id, body.design_brief)
-	return project_snapshot(project_id)
+	return _public_project_snapshot(project_snapshot(project_id))
 
 
 @app.post("/projects/{project_id}/approve", status_code=202)
@@ -870,34 +1023,7 @@ def post_approve(
 	request: Request,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
-	try:
-		_require_room_graph_authority(project_id, ctx)
-		state = load_state(project_id)
-		store = OperationGraphStore(
-			project_dir(project_id), tenant_id=state.tenant_id, project_id=project_id
-		)
-		current = store.current_revision()
-		if current is None:
-			propose_operation_graph(state, actor_id=ctx.user.id)
-			current = store.current_revision()
-		if current is None:
-			raise ValueError("Architect did not produce an Operation Graph")
-		try:
-			store.require_approved_revision(current.revision_hash)
-		except UnapprovedRevisionError:
-			store.approve_revision(current.revision_hash, actor_id=ctx.user.id)
-		approved_graph_path(load_state(project_id))
-		result = start_approve_build(project_id, actor_id=ctx.user.id)
-		audit_request(request, ctx, "project.approve", project_id=project_id, job_id=result.get("job_id"))
-		return result
-	except HTTPException:
-		raise
-	except ValueError as exc:
-		raise _job_conflict_http(exc) from exc
-	except (OperationGraphError, PermissionError) as exc:
-		raise HTTPException(409, str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(500, f"Build failed: {exc}") from exc
+	raise HTTPException(410, "Review and approve the Mission plan in Work.")
 
 
 @app.post("/projects/{project_id}/build")
@@ -910,9 +1036,10 @@ def post_build(
 	try:
 		approved_graph_path(state)
 	except (OperationGraphError, PermissionError) as exc:
-		raise HTTPException(409, str(exc)) from exc
+		log.exception("Mission plan build admission failed for %s", project_id)
+		raise HTTPException(409, "The Mission plan is not ready to start. Review it and try again.") from exc
 	build_project(state, actor_id=ctx.user.id)
-	return project_snapshot(project_id)
+	return _public_project_snapshot(project_snapshot(project_id))
 
 
 @app.post("/projects/{project_id}/chat")
@@ -922,7 +1049,7 @@ def post_chat(
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
 	try:
-		return start_follow_up(project_id, body.message, chat_id=body.chat_id, actor_id=ctx.user.id)
+		return _public_project_snapshot(start_follow_up(project_id, body.message, chat_id=body.chat_id, actor_id=ctx.user.id))
 	except ValueError as exc:
 		raise _job_conflict_http(exc) from exc
 
@@ -950,7 +1077,7 @@ def post_create_chat(
 			artifact_kind=body.artifact_kind,
 			artifact_mode=body.artifact_mode,
 		)
-		return project_snapshot(project_id)
+		return _public_project_snapshot(project_snapshot(project_id))
 	except ValueError as exc:
 		raise HTTPException(400, str(exc)) from exc
 
@@ -963,7 +1090,7 @@ def post_activate_chat(
 ) -> dict:
 	try:
 		activate_chat(project_id, body.chat_id)
-		return project_snapshot(project_id)
+		return _public_project_snapshot(project_snapshot(project_id))
 	except ValueError as exc:
 		raise HTTPException(400, str(exc)) from exc
 
@@ -976,7 +1103,7 @@ def delete_project_chat(
 ) -> dict:
 	try:
 		delete_chat(project_id, chat_id)
-		return project_snapshot(project_id)
+		return _public_project_snapshot(project_snapshot(project_id))
 	except ValueError as exc:
 		raise HTTPException(400, str(exc)) from exc
 	except FileNotFoundError as exc:
@@ -994,7 +1121,7 @@ def post_rollback(
 	try:
 		ck = body.checkpoint_id if body else None
 		rollback_project(project_id, ck)
-		return project_snapshot(project_id)
+		return _public_project_snapshot(project_snapshot(project_id))
 	except ValueError as exc:
 		raise HTTPException(400, str(exc)) from exc
 
@@ -1024,7 +1151,7 @@ def post_deploy(
 		base = f"{proto}://{host}".rstrip("/") if host else str(request.base_url).rstrip("/")
 		approve_deploy(project_id, public_base=base)
 		audit_request(request, ctx, "project.deploy", project_id=project_id)
-		return project_snapshot(project_id)
+		return _public_project_snapshot(project_snapshot(project_id))
 	except ValueError as exc:
 		raise HTTPException(400, str(exc)) from exc
 
@@ -1048,7 +1175,7 @@ async def upload_files(
 		try:
 			data = await f.read()
 			src = add_upload(project_id, filename=f.filename, data=data, overwrite=True)
-			uploaded.append(src.to_dict())
+			uploaded.append(_public_source_file(src.to_dict()))
 		except SourceError as exc:
 			errors.append(str(exc))
 	if not uploaded and errors:
@@ -1061,48 +1188,10 @@ async def upload_files(
 	if reingest and uploaded:
 		try:
 			start_reingest(project_id)
-			snap = {**project_snapshot(project_id), **snap}
+			snap = {**_public_project_snapshot(project_snapshot(project_id)), **snap}
 		except ValueError as exc:
 			snap["reingest_error"] = str(exc)
 	return snap
-
-
-@app.get("/projects/{project_id}/preview")
-@app.get("/projects/{project_id}/preview/")
-@app.get("/projects/{project_id}/preview/{full_path:path}")
-def serve_project_preview(
-	project_id: str,
-	full_path: str = "",
-) -> FileResponse:
-	"""Serve built app dist same-origin.
-
-	Unauthenticated on purpose: iframe JS/CSS/JSON fetches cannot attach
-	Bearer headers. Project ids are unguessable; listing stays behind auth.
-	"""
-	try:
-		load_state(project_id)
-	except FileNotFoundError as exc:
-		raise HTTPException(404, "Preview not ready") from exc
-	dist = project_dir(project_id) / "app" / "dist"
-	if not dist.is_dir():
-		raise HTTPException(404, "Preview not ready")
-	rel = (full_path or "index.html").lstrip("/")
-	target = (dist / rel).resolve()
-	try:
-		target.relative_to(dist.resolve())
-	except ValueError as exc:
-		raise HTTPException(404, "Not found") from exc
-	if target.is_file():
-		return FileResponse(target)
-	# Missing asset (.json/.js/.css/…) must NOT fall through to index.html —
-	# SPA fallback makes fetch().json() explode with Unexpected token '<'.
-	suffix = Path(rel).suffix.lower()
-	if suffix and suffix not in {".html", ".htm"}:
-		raise HTTPException(404, f"Not found: {rel}")
-	index = dist / "index.html"
-	if index.is_file():
-		return FileResponse(index)
-	raise HTTPException(404, "Preview not ready")
 
 
 # ── Console SPA (production / Docker) ────────────────────────────────

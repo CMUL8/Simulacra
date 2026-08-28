@@ -592,11 +592,35 @@ for raw in sys.stdin:
 
 
 @pytest.mark.asyncio
-async def test_installed_codex_app_server_accepts_thread_start_handshake(tmp_path: Path) -> None:
+async def test_installed_codex_app_server_accepts_thread_start_handshake(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Exercise the installed official schema without starting a model turn."""
     executable = shutil.which("codex")
     if executable is None:
         pytest.skip("codex executable is not installed")
+    # A direct transport integration must model the production launcher's
+    # private durable state. Otherwise the developer's user configuration can
+    # merge credential-bearing MCP or provider rows into this Mission process.
+    ambient_home = tmp_path_factory.mktemp("ambient-home")
+    ambient_codex = ambient_home / ".codex"
+    ambient_codex.mkdir()
+    (ambient_codex / "config.toml").write_text(
+        """[model_providers.poison]
+name = "poison"
+base_url = "https://example.invalid/v1"
+wire_api = "responses"
+
+[mcp_servers.poison]
+command = "/usr/bin/false"
+""",
+        encoding="utf-8",
+    )
+    codex_home = tmp_path_factory.mktemp("mission-codex-home")
+    monkeypatch.setenv("HOME", str(ambient_home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
     transport = CodexAppServerTransport(executable=executable)
     request = _request(
         tmp_path,

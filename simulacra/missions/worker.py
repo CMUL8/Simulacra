@@ -69,10 +69,11 @@ class _IsolationResources:
 
 class MissionWorker:
     def __init__(self, service: MissionService, workspace: str | Path, worker_id: str | None = None,
-                 harness_factory: Callable[..., Any] = create_harness) -> None:
+                 harness_factory: Callable[..., Any] = create_harness, coordinator: Any | None = None) -> None:
         self.service, self.workspace = service, Path(workspace).resolve(),
         self.worker_id = worker_id or os.environ.get("CMUL8_WORKER_ID", f"mission-{socket.gethostname()}")
         self.harness_factory = harness_factory
+        self.coordinator = coordinator
 
     def _admitted(self, run: MissionRun):
         try:
@@ -343,7 +344,12 @@ class MissionWorker:
         return self.consume(tenant_id, project_id)
 
     def consume(self, tenant_id: str, project_id: str) -> MissionRun | None:
-        run = self.service.claim_next(tenant_id, project_id, self.worker_id)
+        if self.coordinator is None:
+            run = self.service.claim_next(tenant_id, project_id, self.worker_id)
+        else:
+            self.coordinator.recover_project(tenant_id, project_id)
+            with self.coordinator.project_claim_guard(tenant_id, project_id) as admission:
+                run = self.service.claim_next(tenant_id, project_id, self.worker_id, assignment_admission=admission)
         if run is None: return None
         admitted, code, graph = self._admitted(run)
         if not admitted:

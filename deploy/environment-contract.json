@@ -25,7 +25,12 @@
     "CMUL8_OBJECT_STORAGE_URL": {"type": "string"},
     "CMUL8_SECRET_PROVIDER": {"type": "string"},
     "CMUL8_IMAGE_REGISTRY": {"type": "string"},
-    "CMUL8_TLS_REQUIRED": {"type": "string", "default": "true"}
+    "CMUL8_TLS_REQUIRED": {"type": "string", "default": "true"},
+    "CMUL8_WORKPLACE_PREVIEW_ORIGIN_V1": {"type": "string", "enum": ["true", "false", "1", "0"], "default": "false"},
+    "CONTROL_ORIGIN": {"type": "string"},
+    "PREVIEW_ORIGIN": {"type": "string"},
+    "PREVIEW_REGISTRABLE_DOMAIN": {"type": "string"},
+    "CMUL8_PREVIEW_EXCHANGE_SECRET": {"type": "string"}
   },
   "additionalProperties": true
 }

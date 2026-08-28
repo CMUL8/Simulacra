@@ -2,6 +2,7 @@ import { ArrowUp, Database, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactKind, Project } from "../api";
 import { GuestAuthGate } from "./GuestAuthGate";
+import { MissionLoader } from "./MissionLoader";
 import { SourcesPanel } from "./SourcesPanel";
 
 /** Prompt chips — three shown; set rotates each UTC day. */
@@ -252,14 +253,8 @@ export function Landing({
       </header>
 
       <div className="landing-content" id="start">
-        <div className="landing-product-lockup">
-          <span className="landing-product-eyebrow">OUTCOMES, IN MOTION</span>
-          <h1 className="brand-mark">Missions</h1>
-        </div>
-        <p className="landing-sub">
-          <strong>Where human judgment and AI agents move work forward together.</strong>
-          <span>Set the mission. Agents carry it through; humans guide the decisions, verify the evidence, and approve what ships.</span>
-        </p>
+		<div className="landing-product-lockup"><span className="landing-product-eyebrow">{authed && recent.length === 0 ? "YOUR FIRST MISSION" : "OUTCOMES, IN MOTION"}</span><h1 className="brand-mark">{authed && recent.length === 0 ? "What should your first Mission accomplish?" : "Missions"}</h1></div>
+		<p className="landing-sub"><strong>{authed && recent.length === 0 ? "Describe the outcome. You can add a crew and guide the important decisions next." : "Where human judgment and AI agents move work forward together."}</strong>{!(authed && recent.length === 0) ? <span>Set the Mission. Agents carry it through; humans guide the decisions, verify the evidence, and approve what ships.</span> : null}</p>
 
         {error && (
           <div className="landing-error" role="alert">
@@ -308,14 +303,12 @@ export function Landing({
         </div>
 
         {busy && (
-          <p className="landing-busy-status" role="status" aria-live="polite" aria-busy="true">
-            Starting your Mission
-            <span className="landing-busy-dots" aria-hidden>
-              <i />
-              <i />
-              <i />
-            </span>
-          </p>
+          <MissionLoader
+            label="Starting your Mission"
+            variant="signal"
+            compact
+            className="landing-busy-status"
+          />
         )}
 
         {gated && (

@@ -1,26 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
-  addCmul8Comment,
-  addCmul8RoomMember,
-  approveCmul8Graph,
+	approveCurrentMissionPlan,
+  createCmul8Invitation,
   createCmul8Room,
+	decideMissionCheckpoint,
   getCmul8Room,
   heartbeatCmul8Presence,
   markCmul8InboxRead,
   reviewCmul8Task,
   claimCmul8Task,
   transitionCmul8Task,
+	verifyMissionDeliverable,
   type Cmul8RoomPayload,
+	type MissionOverview,
 } from "../../api";
-import type { GraphComment } from "../operation-graph";
 import type { ReviewDecision } from "../shared";
-import type { DurableTaskState, MissionAssignment, ProjectRoomFeatureAdapter, ProjectRoomPermissions } from "./contracts";
+import type { DurableTaskState, MissionApprovalWork, MissionAssignment, MissionDeliverableWork, ProjectRoomFeatureAdapter, ProjectRoomPermissions, RoomMember } from "./contracts";
 import { mapCmul8RoomPayload } from "./mapper";
 import { ProjectRoom } from "./ProjectRoom";
+import { TeamRoster } from "../team/TeamRoster";
 
 const NO_PERMISSIONS: ProjectRoomPermissions = { manageTasks: false, reviewTasks: false, reviewGraph: false, handoff: false, invite: false, comment: false };
 const ROOM_REFRESH_MS = 5_000;
+const PRESENCE_HEARTBEAT_MS = 30_000;
+
+function requestId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
+}
 
 function commandDecision(decision: ReviewDecision): string {
   if (decision === "approved") return "approve";
@@ -35,11 +42,7 @@ function message(error: unknown): string {
   return raw.replace(/^Error:\s*/i, "");
 }
 
-function mentions(body: string): Array<{ ref_type: string; ref_id: string }> {
-  return [...new Set([...body.matchAll(/(?:^|\s)@([A-Za-z0-9][A-Za-z0-9_.-]{0,127})/g)].map((match) => match[1]!))].map((ref_id) => ({ ref_type: "actor", ref_id }));
-}
-
-export function ProjectRoomContainer({ projectId, missionAssignments = [], onOpenChat }: { projectId: string; missionAssignments?: MissionAssignment[]; onOpenChat?: () => void }) {
+export function ProjectRoomContainer({ projectId, missionAssignments = [], mission, onMissionRefresh, onOpenChat }: { projectId: string; missionAssignments?: MissionAssignment[]; mission?: MissionOverview | null; onMissionRefresh?: () => Promise<void>; onOpenChat?: () => void }) {
   const [payload, setPayload] = useState<Cmul8RoomPayload | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error" | "forbidden">("loading");
   const [actionError, setActionError] = useState<string>();
@@ -77,36 +80,70 @@ export function ProjectRoomContainer({ projectId, missionAssignments = [], onOpe
 
   useEffect(() => {
     let disposed = false;
-    let timer: number | undefined;
+    let refreshTimer: number | undefined;
+    let presenceTimer: number | undefined;
     setPayload(null); setState("loading"); setConnectionState("unknown");
     const refresh = async (mode: "initial" | "poll") => {
       if (disposed || document.visibilityState === "hidden") return;
-      try { await heartbeatCmul8Presence(projectId); } catch { /* GET below determines room availability. */ }
       const created = await load(mode);
       if (created && !disposed) {
-        try { await heartbeatCmul8Presence(projectId); } catch { /* Next poll retries presence. */ }
+        try { await heartbeatCmul8Presence(projectId); } catch { /* The next heartbeat retries. */ }
         await load("poll");
       }
     };
+    const heartbeat = async () => {
+      if (disposed || document.visibilityState === "hidden") return;
+      try { await heartbeatCmul8Presence(projectId); } catch { /* Presence is advisory. */ }
+    };
+    const stopTimers = () => {
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+      if (presenceTimer !== undefined) window.clearInterval(presenceTimer);
+      refreshTimer = undefined;
+      presenceTimer = undefined;
+    };
     const startPolling = (initial = false) => {
-      if (timer !== undefined) window.clearInterval(timer);
+      stopTimers();
       if (document.visibilityState !== "hidden") {
+        void heartbeat();
         void refresh(initial ? "initial" : "poll");
-        timer = window.setInterval(() => { void refresh("poll"); }, ROOM_REFRESH_MS);
+        refreshTimer = window.setInterval(() => { void refresh("poll"); }, ROOM_REFRESH_MS);
+        presenceTimer = window.setInterval(() => { void heartbeat(); }, PRESENCE_HEARTBEAT_MS);
       }
     };
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        if (timer !== undefined) window.clearInterval(timer);
-        timer = undefined;
-      } else startPolling();
+      if (document.visibilityState === "hidden") stopTimers();
+      else startPolling();
     };
     startPolling(true);
     document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => { disposed = true; if (timer !== undefined) window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibilityChange); };
+    return () => { disposed = true; stopTimers(); document.removeEventListener("visibilitychange", onVisibilityChange); };
   }, [projectId, load]);
 
   const mapped = useMemo(() => payload ? mapCmul8RoomPayload(payload, connectionState) : null, [connectionState, payload]);
+  const crewMembers = useMemo(() => {
+    const roomMembers = (mapped?.room.members ?? []).filter((member): member is RoomMember & { kind: "human" | "agent" } => member.kind === "human" || member.kind === "agent");
+    const roomIds = new Set(roomMembers.map((member) => member.id));
+    const missionAgents: Array<RoomMember & { kind: "agent" }> = (mission?.agents ?? [])
+      .filter((agent) => !roomIds.has(agent.id))
+      .map((agent) => {
+        const activeRun = mission?.runs.find((run) => run.current_agent_id === agent.id && run.status === "running");
+        return { id: agent.id, name: agent.name, role: agent.role, kind: "agent", currentTask: activeRun?.trigger_snapshot?.note };
+      });
+    return [...missionAgents, ...roomMembers];
+  }, [mapped, mission]);
+	const missionApprovals = useMemo<MissionApprovalWork[]>(() => (mission?.approvals ?? []).map((approval) => {
+		const run = mission?.runs.find((item) => item.id === approval.run_id);
+		const pending = approval.status === "pending";
+		return {
+			id: approval.id,
+			title: pending ? "Decision needed" : "Decision recorded",
+			detail: pending ? run?.trigger_snapshot?.note || "Approve this checkpoint to continue the Mission." : `Human decision: ${approval.status.replaceAll("_", " ")}.`,
+		status: pending ? "awaiting_approval" : ["approved", "consumed"].includes(approval.status) ? "done" : "closed",
+			expectedRevision: approval.revision,
+			expectedRunRevision: run?.revision ?? 0,
+		};
+	}), [mission]);
+	const missionDeliverables = useMemo<MissionDeliverableWork[]>(() => (mission?.deliverables ?? []).map((deliverable) => ({ id: deliverable.id, title: deliverable.name, detail: deliverable.state === "verified" ? "Verified Mission output" : "Review the exact output before it is accepted.", status: deliverable.state === "verified" ? "done" : "ready_for_review", expectedVersion: deliverable.version })), [mission]);
   const mutate = useCallback(async (operation: () => Promise<unknown>) => {
     setActionError(undefined);
     try { await operation(); await load("poll"); } catch (error) {
@@ -118,7 +155,10 @@ export function ProjectRoomContainer({ projectId, missionAssignments = [], onOpe
   }, [load]);
 
   const adapter = useMemo<Partial<ProjectRoomFeatureAdapter>>(() => ({
-    addMember: async (memberEmailOrId, role, revision) => { await mutate(() => addCmul8RoomMember(projectId, { ...(memberEmailOrId.includes("@") ? { member_email: memberEmailOrId } : { member_id: memberEmailOrId }), role, expected_revision: revision })); },
+    addMember: async (memberEmail, role) => {
+      if (!memberEmail.includes("@")) throw new Error("Enter the human's email address.");
+      await mutate(() => createCmul8Invitation(projectId, { client_request_id: requestId("invite"), email: memberEmail, role }));
+    },
     claimTask: async (taskId, revision) => { await mutate(() => claimCmul8Task(projectId, taskId, revision)); },
     transitionTask: async (taskId, next, revision) => {
       const current = mapped?.room.tasks.find((task) => task.id === taskId);
@@ -135,13 +175,22 @@ export function ProjectRoomContainer({ projectId, missionAssignments = [], onOpe
     submitTaskReview: async (taskId, decision, note, revision) => { await mutate(() => reviewCmul8Task(projectId, taskId, commandDecision(decision), note ?? "", revision)); },
     markInboxRead: async (eventId) => { await mutate(() => markCmul8InboxRead(projectId, eventId)); },
     reconnect: async () => { await load("manual"); },
-    approveGraph: async (revisionHash) => { await mutate(() => approveCmul8Graph(projectId, revisionHash)); },
-    addComment: async (revisionId, body, section): Promise<GraphComment> => {
-      const created = await addCmul8Comment(projectId, { body, target_type: "graph_element", target_id: revisionId, graph_revision: revisionId, graph_path: section?.startsWith("/") ? section : `/review/${section ?? "general"}`, mentions: mentions(body) });
-      await load();
-      return { id: created.id, author: created.author_id, body: created.body, createdAt: created.created_at, resolved: false, mentions: created.mentions?.map((item) => `${item.ref_type}:${item.ref_id}`), section: created.graph_path?.replace(/^\/review\//, "") ?? undefined };
-    },
-  }), [load, mapped, mutate, projectId]);
+    approveGraph: async (revision) => { await mutate(() => approveCurrentMissionPlan(projectId, revision)); },
+		decideMissionApproval: async (approvalId, decision, expectedRevision, expectedRunRevision) => { await mutate(async () => { await decideMissionCheckpoint(projectId, approvalId, decision, expectedRevision, expectedRunRevision); await onMissionRefresh?.(); }); },
+		verifyMissionDeliverable: async (deliverableId, expectedVersion) => { await mutate(async () => { await verifyMissionDeliverable(projectId, deliverableId, expectedVersion); await onMissionRefresh?.(); }); },
+  }), [load, mapped, mutate, onMissionRefresh, projectId]);
 
-  return <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} missionAssignments={missionAssignments} actionError={actionError} onOpenChat={onOpenChat} onRetryLoad={() => void load("manual")} />;
+  const inviteHuman = useCallback(async (email: string, role: "owner" | "admin" | "member" | "viewer" | "reviewer" | "approver") => {
+    const created = await createCmul8Invitation(projectId, { client_request_id: requestId("invite"), email, role });
+    const url = new URL(window.location.origin);
+    url.searchParams.set("mission_id", projectId);
+    url.searchParams.set("invitation_id", created.invitation.id);
+    url.searchParams.set("invite_token", created.token);
+    return { url: url.toString(), expiresAt: created.invitation.expires_at };
+  }, [projectId]);
+
+	return <div className="mission-workspace-layout">
+    <ProjectRoom room={mapped?.room} permissions={mapped?.permissions ?? NO_PERMISSIONS} state={state} adapter={adapter} missionAssignments={missionAssignments} missionApprovals={missionApprovals} missionDeliverables={missionDeliverables} actionError={actionError} onOpenChat={onOpenChat} onRetryLoad={() => void load("manual")} />
+    {state === "ready" && mapped?.room ? <TeamRoster members={crewMembers} canInvite={mapped.permissions.invite} onInviteMember={inviteHuman} /> : null}
+  </div>;
 }

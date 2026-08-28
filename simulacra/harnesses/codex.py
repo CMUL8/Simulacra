@@ -392,9 +392,10 @@ class CodexAppServerTransport:
         # These are supported app-server configuration overrides.  The Codex
         # server still receives OPENAI_API_KEY only to authenticate, while its
         # shell-tool environment inherits *none* of the server environment.
-        # An empty, invocation-private CODEX_HOME plus an empty MCP map means
-        # workspace/project config, plugins, skills, and MCP cannot introduce a
-        # credential-bearing subprocess path.
+        # The production launcher supplies a private durable CODEX_HOME; direct
+        # integration callers must supply the same isolation explicitly. With
+        # that home and an empty MCP map, project config, plugins, skills, and
+        # MCP cannot introduce a credential-bearing subprocess path.
         route = CodexProviderRoute.from_config(request.config)
         command = [self.executable, *mission_app_server_args(request.workspace, route)]
         if self._isolation_spec is not None:
@@ -405,7 +406,16 @@ class CodexAppServerTransport:
                 self._stderr_task = asyncio.create_task(self._drain_stderr(self._process.stderr))
             with _ACTIVE_CODEX_GROUPS_LOCK:
                 _ACTIVE_CODEX_GROUPS.add(self._process.pid)
-            await self._rpc("initialize", {"clientInfo": {"name": "cmul8", "title": "CMUL8", "version": "0.1.0"}})
+            await self._rpc(
+                "initialize",
+                {
+                    "clientInfo": {"name": "cmul8", "title": "CMUL8", "version": "0.1.0"},
+                    # runtimeWorkspaceRoots is an experimental 0.148 protocol
+                    # field and is rejected unless the client opts in during
+                    # capability negotiation.
+                    "capabilities": {"experimentalApi": True},
+                },
+            )
             await self._send({"method": "initialized", "params": {}})
             await self._verify_mission_config(request)
             await self._disable_loaded_skills(request)

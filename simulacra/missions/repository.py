@@ -56,7 +56,9 @@ class JsonMissionRepository:
 
     @staticmethod
     def _empty() -> dict[str, Any]:
-        return {"mission": None, "retention": {"dropped_events": 0}, **{name: {} for name in _COLLECTIONS}}
+        # Versioning is expand-only: V0 snapshots without this field remain
+        # readable and become V1 only on their next normal write.
+        return {"schema_version": 1, "mission": None, "retention": {"dropped_events": 0}, **{name: {} for name in _COLLECTIONS}}
 
     def _load(self, tenant_id: str, project_id: str) -> dict[str, Any]:
         directory = self._dir(tenant_id, project_id)
@@ -68,6 +70,9 @@ class JsonMissionRepository:
                 raise ValueError("invalid mission state") from exc
             if not isinstance(state, dict) or "mission" not in state:
                 raise ValueError("invalid mission state")
+            schema_version = state.setdefault("schema_version", 1)
+            if schema_version != 1:
+                raise ValueError("unsupported mission state schema")
             mission = state.get("mission")
             if mission is not None and (
                 not isinstance(mission, dict)

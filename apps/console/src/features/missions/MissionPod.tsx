@@ -8,6 +8,7 @@ import {
   decideMissionCheckpoint, getMission, updateMission, verifyMissionDeliverable,
   type MissionAgentInput, type MissionDeliverable, type MissionOverview,
 } from "../../api";
+import { MissionLoader } from "../../components/MissionLoader";
 
 const text = (value: unknown) => typeof value === "string" ? value : "";
 const pretty = (value: unknown) => text(value).replaceAll("_", " ");
@@ -18,29 +19,31 @@ const friendlyError = (value: string) => {
 };
 
 type AgentScope = "sources" | "documents" | "code";
-type AgentDraft = { name: string; mandate: string; scope: AgentScope; autonomy: MissionAgentInput["autonomy"]; };
+type AgentDraft = { name: string; role: string; mandate: string; scope: AgentScope; autonomy: MissionAgentInput["autonomy"]; };
 
 const emptyAgent: AgentDraft = {
-  name: "", mandate: "", scope: "documents", autonomy: "operate_with_checkpoints",
+  name: "", role: "", mandate: "", scope: "documents", autonomy: "operate_with_checkpoints",
 };
 
-const scopeConfig: Record<AgentScope, Pick<MissionAgentInput, "role" | "responsibilities" | "data_scope" | "tools">> = {
-  sources: { role: "Research specialist", responsibilities: ["Read Mission sources", "Return grounded findings with evidence"], data_scope: ["sources/"], tools: ["document.read", "artifact.write"] },
-  documents: { role: "Mission specialist", responsibilities: ["Work from Mission sources", "Create reviewable deliverables"], data_scope: ["sources/", "outputs/"], tools: ["document.read", "artifact.write"] },
-  code: { role: "Product builder", responsibilities: ["Work from approved requirements and sources", "Build and test staged changes for human verification"], data_scope: ["sources/", "app/"], tools: ["document.read", "code.write"] },
+const scopeConfig: Record<AgentScope, Pick<MissionAgentInput, "role" | "scope">> = {
+  sources: { role: "Research specialist", scope: "sources" },
+  documents: { role: "Mission specialist", scope: "documents" },
+  code: { role: "Product builder", scope: "app" },
 };
 
 const autonomyLabel = (value: unknown) => value === "assist" ? "returns drafts for review" : value === "execute_safely" ? "works within approved scope" : "asks before consequential work";
 
 export function MissionPod({
   projectId, projectTitle, projectPrompt = "", artifactKind = "report", focus = "summary",
-  onClose, onOpenTasks, onOpenFiles,
+  initialAgent, canCreateAgents = false, onClose, onOpenTasks, onOpenFiles,
 }: {
   projectId: string;
   projectTitle: string;
   projectPrompt?: string;
   artifactKind?: string;
-  focus?: "summary" | "crew";
+	focus?: "summary" | "crew";
+	initialAgent?: MissionAgentInput | null;
+	canCreateAgents?: boolean;
   onClose: () => void;
   onOpenTasks?: () => void;
   onOpenFiles?: () => void;
@@ -71,6 +74,12 @@ export function MissionPod({
     if (focus !== "crew" || !data) return;
     window.setTimeout(() => crewRef.current?.scrollIntoView({ block: "start" }), 0);
   }, [focus, data]);
+	useEffect(() => {
+		if (!initialAgent || !canCreateAgents) return;
+		const scope: AgentScope = initialAgent.scope === "app" ? "code" : initialAgent.scope === "sources" ? "sources" : "documents";
+		setAgent({ name: initialAgent.name, role: initialAgent.role, mandate: initialAgent.mandate, scope, autonomy: initialAgent.autonomy });
+		setAgentOpen(true);
+	}, [canCreateAgents, initialAgent]);
 
   const mission = data?.mission;
   const objectiveReady = Boolean(text(mission?.objective).trim() && text(mission?.definition_of_done).trim());
@@ -110,17 +119,18 @@ export function MissionPod({
 
   const submitAgent = async (event: FormEvent) => {
     event.preventDefault();
+    if (!canCreateAgents) {
+      setError("Only a Mission owner or admin can add agents.");
+      setAgentOpen(false);
+      return;
+    }
     try {
       await createMissionAgent(projectId, {
         name: agent.name,
-        role: scopeConfig[agent.scope].role,
+		role: agent.role.trim() || scopeConfig[agent.scope].role,
         mandate: agent.mandate,
-        responsibilities: scopeConfig[agent.scope].responsibilities,
-        data_scope: scopeConfig[agent.scope].data_scope,
-        tools: scopeConfig[agent.scope].tools,
+        scope: scopeConfig[agent.scope].scope,
         autonomy: agent.autonomy,
-        escalation_actor_id: null,
-        budget: {},
       });
       setAgent(emptyAgent);
       setAgentOpen(false);
@@ -139,7 +149,7 @@ export function MissionPod({
   };
 
   const verify = async (deliverable: MissionDeliverable) => {
-    try { await verifyMissionDeliverable(projectId, deliverable.id, deliverable.content_hash, deliverable.revision); await refresh(); }
+    try { await verifyMissionDeliverable(projectId, deliverable.id, deliverable.version); await refresh(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Verification is not permitted"); }
   };
 
@@ -157,12 +167,12 @@ export function MissionPod({
     <aside className="mission-panel" aria-label="Mission details">
       <header className="mission-panel-header"><div><span><Flag size={13} /> MISSION</span><h2>{projectTitle}</h2></div><button type="button" aria-label="Close Mission details" onClick={onClose}><X size={17} /></button></header>
       {error ? <div className="mission-panel-error" role="alert">{friendlyError(error)}<details><summary>Technical details</summary><code>{error}</code></details></div> : null}
-      {loading && !data ? <div className="mission-panel-loading">Opening Mission…</div> : !mission ? <div className="mission-panel-bootstrap"><Flag size={22} /><h3>Create the Mission workspace</h3><p>Add a durable outcome, crew, and verification boundary to this project.</p><button onClick={() => void bootstrap()}>Create Mission</button></div> : <div className="mission-panel-scroll">
+      {loading && !data ? <div className="mission-panel-loading"><MissionLoader label="Opening Mission" variant="orbit" /></div> : !mission ? <div className="mission-panel-bootstrap"><Flag size={22} /><h3>Create the Mission workspace</h3><p>Add a durable outcome, crew, and verification boundary to this project.</p><button onClick={() => void bootstrap()}>Create Mission</button></div> : <div className="mission-panel-scroll">
         <section className="mission-panel-status"><div><span className={`mission-live-dot${activeRun ? " active" : ""}`} /><div><strong>{activeRun ? pretty(activeRun.status) : pretty(mission.status) || "draft"}</strong><small>{activeRun ? "The Mission crew is working" : canRun ? "Ready to start" : "Finish setup to start"}</small></div></div><button disabled={!canRun || Boolean(activeRun)} onClick={() => void run()}><Play size={13} fill="currentColor" /> Start</button></section>
 
-        {!canRun ? <section className="mission-panel-setup"><header><span>READY TO START</span><strong>{[objectiveReady, crewReady, graphReady].filter(Boolean).length}/3</strong></header><button className={objectiveReady ? "done" : ""} onClick={() => setEditing(true)}>{objectiveReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Outcome</strong><small>{objectiveReady ? "Defined" : "Describe what done means"}</small></span><ChevronRight size={14} /></button><button className={crewReady ? "done" : ""} onClick={() => setAgentOpen(true)}>{crewReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Crew</strong><small>{crewReady ? `${data.agents.length} agent${data.agents.length === 1 ? "" : "s"}` : "Add an agent"}</small></span><ChevronRight size={14} /></button><button className={graphReady ? "done" : ""} onClick={onOpenTasks}>{graphReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Access</strong><small>{graphReady ? "Approved" : "Confirm how the crew will work"}</small></span><ChevronRight size={14} /></button></section> : null}
+        {!canRun ? <section className="mission-panel-setup"><header><span>READY TO START</span><strong>{[objectiveReady, crewReady, graphReady].filter(Boolean).length}/3</strong></header><button className={objectiveReady ? "done" : ""} onClick={() => setEditing(true)}>{objectiveReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Outcome</strong><small>{objectiveReady ? "Defined" : "Describe what done means"}</small></span><ChevronRight size={14} /></button><button className={crewReady ? "done" : ""} onClick={() => setAgentOpen(true)} disabled={!canCreateAgents}>{crewReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Crew</strong><small>{crewReady ? `${data.agents.length} agent${data.agents.length === 1 ? "" : "s"}` : canCreateAgents ? "Add an agent" : "Waiting for a Mission owner"}</small></span><ChevronRight size={14} /></button><button className={graphReady ? "done" : ""} onClick={onOpenTasks}>{graphReady ? <Check size={14} /> : <Circle size={14} />}<span><strong>Access</strong><small>{graphReady ? "Approved" : "Confirm how the crew will work"}</small></span><ChevronRight size={14} /></button></section> : null}
 
-        <section className="mission-panel-section" ref={crewRef}><header><div><span><Users size={14} /> CREW</span><strong>{data.agents.length} agent{data.agents.length === 1 ? "" : "s"}</strong></div><button onClick={() => setAgentOpen(true)}><Plus size={14} /> Agent</button></header>{data.agents.length ? <ul className="mission-panel-crew">{data.agents.map((item) => <li key={text(item.id)}><i>{text(item.name).slice(0, 1).toUpperCase()}</i><span><strong>{text(item.name)}</strong><small>{text(item.role)} · {autonomyLabel(item.autonomy)}</small></span><em /></li>)}</ul> : <button className="mission-panel-empty-action" onClick={() => setAgentOpen(true)}><Bot size={18} /><span><strong>Add the first agent</strong><small>Give an agent a job inside this Mission.</small></span></button>}</section>
+        <section className="mission-panel-section" ref={crewRef}><header><div><span><Users size={14} /> CREW</span><strong>{data.agents.length} agent{data.agents.length === 1 ? "" : "s"}</strong></div>{canCreateAgents ? <button onClick={() => setAgentOpen(true)}><Plus size={14} /> Agent</button> : null}</header>{data.agents.length ? <ul className="mission-panel-crew">{data.agents.map((item) => <li key={text(item.id)}><i>{text(item.name).slice(0, 1).toUpperCase()}</i><span><strong>{text(item.name)}</strong><small>{text(item.role)} · {autonomyLabel(item.autonomy)}</small></span><em /></li>)}</ul> : canCreateAgents ? <button className="mission-panel-empty-action" onClick={() => setAgentOpen(true)}><Bot size={18} /><span><strong>Add the first agent</strong><small>Give an agent a job inside this Mission.</small></span></button> : <p className="mission-panel-empty-copy">Waiting for a Mission owner to add the first agent.</p>}</section>
 
         {pendingApprovals.length ? <section className="mission-panel-section"><header><div><span><ShieldCheck size={14} /> YOUR DECISION</span><strong>{pendingApprovals.length}</strong></div></header><ul className="mission-panel-approvals">{pendingApprovals.map((approval) => { const run = data.runs.find((item) => item.id === approval.run_id); const agent = data.agents.find((item) => item.id === approval.agent_id); return <li key={approval.id}><div><strong>{agent?.name || "Mission agent"} is waiting</strong><small>{run?.trigger_snapshot?.note || "Approve this checkpoint to continue the run."}</small></div><span><button className="secondary" onClick={() => void decide(approval.id, "reject")}>Reject</button><button onClick={() => void decide(approval.id, "approve")}>Approve</button></span></li>; })}</ul></section> : null}
 
@@ -176,6 +186,6 @@ export function MissionPod({
       </div>}
     </aside>
 
-    {agentOpen ? <div className="mission-agent-modal-scrim"><form className="mission-agent-modal" onSubmit={submitAgent}><header><div><span>ADD AGENT</span><h2>Add an agent to the crew</h2><p>Give the agent a name, a job, and access. Missions handles everything else.</p></div><button type="button" aria-label="Close agent form" onClick={() => setAgentOpen(false)}><X size={18} /></button></header><div className="mission-agent-fields"><div className="mission-agent-presets wide"><span>START WITH A JOB</span><button type="button" onClick={() => setAgent({ ...emptyAgent, name: "Operations analyst", mandate: "Reconcile records, surface exceptions, and prepare exact evidence for human review.", scope: "documents" })}>Operations</button><button type="button" onClick={() => setAgent({ ...emptyAgent, name: "Research analyst", mandate: "Ground findings in Mission sources and produce a reviewable, cited brief.", scope: "sources" })}>Research</button><button type="button" onClick={() => setAgent({ ...emptyAgent, name: "Product builder", mandate: "Turn approved requirements and source data into a working application for human verification.", scope: "code" })}>Builder</button></div><label className="wide"><span>Name</span><input autoFocus required placeholder="e.g. Operations analyst" value={agent.name} onChange={(event) => setAgent({ ...agent, name: event.target.value })} /></label><label className="wide"><span>What should this agent own?</span><textarea required placeholder="Describe the job and what the agent should return to the Mission." value={agent.mandate} onChange={(event) => setAgent({ ...agent, mandate: event.target.value })} /></label><label><span>What can it work with?</span><select value={agent.scope} onChange={(event) => setAgent({ ...agent, scope: event.target.value as AgentScope })}><option value="sources">Mission sources</option><option value="documents">Sources and deliverables</option><option value="code">Sources and the Mission app</option></select></label><label><span>When should it ask you?</span><select value={agent.autonomy} onChange={(event) => setAgent({ ...agent, autonomy: event.target.value as MissionAgentInput["autonomy"] })}><option value="operate_with_checkpoints">Before consequential work</option><option value="assist">Before anything is final</option><option value="execute_safely">Only when outside its scope</option></select></label><p className="mission-agent-managed wide">Runtime, models, memory, and execution limits are managed by Missions.</p></div><footer><button type="button" className="secondary" onClick={() => setAgentOpen(false)}>Cancel</button><button type="submit"><Plus size={14} /> Add agent</button></footer></form></div> : null}
+	{agentOpen && canCreateAgents ? <div className="mission-agent-modal-scrim"><form className="mission-agent-modal" onSubmit={submitAgent}><header><div><span>ADD AGENT</span><h2>Add an agent to the crew</h2><p>Choose their identity, job, scope, and the checkpoints where a human should guide them.</p></div><button type="button" aria-label="Close agent form" onClick={() => setAgentOpen(false)}><X size={18} /></button></header><div className="mission-agent-fields"><div className="mission-agent-presets wide"><span>START WITH A JOB</span><button type="button" onClick={() => setAgent({ ...emptyAgent, name: "Operations analyst", role: "Operations specialist", mandate: "Reconcile records, surface exceptions, and prepare exact evidence for human review.", scope: "documents" })}>Operations</button><button type="button" onClick={() => setAgent({ ...emptyAgent, name: "Research analyst", role: "Research specialist", mandate: "Ground findings in Mission sources and produce a reviewable, cited brief.", scope: "sources" })}>Research</button><button type="button" onClick={() => setAgent({ ...emptyAgent, name: "Product builder", role: "Product builder", mandate: "Turn approved requirements and source data into a working application for human verification.", scope: "code" })}>Builder</button></div><label className="wide"><span>Name</span><input autoFocus required placeholder="e.g. Operations analyst" value={agent.name} onChange={(event) => setAgent({ ...agent, name: event.target.value })} /></label><label className="wide"><span>Job / role</span><input required placeholder="e.g. Research specialist" value={agent.role} onChange={(event) => setAgent({ ...agent, role: event.target.value })} /></label><label className="wide"><span>What should this agent own?</span><textarea required placeholder="Describe the job and what the agent should return to the Mission." value={agent.mandate} onChange={(event) => setAgent({ ...agent, mandate: event.target.value })} /></label><label><span>Scope</span><select value={agent.scope} onChange={(event) => setAgent({ ...agent, scope: event.target.value as AgentScope })}><option value="sources">Mission sources</option><option value="documents">Sources and deliverables</option><option value="code">Sources and the Mission app</option></select></label><label><span>When should it ask a human?</span><select value={agent.autonomy} onChange={(event) => setAgent({ ...agent, autonomy: event.target.value as MissionAgentInput["autonomy"] })}><option value="operate_with_checkpoints">Before consequential work</option><option value="assist">Before anything is final</option><option value="execute_safely">Only when outside its scope</option></select></label><p className="mission-agent-managed wide">Missions manages the behind-the-scenes setup.</p></div><footer><button type="button" className="secondary" onClick={() => setAgentOpen(false)}>Cancel</button><button type="submit"><Plus size={14} /> Add agent</button></footer></form></div> : null}
   </div>;
 }

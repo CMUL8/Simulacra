@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import hmac
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -78,16 +80,189 @@ class CommentTargetType(StrEnum):
 	GRAPH_ELEMENT = "graph_element"
 
 
+CONVERSATION_MESSAGE_KINDS = frozenset({
+	"human_message", "agent_message", "assignment_created", "agent_started",
+	"agent_progress", "agent_completed", "human_decision_required",
+	"human_decision_recorded", "output_ready", "output_verified",
+	"automation_event", "system_milestone",
+})
+CONVERSATION_REACTIONS = ("acknowledge", "check", "question", "celebrate")
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationMessage:
+	"""Canonical durable conversation record; public projection is allow-list based."""
+	id: str
+	tenant_id: str
+	project_id: str
+	author: dict[str, Any]
+	kind: str
+	body: str | None
+	created_at: str
+	revision: int = 1
+	root_message_id: str | None = None
+	source_message_id: str | None = None
+	links: dict[str, Any] = field(default_factory=dict)
+	deleted_at: str | None = None
+	edited_at: str | None = None
+
+	def __post_init__(self) -> None:
+		validate_scope_id(self.id, "message_id")
+		validate_scope_id(self.tenant_id, "tenant_id")
+		validate_scope_id(self.project_id, "project_id")
+		if self.kind not in CONVERSATION_MESSAGE_KINDS:
+			raise ValidationError("invalid conversation message kind")
+		if self.root_message_id is not None:
+			validate_scope_id(self.root_message_id, "root_message_id")
+		if self.source_message_id is not None:
+			validate_scope_id(self.source_message_id, "source_message_id")
+		if not isinstance(self.author, dict) or not isinstance(self.links, dict):
+			raise ValidationError("invalid conversation message metadata")
+
+	def to_dict(self) -> dict[str, Any]:
+		return _enum_dict(asdict(self))
+
+	@classmethod
+	def from_dict(cls, data: Mapping[str, Any]) -> ConversationMessage:
+		allowed = set(cls.__dataclass_fields__)
+		return cls(**{key: value for key, value in dict(data).items() if key in allowed})
+
+
+@dataclass(frozen=True, slots=True)
+class MessageAudit:
+	id: str
+	message_id: str
+	operation: str
+	actor_id: str
+	client_request_id: str
+	prior_revision: int
+	prior_body: str | None
+	resulting_revision: int
+	occurred_at: str
+
+	def __post_init__(self) -> None:
+		validate_scope_id(self.id, "message_audit_id")
+		validate_scope_id(self.message_id, "message_id")
+		validate_scope_id(self.actor_id, "actor_id")
+		if self.operation not in {"edit", "delete"}:
+			raise ValidationError("invalid message audit operation")
+
+	def to_dict(self) -> dict[str, Any]:
+		return _enum_dict(asdict(self))
+
+	@classmethod
+	def from_dict(cls, data: Mapping[str, Any]) -> MessageAudit:
+		allowed = set(cls.__dataclass_fields__)
+		return cls(**{key: value for key, value in dict(data).items() if key in allowed})
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationReaction:
+	message_id: str
+	actor_id: str
+	reaction: str
+	created_at: str
+
+	def __post_init__(self) -> None:
+		validate_scope_id(self.message_id, "message_id")
+		validate_scope_id(self.actor_id, "actor_id")
+		if self.reaction not in CONVERSATION_REACTIONS:
+			raise ValidationError("invalid conversation reaction")
+
+	def to_dict(self) -> dict[str, Any]:
+		return asdict(self)
+
+	@classmethod
+	def from_dict(cls, data: Mapping[str, Any]) -> ConversationReaction:
+		allowed = set(cls.__dataclass_fields__)
+		return cls(**{key: value for key, value in dict(data).items() if key in allowed})
+
+
+@dataclass(frozen=True, slots=True)
+class SavedReference:
+	tenant_id: str
+	human_id: str
+	object_kind: str
+	object_id: str
+	created_at: str
+
+	def __post_init__(self) -> None:
+		validate_scope_id(self.tenant_id, "tenant_id")
+		validate_scope_id(self.human_id, "human_id")
+		validate_scope_id(self.object_id, "saved_object_id")
+		if self.object_kind != "conversation_message":
+			raise ValidationError("invalid saved reference kind")
+
+	def to_dict(self) -> dict[str, Any]:
+		return asdict(self)
+
+	@classmethod
+	def from_dict(cls, data: Mapping[str, Any]) -> SavedReference:
+		allowed = set(cls.__dataclass_fields__)
+		return cls(**{key: value for key, value in dict(data).items() if key in allowed})
+
+
 @dataclass(frozen=True, slots=True)
 class Member:
 	actor_id: str
 	role: str
 	display_name: str = ""
 	joined_at: str = field(default_factory=iso_now)
+	transaction_id: str | None = None
+	visibility_state: str = "committed"
 
 	@classmethod
 	def from_dict(cls, data: Mapping[str, Any]) -> Member:
-		return cls(**dict(data))
+		row = dict(data)
+		# Expand-only compatibility: old room records were committed rows.
+		row.setdefault("transaction_id", None)
+		row.setdefault("visibility_state", "committed")
+		return cls(**row)
+
+
+@dataclass(frozen=True, slots=True)
+class Invitation:
+	"""One single-use enrollment secret; the plaintext token is never a record field."""
+	id: str
+	tenant_id: str
+	project_id: str
+	invited_by: str
+	invitee_email: str
+	requested_role: str
+	accept_token_digest: str
+	status: str
+	expires_at: str
+	accepted_actor_id: str | None = None
+	revision: int = 1
+	created_at: str = field(default_factory=iso_now)
+	updated_at: str = field(default_factory=iso_now)
+	# Durable action receipts stay private to the collaboration repository. They
+	# make a retried revoke return the original result without exposing a token.
+	mutation_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+	def __post_init__(self) -> None:
+		for value, label in ((self.id, "invitation_id"), (self.tenant_id, "tenant_id"),
+			(self.project_id, "project_id"), (self.invited_by, "invited_by")):
+			validate_scope_id(value, label)
+		if self.status not in {"pending", "accepted", "revoked", "expired"}:
+			raise ValidationError("invalid invitation status")
+		if self.visibility_digest_invalid:
+			raise ValidationError("invalid invitation token digest")
+
+	@property
+	def visibility_digest_invalid(self) -> bool:
+		return not bool(re.fullmatch(r"[0-9a-f]{64}", self.accept_token_digest))
+
+	def token_matches(self, token: str) -> bool:
+		return hmac.compare_digest(hashlib.sha256(token.encode("utf-8")).hexdigest(), self.accept_token_digest)
+
+	def to_dict(self) -> dict[str, Any]:
+		return asdict(self)
+
+	@classmethod
+	def from_dict(cls, data: Mapping[str, Any]) -> "Invitation":
+		allowed = set(cls.__dataclass_fields__)
+		return cls(**{key: value for key, value in dict(data).items() if key in allowed})
 
 
 @dataclass(slots=True)
@@ -100,6 +275,9 @@ class ProjectRoom:
 	schema_version: str = SCHEMA_VERSION
 	created_at: str = field(default_factory=iso_now)
 	updated_at: str = field(default_factory=iso_now)
+	# This is not part of the public room serializer. Keeping the receipt beside
+	# the membership change makes member removal and its retry one atomic write.
+	mutation_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 	def to_dict(self) -> dict[str, Any]:
 		return _enum_dict(asdict(self))
@@ -108,6 +286,7 @@ class ProjectRoom:
 	def from_dict(cls, data: Mapping[str, Any]) -> ProjectRoom:
 		row = dict(data)
 		row["members"] = [Member.from_dict(item) for item in row.get("members", [])]
+		row.setdefault("mutation_receipts", {})
 		return cls(**row)
 
 

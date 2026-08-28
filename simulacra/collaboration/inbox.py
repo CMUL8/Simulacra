@@ -60,7 +60,7 @@ class ActivityInbox:
 
 	def _assert_member(self, tenant_id: str, project_id: str, actor_id: str) -> None:
 		room = self.repository.get_room(tenant_id, project_id)
-		if actor_id not in {member.actor_id for member in room.members}:
+		if self.repository.visible_member(room, actor_id) is None:
 			raise AuthorizationError("actor is not a project room member")
 
 	@staticmethod
@@ -129,7 +129,10 @@ class ActivityInbox:
 				graph_path=payload.get("graph_path"), graph_revision=payload.get("graph_revision"),
 			))
 		items.reverse()
-		return items[:limit] if limit is not None else items
+		with self.repository.room_lock(tenant_id, project_id) as current_room:
+			if self.repository.visible_member(current_room, actor_id) is None:
+				raise AuthorizationError("actor is not a project room member")
+			return items[:limit] if limit is not None else items
 
 	def mark_read(
 		self, *, tenant_id: str, project_id: str, actor_id: str,

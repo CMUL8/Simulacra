@@ -18,6 +18,8 @@ from apps.api.main import liveness, readiness
 from simulacra.operation_graph import OperationGraphStore, load_operation_graph
 from simulacra.runtime import RuntimePlane
 from simulacra.missions import JsonMissionRepository, MissionService
+from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
+from simulacra.workplace import AssignmentCoordinator
 
 
 def test_preflight_rejects_missing_contract(monkeypatch):
@@ -85,6 +87,135 @@ def test_mission_cron_scheduler_ticks_and_stops_while_runtime_work_is_blocked():
 		stop.set(); scheduler_thread.join(1)
 		runtime_release.set(); runtime_thread.join(1)
 	assert not scheduler_thread.is_alive()
+
+
+def test_worker_serializes_initial_discovery_before_scheduler_and_reuses_it(monkeypatch, tmp_path):
+	"""Startup imports both worker planes before any scheduler execution begins."""
+	events: list[str] = []
+	handlers: dict[int, object] = {}
+	socket_path = tmp_path / "worker.sock"
+
+	class RuntimeWorker:
+		def __init__(self, name: str) -> None:
+			self.name = name
+
+		def run_once(self) -> None:
+			events.append(f"runtime_run:{self.name}")
+
+	class MissionWorker:
+		def __init__(self, name: str) -> None:
+			self.name = name
+
+		def schedule_due_cron(self, _tenant: str, _project: str) -> None:
+			events.append(f"mission_cron:{self.name}")
+
+		def run_once(self, _tenant: str, _project: str) -> None:
+			events.append(f"mission_run:{self.name}")
+
+	initial_runtime, later_runtime = RuntimeWorker("initial"), RuntimeWorker("later")
+	initial_mission, later_mission = MissionWorker("initial"), MissionWorker("later")
+	runtime_discoveries = 0
+	mission_discoveries = 0
+
+	def discover_runtime():
+		nonlocal runtime_discoveries
+		runtime_discoveries += 1
+		events.append(f"runtime_discovery:{runtime_discoveries}")
+		return [initial_runtime] if runtime_discoveries == 1 else [later_runtime]
+
+	def discover_mission(*, project_only=None, tenant_only=None):
+		nonlocal mission_discoveries
+		assert project_only is None and tenant_only is None
+		mission_discoveries += 1
+		events.append(f"mission_discovery:{mission_discoveries}")
+		return [(initial_mission, "tenant", "project")] if mission_discoveries == 1 else [(later_mission, "tenant", "project")]
+
+	class ControlledStop:
+		def __init__(self) -> None:
+			self.waits = 0
+
+		def is_set(self) -> bool:
+			return False
+
+		def wait(self, _timeout: float) -> bool:
+			self.waits += 1
+			return self.waits >= 2
+
+		def set(self) -> None:
+			events.append("scheduler_stop")
+
+	class ImmediateThread:
+		def __init__(self, *, target, args=(), kwargs=None, **_ignored) -> None:
+			self.target = target
+			self.args = args
+			self.kwargs = kwargs or {}
+
+		def start(self) -> None:
+			if self.target is deploy_process._mission_cron_scheduler:
+				events.append("scheduler_start")
+				assert self.kwargs["initial_workers"] == [(initial_mission, "tenant", "project")]
+				events.append("scheduler_received_initial")
+			self.target(*self.args, **self.kwargs)
+
+		def is_alive(self) -> bool:
+			return False
+
+		def join(self, timeout=None) -> None:
+			return None
+
+	class Connection:
+		def recv(self, _size: int) -> bytes:
+			return b"LIVE\n"
+
+		def sendall(self, value: bytes) -> None:
+			assert value == b"OK\n"
+
+		def __enter__(self):
+			return self
+
+		def __exit__(self, *_args) -> None:
+			return None
+
+	class Server:
+		def __init__(self) -> None:
+			self.accepts = 0
+
+		def bind(self, path: str) -> None:
+			Path(path).touch()
+
+		def listen(self, _backlog: int) -> None:
+			return None
+
+		def settimeout(self, _timeout: float) -> None:
+			return None
+
+		def accept(self):
+			self.accepts += 1
+			if self.accepts == 1:
+				raise TimeoutError
+			handlers[signal.SIGTERM](None, None)  # type: ignore[operator]
+			return Connection(), None
+
+		def close(self) -> None:
+			return None
+
+	from simulacra.harnesses import codex as codex_harness
+	monkeypatch.setattr(deploy_process, "WORKER_SOCKET", socket_path)
+	monkeypatch.setattr(deploy_process.socket, "socket", lambda *_args: Server())
+	monkeypatch.setattr(deploy_process.threading, "Event", ControlledStop)
+	monkeypatch.setattr(deploy_process.threading, "Thread", ImmediateThread)
+	monkeypatch.setattr(deploy_process.signal, "signal", lambda number, handler: handlers.__setitem__(number, handler))
+	monkeypatch.setattr(codex_harness, "signal_active_codex_process_groups", lambda _signal: events.append("signal_groups"))
+	monkeypatch.setattr(deploy_process, "_discovered_runtime_workers", discover_runtime)
+	monkeypatch.setattr(deploy_process, "_discovered_mission_workers", discover_mission)
+
+	assert deploy_process.worker() == 0
+	assert events.index("runtime_discovery:1") < events.index("scheduler_start")
+	assert events.index("mission_discovery:1") < events.index("scheduler_start")
+	assert events.index("scheduler_received_initial") < events.index("mission_cron:initial") < events.index("mission_discovery:2")
+	assert events.index("runtime_run:initial") < events.index("runtime_discovery:2")
+	assert "mission_run:initial" in events
+	assert "runtime_run:later" in events and "mission_run:later" in events
 
 
 def test_worker_health_probes_a_running_worker_socket(monkeypatch, tmp_path):
@@ -176,7 +307,16 @@ def test_real_worker_serves_live_ready_and_a_second_probe(monkeypatch, tmp_path)
 			detail = process.stderr.read().decode("utf-8", "replace") if process.stderr else ""
 			raise AssertionError(f"worker exited before accepting probes: {detail}")
 		assert socket_path.exists(), "worker did not create its health socket"
-		assert deploy_process.worker_health("--live") == 0
+		live_deadline = time.monotonic() + 5
+		while time.monotonic() < live_deadline:
+			if process.poll() is not None:
+				detail = process.stderr.read().decode("utf-8", "replace") if process.stderr else ""
+				raise AssertionError(f"worker exited before serving LIVE: {detail}")
+			if deploy_process.worker_health("--live") == 0:
+				break
+			time.sleep(0.02)
+		else:
+			raise AssertionError("worker did not serve LIVE before deadline")
 		assert deploy_process.worker_health("--ready") == 0
 		assert deploy_process.worker_health("--live") == 0
 	finally:
@@ -507,8 +647,52 @@ def test_mission_discovery_index_survives_evidence_state_beyond_read_cap(monkeyp
 	discovered = deploy_process._discovered_mission_workers()
 	assert [(tenant, project) for _, tenant, project in discovered] == [("tenant_one", "project_large")]
 	worker, tenant, project = discovered[0]
+	# Production discovery wires the durable assignment admission boundary into
+	# the actual Mission worker, before it considers work for this project.
+	assert worker.coordinator is not None
+	calls: list[tuple[str, str]] = []
+	original_recover = worker.coordinator.recover_project
+	def observed_recover(tenant_id: str, project_id: str):
+		calls.append((tenant_id, project_id)); return original_recover(tenant_id, project_id)
+	worker.coordinator.recover_project = observed_recover
+	assert worker.consume(tenant, project) is None
+	assert calls == [(tenant, project)]
 	assert worker.service.mission(tenant, project).title == "large evidence"
 	assert len(worker.schedule_due_cron(tenant, project)) == 1
+
+
+def test_discovered_mission_worker_recovers_real_incomplete_assignment_before_claim(monkeypatch, tmp_path):
+	runs = tmp_path / "runs"; runs.mkdir(); tenant = "tenant_one"; project = "project_one"
+	workspace = runs / project; workspace.mkdir(); (workspace / "state.json").write_text(json.dumps({"id": project, "tenant_id": tenant}))
+	control = runs / ".mission-control"; mission = MissionService(JsonMissionRepository(control))
+	mission.bootstrap(tenant, project, "owner", {"title": "assignment"})
+	agent = mission.add_agent(tenant, project, {"name": "Agent", "role": "builder", "mandate": "build"})
+	graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
+	graph["metadata"].update({"tenant_id": tenant, "project_id": project})
+	store = OperationGraphStore(workspace, tenant_id=tenant, project_id=project)
+	revision = store.create_revision(graph, expected_revision_hash=None); store.approve_revision(revision.revision_hash, actor_id="owner")
+	collaboration = JsonCollaborationRepository(runs / ".cmul8-control")
+	CollaborationService(collaboration).create_room(tenant_id=tenant, project_id=project, creator_id="owner")
+	coordinator = AssignmentCoordinator(collaboration, mission, workspace, runs_root=runs, clock=lambda: "2026-01-02T09:00:00Z")
+	coordinator.fault_injector = lambda stage: (_ for _ in ()).throw(RuntimeError(stage)) if stage == "after_queued_before_COMPLETE" else None
+	with pytest.raises(RuntimeError, match="after_queued_before_COMPLETE"):
+		coordinator.assign(tenant_id=tenant, project_id=project, authenticated_human_actor_id="owner", client_request_id="request_1", body="assign", title="task", objective="deliver", acceptance_criteria=["verified"], assigned_agent_ids=[agent.id], graph_revision=revision.revision_hash)
+	journal = next(runs.glob(f".workplace-control/{tenant}/{project}/assignment-transactions/*/conversation_assignment/*.json"))
+	assert json.loads(journal.read_text())["state"] != "COMPLETE"
+	assert mission.claim_next(tenant, project, "worker") is None
+	monkeypatch.setenv("SIMULACRA_RUNS_DIR", str(runs))
+	worker, discovered_tenant, discovered_project = deploy_process._discovered_mission_workers()[0]
+	seen: list[str] = []; original_claim = worker.service.claim_next
+	def observed_claim(*args, **kwargs):
+		seen.append(json.loads(journal.read_text())["state"])
+		assert seen[-1] == "COMPLETE"
+		return None
+	worker.service.claim_next = observed_claim
+	assert worker.consume(discovered_tenant, discovered_project) is None
+	row = json.loads(journal.read_text()); assert seen == ["COMPLETE"] and row["state"] == "COMPLETE"
+	assert worker.coordinator.visible_result(tenant_id=tenant, project_id=project, transaction_id=row["transaction_id"]) is not None
+	with worker.coordinator.project_claim_guard(tenant, project) as admission:
+		assert admission.allows(row["transaction_id"], row["reserved_run_id"])
 
 
 def test_mission_discovery_explicit_tenant_filter_excludes_same_project_other_tenant(monkeypatch, tmp_path):

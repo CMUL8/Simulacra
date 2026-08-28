@@ -1,0 +1,24 @@
+:root {
+  color-scheme: dark;
+  --mission-color-canvas: #0b0d12;
+  --mission-color-surface: #131722;
+  --mission-color-surface-raised: #1a2030;
+  --mission-color-fg: #f5f7ff;
+  --mission-color-muted: #aeb7ca;
+  --mission-color-border: #343d52;
+  --mission-color-accent: #8da6ff;
+  --mission-color-focus: #b9c8ff;
+  --mission-color-success: #70d6a3;
+  --mission-color-warning: #ffd166;
+  --mission-color-danger: #ff8f9a;
+  --mission-space-1: 0.25rem;
+  --mission-space-2: 0.5rem;
+  --mission-space-3: 0.75rem;
+  --mission-space-4: 1rem;
+  --mission-space-6: 1.5rem;
+  --mission-radius-sm: 0.5rem;
+  --mission-radius-md: 0.875rem;
+  --mission-shadow-raised: 0 1rem 3rem rgb(0 0 0 / 30%);
+  --mission-motion-fast: 140ms;
+  --mission-motion-standard: 220ms;
+}

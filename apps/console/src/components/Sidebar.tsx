@@ -259,9 +259,7 @@ export function Sidebar({
           onClick={onAccount}
           aria-label="Account"
         >
-          <span className="bui-avatar" aria-hidden>
-            {initials(user)}
-          </span>
+		  <span className="bui-avatar" aria-hidden>{user?.avatar_url ? <img src={user.avatar_url} alt="" referrerPolicy="no-referrer" /> : initials(user)}</span>
           <span className="bui-identity-copy">
             <span className="bui-identity-name">{displayName(user)}</span>
             <span className="bui-identity-plan">{workspaceLabel}</span>

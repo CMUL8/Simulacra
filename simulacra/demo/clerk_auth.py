@@ -12,6 +12,7 @@ import os
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 log = logging.getLogger("simulacra.clerk")
 
@@ -98,20 +99,88 @@ def _fetch_jwks() -> dict[str, Any]:
 
 def verify_clerk_jwt(token: str) -> dict[str, Any]:
 	"""Verify Clerk session JWT; returns claims. Raises PermissionError on failure."""
+	issuer = os.environ.get("CLERK_ISSUER", "").strip()
+	audience = os.environ.get("CLERK_AUDIENCE", "").strip()
+	if not issuer or not audience:
+		raise PermissionError("Clerk verification unavailable")
 	try:
 		from jose import jwt as jose_jwt
 	except ImportError as exc:
 		raise RuntimeError("python-jose required for Clerk — pip install 'python-jose[cryptography]'") from exc
 	try:
 		jwks = _fetch_jwks()
-		return jose_jwt.decode(
+		claims = jose_jwt.decode(
 			token,
 			jwks,
 			algorithms=["RS256"],
-			options={"verify_aud": False, "verify_iss": False},
+			issuer=issuer,
+			audience=audience,
+			options={"verify_aud": True, "verify_iss": True, "verify_exp": True},
 		)
+		if not str(claims.get("sub") or "").strip():
+			raise PermissionError("Invalid Clerk token")
+		return claims
 	except Exception as exc:  # noqa: BLE001
-		raise PermissionError(f"Invalid Clerk token: {exc}") from exc
+		raise PermissionError("Invalid Clerk token") from exc
+
+
+def verified_invitation_email(token: str) -> tuple[str, str]:
+	"""Fail-closed credential proof for the pre-membership acceptance route.
+
+	The general Clerk session mapper intentionally has compatibility behavior;
+	this narrower path cannot use it because an invitation is an enrollment
+	credential, not a tenant session.
+	"""
+	claim_name = os.environ.get("CLERK_INVITATION_EMAIL_CLAIM", "").strip()
+	if not claim_name:
+		raise PermissionError("verified invitation credential unavailable")
+	try:
+		claims = verify_clerk_jwt(token)
+	except Exception as exc:  # noqa: BLE001
+		raise PermissionError("invalid verified invitation credential") from exc
+	subject = str(claims.get("sub") or "").strip()
+	if not subject:
+		raise PermissionError("invalid verified invitation credential")
+	proof = claims.get(claim_name)
+	if not isinstance(proof, dict) or proof.get("verified") is not True:
+		raise PermissionError("invalid verified invitation credential")
+	email = str(proof.get("email") or "").strip().lower()
+	# Clerk's general session mapper historically tolerated a synthetic fallback
+	# address.  Enrollment cannot: the address must be an explicit verified
+	# provider proof bound to this exact subject.
+	if (not email or "@" not in email or email.startswith(f"{subject.lower()}@users.")
+			or proof.get("subject") not in {None, subject}):
+		raise PermissionError("invalid verified invitation credential")
+	return subject, email
+
+
+def local_invitation_fixture_principal(token: str) -> tuple[str, str] | None:
+	"""Explicit test-only enrollment path, impossible in production."""
+	if os.environ.get("SIMULACRA_ENVIRONMENT", "development").lower() == "production":
+		return None
+	if os.environ.get("SIMULACRA_ENABLE_LOCAL_INVITATION_FIXTURE") != "1":
+		return None
+	try:
+		subject, email = token.split("|", 1)
+	except ValueError:
+		return None
+	if not subject.strip() or "@" not in email:
+		return None
+	return subject.strip(), email.strip().lower()
+
+
+def ensure_verified_invitation_user(subject: str, email: str):
+	"""Provision only a subject-bound, verified identity; never membership."""
+	from .identity import User, create_user, get_user_by_email
+	user = get_user_by_email(email)
+	if user is not None and user.provider_subject not in {None, subject}:
+		raise PermissionError("verified identity subject mismatch")
+	if user is None:
+		user = create_user(email, os.urandom(24).hex(), name=email.split("@", 1)[0])
+	# JSON persistence has no generic update API, so write only the narrowly
+	# allowed verified proof fields through identity's internal helper.
+	from .identity import record_verified_provider_identity
+	return record_verified_provider_identity(user.id, subject, email)
 
 
 def _clean_slug(slug: str) -> str:
@@ -189,6 +258,7 @@ def ensure_clerk_user(claims: dict[str, Any]):
 	)
 	email = str(email).strip().lower()
 	name = str(claims.get("name") or claims.get("first_name") or email.split("@")[0])
+	avatar_url = _trusted_avatar_url(claims)
 	is_admin = sub in _super_admins()
 	user_id = f"clerk_{sub}" if not sub.startswith("user_") else f"clerk_{sub}"
 
@@ -206,19 +276,21 @@ def ensure_clerk_user(claims: dict[str, Any]):
 			password=os.urandom(24).hex(),
 			name=name,
 			is_platform_admin=is_admin,
+			avatar_url=avatar_url,
 		)
 	else:
 		user = existing
-		if is_admin and not user.is_platform_admin:
+		if (is_admin and not user.is_platform_admin) or avatar_url != user.avatar_url:
 			# promote in-memory only for this request unless we persist — skip mutate for now
 			user = User(
 				id=user.id,
 				email=user.email,
 				name=user.name,
 				password_hash=user.password_hash,
-				is_platform_admin=True,
+				is_platform_admin=user.is_platform_admin or is_admin,
 				status=user.status,
 				created_at=user.created_at,
+				avatar_url=avatar_url or user.avatar_url,
 			)
 
 	tid = resolve_tenant_id(claims, None)
@@ -230,3 +302,18 @@ def ensure_clerk_user(claims: dict[str, Any]):
 		except Exception as exc:  # noqa: BLE001
 			log.warning("clerk membership: %s", exc)
 	return user, tid
+
+
+def _trusted_avatar_url(claims: dict[str, Any]) -> str | None:
+	"""Use only a bounded URL already carried by a verified Clerk claim."""
+	for key in ("image_url", "profile_image_url", "avatar_url"):
+		value = claims.get(key)
+		if not isinstance(value, str):
+			continue
+		candidate = value.strip()
+		if not candidate or len(candidate) > 2048:
+			continue
+		parsed = urlparse(candidate)
+		if parsed.scheme in {"http", "https"} and parsed.netloc:
+			return candidate
+	return None

@@ -1,6 +1,6 @@
 import type { Cmul8CommentRecord, Cmul8DomainEventRecord, Cmul8ReviewRecord, Cmul8RoomPayload, Cmul8TaskRecord } from "../../api";
 import type { ActivityItem } from "../activity";
-import type { GraphComment, OperationGraphRevision } from "../operation-graph";
+import type { OperationGraphRevision } from "../operation-graph";
 import type { ProjectTask, ReviewDecision, TaskStatus, WorkEvent, WorkEventKind } from "../shared";
 import type { DurableTaskState, ProjectRoomModel, ProjectRoomPermissions, RoomTask } from "./contracts";
 
@@ -29,7 +29,7 @@ function reviewDecision(value: string): ReviewDecision | undefined {
 function taskReview(task: Cmul8TaskRecord, reviews: Cmul8ReviewRecord[]): ProjectTask["review"] {
   const latest = reviews.filter((item) => item.task_id === task.id).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
   const decision = latest ? reviewDecision(latest.decision) : undefined;
-  if (latest && decision) return { state: decision, reviewerId: latest.reviewer_id, note: latest.body, updatedAt: latest.updated_at ?? latest.created_at };
+	if (latest && decision) return { state: decision, reviewerId: latest.author_id, note: latest.comment, updatedAt: latest.updated_at ?? latest.created_at };
   return { state: task.state === "in_review" ? "requested" : "unrequested" };
 }
 
@@ -38,58 +38,44 @@ function mapTask(task: Cmul8TaskRecord, reviews: Cmul8ReviewRecord[]): RoomTask 
   return { id: task.id, title: task.title, detail: task.objective, status: normalizedStatus(state), durableState: state, ownerId: task.owner_id ?? undefined, review: taskReview(task, reviews), revision: task.revision };
 }
 
-function graphComments(comments: Cmul8CommentRecord[]): GraphComment[] {
-  return comments.filter((item) => item.target_type === "graph_element").map((item) => ({
-    id: item.id, author: item.author_id, body: item.body, createdAt: item.created_at, resolved: false,
-    mentions: item.mentions?.map((mention) => `${mention.ref_type}:${mention.ref_id}`), section: item.graph_path?.replace(/^\/review\//, "") ?? undefined,
-  }));
-}
-
 function mapGraph(payload: Cmul8RoomPayload): OperationGraphRevision | undefined {
-  const revision = payload.operation_graph;
-  if (!revision) return undefined;
-  const graph = revision.graph;
-  const metadata = typeof graph.metadata === "object" && graph.metadata !== null ? graph.metadata as Record<string, unknown> : {};
-  const areas = ["entities", "workflows", "agents", "approval_rules", "connectors"] as const;
-  const kindByArea = { entities: "entity", workflows: "workflow", agents: "agent", approval_rules: "approval", connectors: "connector" } as const;
-  const summaries = areas.flatMap((area) => Array.isArray(graph[area]) ? (graph[area] as Array<Record<string, unknown>>).map((item, index) => ({
-    id: typeof item.id === "string" ? item.id : `${area}-${index}`,
-    name: typeof item.name === "string" ? item.name : typeof item.id === "string" ? item.id : `${area} ${index + 1}`,
-    kind: kindByArea[area], detail: typeof item.description === "string" ? item.description : area.replaceAll("_", " "),
-  })) : []);
-  const approval = payload.operation_graph_approvals.find((item) => item.revision_hash === revision.revision_hash && item.decision === "approved");
+  const plan = payload.mission_plan;
+  if (!plan) return undefined;
+  const summaries = [
+    ...plan.steps.map((name, index) => ({ id: `step-${index}`, name, kind: "workflow" as const, detail: "Mission step" })),
+    ...plan.human_checkpoints.map((name, index) => ({ id: `checkpoint-${index}`, name, kind: "approval" as const, detail: "Human checkpoint" })),
+  ];
   return {
-    id: revision.revision_hash, revision: revision.revision,
-    title: typeof metadata.name === "string" ? metadata.name : `Operation Graph revision ${revision.revision}`,
-    objective: typeof metadata.description === "string" ? metadata.description : "",
-    businessSections: [{ id: "scope", title: "Operational scope", body: areas.map((area) => `${Array.isArray(graph[area]) ? graph[area].length : 0} ${area.replaceAll("_", " ")}`).join(" · ") }],
-    yaml: JSON.stringify(graph, null, 2), summaries,
+    id: String(plan.revision), revision: plan.revision,
+    title: `Mission plan ${plan.revision}`,
+    objective: plan.objective,
+    businessSections: [{ id: "scope", title: "Mission scope", body: plan.objective }],
+    yaml: "", summaries,
     impact: { added: [], changed: [], removed: [], security: [], migrations: [], tests: [] },
-    review: approval ? { state: "approved", reviewer: approval.actor_id } : { state: "pending" },
-    comments: graphComments(payload.comments.filter((item) => !item.graph_revision || item.graph_revision === revision.revision_hash)),
+    review: plan.status === "approved" ? { state: "approved" } : { state: "pending" },
+    comments: [],
   };
 }
 
 function mapWorkEvent(event: Cmul8DomainEventRecord): WorkEvent | null {
-  const rawKind = event.payload?.work_event_kind;
-  if (typeof rawKind !== "string" || !WORK_EVENT_KINDS.has(rawKind as WorkEventKind)) return null;
-  const phase = typeof event.payload?.phase === "string" ? event.payload.phase : event.action;
-  const message = typeof event.payload?.message === "string" ? event.payload.message : undefined;
-  return { id: event.id, kind: rawKind as WorkEventKind, at: event.timestamp, phase, specialist: event.actor_id, message };
+  // Detailed work-event payloads are internal records; the room has the
+  // product-safe activity stream below instead.
+  void event;
+  return null;
 }
 
 function eventActivity(event: Cmul8DomainEventRecord, readAt?: string): ActivityItem {
   const category = event.action.includes("deploy") ? "deployment" : event.action.includes("review") ? "review" : event.action.includes("claim") || event.action.includes("assign") ? "assignment" : "system";
-  const detail = typeof event.payload?.message === "string" ? event.payload.message : event.result;
+  const detail = event.result;
   return { id: event.id, category, title: event.action.replaceAll(".", " "), detail, createdAt: event.timestamp, actor: event.actor_id, href: `?roomEvent=${encodeURIComponent(event.id)}`, readAt };
 }
 
 function commentActivity(item: Cmul8CommentRecord): ActivityItem {
-  return { id: item.id, category: item.mentions?.length ? "mention" : "system", title: item.target_type === "graph_element" ? "Graph comment" : "Project comment", detail: item.body, createdAt: item.created_at, actor: item.author_id, href: `?roomComment=${encodeURIComponent(item.id)}` };
+  return { id: item.id, category: "system", title: "Mission plan comment", detail: item.body, createdAt: item.created_at, actor: item.author_id, href: `?roomComment=${encodeURIComponent(item.id)}` };
 }
 
 function reviewActivity(item: Cmul8ReviewRecord): ActivityItem {
-  return { id: item.id, category: "review", title: `Task review: ${item.decision.replaceAll("_", " ")}`, detail: item.body || `Reviewed task ${item.task_id}`, createdAt: item.created_at, actor: item.reviewer_id, href: `?roomTask=${encodeURIComponent(item.task_id)}` };
+	return { id: item.id, category: "review", title: `Task review: ${item.decision.replaceAll("_", " ")}`, detail: item.comment || `Reviewed task ${item.task_id}`, createdAt: item.created_at, actor: item.author_id, href: `?roomTask=${encodeURIComponent(item.task_id)}` };
 }
 
 export function mapCmul8RoomPayload(payload: Cmul8RoomPayload, connectionState: ProjectRoomModel["connectionState"] = "connected"): { room: ProjectRoomModel; permissions: ProjectRoomPermissions } {
@@ -107,9 +93,9 @@ export function mapCmul8RoomPayload(payload: Cmul8RoomPayload, connectionState: 
         const live = payload.presence.find((item) => item.actor_id === member.actor_id);
         return {
         id: member.actor_id, name: member.display_name || member.actor_id, role: member.role,
-        kind: member.actor_type === "human" ? "human" : member.actor_type === "builder_agent" || member.actor_type === "runtime_agent" ? "agent" : undefined,
-        presence: live?.status ?? (member.presence === "active" || member.presence === "away" || member.presence === "offline" ? member.presence : undefined),
-        currentTask: member.current_task, lastSeenAt: live?.last_seen_at ?? member.last_seen_at,
+		kind: member.actor_type === "human" ? "human" : member.actor_type === "agent" ? "agent" : undefined,
+		presence: live?.status === "online" ? "active" : live?.status ?? "offline",
+		lastSeenAt: live?.last_seen_at ?? undefined,
       }; }),
       tasks: payload.tasks.map((task) => mapTask(task, payload.reviews)), graph: mapGraph(payload),
       workEvents: payload.events.map(mapWorkEvent).filter((event): event is WorkEvent => event !== null),

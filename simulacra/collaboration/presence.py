@@ -23,7 +23,7 @@ class Presence:
 class PresenceRegistry:
 	"""Process-local TTL registry with no durable repository dependency."""
 
-	def __init__(self, ttl_seconds: int = 60):
+	def __init__(self, ttl_seconds: int = 181):
 		if ttl_seconds <= 0:
 			raise ValueError("presence TTL must be positive")
 		self.ttl_seconds = ttl_seconds
@@ -40,7 +40,8 @@ class PresenceRegistry:
 		if instant.tzinfo is None:
 			raise ValueError("presence timestamp must be timezone-aware")
 		instant = instant.astimezone(UTC)
-		presence = Presence(tenant_id, project_id, actor_id, status, location, instant.isoformat(),
+		# Actor and status are server-derived; callers cannot assert an away/offline state.
+		presence = Presence(tenant_id, project_id, actor_id, "online", None, instant.isoformat(),
 			(instant + timedelta(seconds=self.ttl_seconds)).isoformat())
 		with self._lock:
 			self._entries[(tenant_id, project_id, actor_id)] = presence
@@ -58,10 +59,17 @@ class PresenceRegistry:
 			for key in expired:
 				self._entries.pop(key, None)
 			return sorted(
-				(value for key, value in self._entries.items() if key[:2] == (tenant_id, project_id)),
+				(replace_status(value, instant) for key, value in self._entries.items() if key[:2] == (tenant_id, project_id)),
 				key=lambda value: value.actor_id,
 			)
 
 	def leave(self, *, tenant_id: str, project_id: str, actor_id: str) -> None:
 		with self._lock:
 			self._entries.pop((tenant_id, project_id, actor_id), None)
+
+
+def replace_status(value: Presence, now: datetime) -> Presence:
+	"""Map the server-clock heartbeat age to the only three public states."""
+	age = (now - datetime.fromisoformat(value.last_seen_at).astimezone(UTC)).total_seconds()
+	status = "online" if age <= 45 else "away" if age <= 180 else "offline"
+	return Presence(value.tenant_id, value.project_id, value.actor_id, status, None, value.last_seen_at, value.expires_at)

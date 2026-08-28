@@ -17,6 +17,7 @@ from .models import (
 	CommentTargetType,
 	DomainEvent,
 	Member,
+	Invitation,
 	Mention,
 	ProjectRoom,
 	Review,
@@ -28,6 +29,8 @@ from .models import (
 from .presence import Presence, PresenceRegistry
 from .repository import CollaborationRepository, JsonCollaborationRepository
 from .service import CollaborationService
+from .invitation_acceptance import InvitationAcceptanceCoordinator, InvitationUnavailable, is_acceptance_complete
+from .notifications import DeterministicNotificationAdapter, NotificationOutbox
 
 JSONCollaborationRepository = JsonCollaborationRepository
 FileCollaborationRepository = JsonCollaborationRepository
@@ -36,9 +39,10 @@ __all__ = [
 	"ActivityInbox", "ActivityItem", "ActorType", "AuthorizationError", "AwaySummary",
 	"CollaborationError", "CollaborationRepository", "CollaborationService", "Comment",
 	"CommentTargetType", "ConflictError", "DomainEvent", "InboxCategory",
-	"InvalidTransitionError", "JsonCollaborationRepository", "LegacyEventProjector", "Member",
+	"InvalidTransitionError", "Invitation", "InvitationAcceptanceCoordinator", "InvitationUnavailable", "JsonCollaborationRepository", "LegacyEventProjector", "Member",
 	"Mention", "NotFoundError", "Presence", "PresenceRegistry", "ProjectRoom", "Review",
 	"ReviewDecision", "ScopeError", "Task", "TaskState", "ValidationError", "make_domain_event",
 	"normalize_mentions", "project_legacy_event",
+	"is_acceptance_complete", "NotificationOutbox", "DeterministicNotificationAdapter",
 	"JSONCollaborationRepository", "FileCollaborationRepository",
 ]

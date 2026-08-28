@@ -1,7 +1,8 @@
 import { LogOut, Shield, UserRound, Building2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AuthSession, AuthUser, Tenant } from "../api";
-import { setTenantId } from "../api";
+import type { AuthSession, AuthUser, MissionSummary, NotificationPreference, Tenant } from "../api";
+import { getWorkspacePreferences, listMissionSummaries, listWorkspaceAttention, putNotificationPreference, setTenantId } from "../api";
+import { NotificationPreferences } from "../features/workplace/onboarding/NotificationPreferences";
 import { AdminPage } from "./AdminPage";
 import { GovernancePage } from "./GovernancePage";
 import { LoginPage } from "./LoginPage";
@@ -43,6 +44,9 @@ export function ProfileManageModal({
   authMode = "login",
 }: Props) {
   const [tab, setTab] = useState<ProfileTab>(initialTab || (user ? "account" : "auth"));
+  const [notificationPreference, setNotificationPreference] = useState<NotificationPreference>();
+  const [notificationMissions, setNotificationMissions] = useState<MissionSummary[]>([]);
+  const [actionableCount, setActionableCount] = useState(0);
 
   useEffect(() => {
     if (open) setTab(initialTab || (user ? "account" : "auth"));
@@ -56,6 +60,28 @@ export function ProfileManageModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, locked, onClose]);
+
+  useEffect(() => {
+    if (!open || !user || tab !== "account") return;
+    let active = true;
+    void getWorkspacePreferences().then((preferences) => {
+      if (active) setNotificationPreference(preferences.notification_preference);
+    }).catch(() => {
+      // A legacy workspace may not expose workplace preferences yet.
+      if (active) setNotificationPreference(undefined);
+    });
+    void listMissionSummaries("active").then((missions) => {
+      if (active) setNotificationMissions(missions.items);
+    }).catch(() => {
+      if (active) setNotificationMissions([]);
+    });
+    void listWorkspaceAttention("actionable").then((attention) => {
+      if (active) setActionableCount(attention.actionable_count);
+    }).catch(() => {
+      if (active) setActionableCount(0);
+    });
+    return () => { active = false; };
+  }, [open, tab, tenantId, user]);
 
   if (!open) return null;
 
@@ -161,7 +187,6 @@ export function ProfileManageModal({
                 {tenants.map((t) => (
                   <li key={t.id} className={t.id === (tenantId || tenants[0]?.id) ? "on" : ""}>
                     <strong>{t.name}</strong>
-                    <span>{t.id}</span>
                   </li>
                 ))}
                 {tenants.length === 0 && <li className="dim">No workspaces yet</li>}
@@ -178,6 +203,15 @@ export function ProfileManageModal({
                   <strong>{clerkAvailable ? "Password + managed sign-in" : "Password"}</strong>
                 </div>
               </div>
+              {notificationPreference ? <NotificationPreferences
+                preference={notificationPreference}
+                missions={notificationMissions.map((item) => ({ id: item.id, title: item.title }))}
+                actionableCount={actionableCount}
+                onSave={async (body) => {
+                  const saved = await putNotificationPreference(body);
+                  setNotificationPreference(saved.notification_preference);
+                }}
+              /> : null}
             </div>
           )}
 
@@ -185,7 +219,7 @@ export function ProfileManageModal({
             <div className="acct-pane acct-pane-auth">
               {isGuestAuth && (
                 <div className="acct-auth-brand">
-                  Simu<em>lacra</em>
+                  Missions
                 </div>
               )}
               <h1 className="acct-title">{user ? "Session" : "Sign in"}</h1>

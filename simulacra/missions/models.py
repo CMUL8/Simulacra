@@ -29,6 +29,7 @@ MISSION_STATUSES = frozenset(
 RUN_STATUSES = frozenset(
     {
         "queued",
+        "pending_commit",
         "preparing",
         "running",
         "awaiting_approval",
@@ -252,6 +253,9 @@ class MissionRun:
     # later request from quietly changing the approved graph, prompt, agent
     # capability, or execution profile that this exact turn was admitted for.
     execution_binding: dict[str, Any] | None = None
+    # A coordinator-tagged run is deliberately not claimable until the
+    # coordinator's durable journal has reached COMPLETE.
+    assignment_transaction_id: str | None = None
     revision: int = 1
     created_at: str = field(default_factory=now)
     updated_at: str = field(default_factory=now)
@@ -264,6 +268,8 @@ class MissionRun:
             raise ValueError("invalid assigned Mission agents")
         for agent_id in self.assigned_agent_ids:
             validate_scope_id(agent_id, "agent_id")
+        if self.assignment_transaction_id is not None:
+            validate_scope_id(self.assignment_transaction_id, "assignment_transaction_id")
 
     def to_dict(self):
         return asdict(self)

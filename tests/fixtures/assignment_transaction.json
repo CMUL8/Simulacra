@@ -1,0 +1,13 @@
+{
+  "fixed_at": "2026-01-02T09:00:00Z",
+  "pinned_graph_hash": "sha256:8e6161a2",
+  "reserved_ids": { "journal_id": "assignment_journal_1", "run_id": "run_1", "task_id": "task_1" },
+  "states": [
+    { "state": "PREPARED", "crash_after": "journal_prepare", "run_status": null },
+    { "state": "COMMIT_DECIDED", "crash_after": "commit_decision", "run_status": null },
+    { "state": "STORES_DURABLE", "crash_after": "durable_store_replace", "run_status": "queued" },
+    { "state": "COMPLETE", "crash_after": null, "run_status": "queued" },
+    { "state": "ABORTED", "crash_after": "validation_failure", "run_status": null }
+  ],
+  "queued_before_complete": { "journal": { "state": "STORES_DURABLE" }, "run": { "status": "queued" } }
+}
