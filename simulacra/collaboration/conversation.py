@@ -253,6 +253,56 @@ class ConversationService:
             "recipient_human_id": recipient_human_id,
         }
 
+    def project_agent_completion(
+        self, *, tenant_id: str, project_id: str, source_event_id: str,
+        agent_id: str, body: str, created_at: str,
+        work_item_id: str, run_id: str, output_id: str | None,
+    ) -> ConversationMessage:
+        """Project one durable Mission result into the shared conversation.
+
+        The Mission trajectory is the source record. A deterministic message
+        and wake-up identity make a worker retry or restart converge on the
+        same visible contribution instead of creating duplicate chat rows.
+        """
+        for value, label in (
+            (tenant_id, "tenant_id"), (project_id, "project_id"),
+            (source_event_id, "source_event_id"), (agent_id, "agent_id"),
+            (work_item_id, "work_item_id"), (run_id, "run_id"),
+        ):
+            validate_scope_id(value, label)
+        if output_id is not None:
+            validate_scope_id(output_id, "output_id")
+        safe_body = _screen_text(body)
+        digest = hashlib.sha256(
+            "\0".join((tenant_id, project_id, source_event_id)).encode("utf-8"),
+        ).hexdigest()[:32]
+        message = ConversationMessage(
+            id=f"message_agent_{digest}", tenant_id=tenant_id, project_id=project_id,
+            author={"id": agent_id, "kind": "agent"}, kind="agent_completed",
+            body=safe_body, created_at=created_at,
+            links={"work_item_id": work_item_id, "run_id": run_id, "output_id": output_id},
+        )
+        wake_id = f"evt_agent_{digest}"
+
+        def mutate(state: dict[str, Any]) -> None:
+            existing = state["messages"].get(message.id)
+            if existing is None:
+                state["messages"][message.id] = message.to_dict()
+            elif existing != message.to_dict():
+                raise ConversationConflictError("agent_result_projection_conflict")
+            wake = {
+                "id": wake_id, "type": "conversation.changed", "mission_id": project_id,
+                "occurred_at": created_at, "recipient_human_id": None,
+            }
+            existing_wake = state["wake_events"].get(wake_id)
+            if existing_wake is None:
+                state["wake_events"][wake_id] = wake
+            elif existing_wake != wake:
+                raise ConversationConflictError("agent_result_projection_conflict")
+
+        self.repository.mutate_conversation_state(tenant_id, project_id, mutate)
+        return message
+
     @staticmethod
     def _reaction_key(message_id: str, actor_id: str, reaction: str) -> str:
         return "|".join((message_id, actor_id, reaction))

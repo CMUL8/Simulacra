@@ -208,7 +208,7 @@ test("mission_work_deep_link_opens_the_exact_review_and_close_clears_the_url_tar
   render(<WorkplaceShell attentionEnabled conversationEnabled filesEnabled previewEnabled onSearch={() => undefined} onSettings={() => undefined} />);
   const detail = await screen.findByRole("dialog", { name: "Work details" });
   expect(detail).toHaveTextContent("Approve the exception");
-  expect(within(detail).getByRole("button", { name: "Approve and continue" })).toHaveFocus();
+  await waitFor(() => expect(within(detail).getByRole("button", { name: "Approve and continue" })).toHaveFocus());
   fireEvent.click(within(detail).getByRole("button", { name: "Close Work details" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Work details" })).not.toBeInTheDocument());
   expect(window.location.pathname + window.location.search).toBe("/missions/mission_close/work");
@@ -821,12 +821,15 @@ test("workplace layout keeps one scroll owner and a compact mobile navigation wi
   expect(workplaceStyles).not.toMatch(/gradient\s*\(/i);
   expect(attentionStyles).not.toMatch(/gradient\s*\(/i);
   expect(workplaceStyles).toMatch(/\.workplace-shell\s*\{[^}]*overflow:\s*hidden/s);
+  expect(workplaceStyles).toMatch(/\.workplace-rail\s*\{[^}]*flex:\s*0\s+0\s+4rem/s);
   expect(workplaceStyles).toMatch(/\.workplace-main\s*\{[^}]*overflow-y:\s*auto/s);
   expect(workplaceStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.workplace-shell\s*\{\s*flex-direction:\s*column-reverse/s);
   expect(workplaceStyles).toMatch(/min-height:\s*2\.5rem/);
   expect(workplaceStyles).toMatch(/overflow-wrap:\s*anywhere/);
   expect(conversationStyles).not.toMatch(/gradient\s*\(/i);
   expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*overflow:\s*hidden/s);
+  expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*14\.5rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.conversation-composer\s*\{[^}]*max-width:\s*54rem/s);
   expect(conversationStyles).toMatch(/\.conversation-timeline\s*\{[^}]*overflow-y:\s*auto/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*1fr/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*30rem\)[\s\S]*\.mission-crew-rail\s*\{[^}]*grid-template-columns:\s*1fr/s);

@@ -10,8 +10,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from simulacra.harnesses import HarnessConfig
-from simulacra.harnesses.codex_provider import CodexProviderRoute
+from simulacra.harnesses import HarnessConfig, ModelCapability
+from simulacra.harnesses.provider_route import ResponsesProviderRoute
 
 from .models import (
     PROFILES, AgentDefinition, AutomationTrigger, Deliverable, Mission,
@@ -81,10 +81,19 @@ def _safe_value(value: Any, depth: int = 0) -> Any:
 class MissionService:
     @staticmethod
     def _runtime_config(profile: Mapping[str, Any]) -> HarnessConfig:
-        base = HarnessConfig.from_env()
-        return base.with_model(
-            str(profile.get("model") or base.model.model_id or "default"),
-            reasoning_effort=profile.get("reasoning_effort"),
+        persisted_route = profile.get("model_route")
+        complete_profile = (
+            isinstance(profile.get("runtime"), str)
+            and isinstance(profile.get("model"), str)
+            and persisted_route is not None
+        )
+        base = None if complete_profile else HarnessConfig.from_env()
+        provider = ResponsesProviderRoute.from_manifest(persisted_route).provider_config() if persisted_route is not None else base.provider
+        return HarnessConfig(
+            harness=str(profile.get("runtime") or base.harness),  # type: ignore[union-attr]
+            provider=provider,
+            model=ModelCapability(str(profile.get("model") or base.model.model_id or "default")),  # type: ignore[union-attr]
+            model_reasoning_effort=profile.get("reasoning_effort"),
             codex_profile=profile.get("codex_profile"),
         )
 
@@ -98,8 +107,9 @@ class MissionService:
     @staticmethod
     def _profile(name: str = "balanced") -> dict[str, Any]:
         profile = name if name in PROFILES else "balanced"
+        configured = HarnessConfig.from_env()
         return {
-            "runtime": "codex",
+            "runtime": configured.harness,
             "profile": profile,
             "model": os.getenv(f"CMUL8_MISSION_{profile.upper()}_MODEL", os.getenv("CMUL8_MODEL", "default")),
             "reasoning_effort": os.getenv(
@@ -107,6 +117,7 @@ class MissionService:
                 os.getenv("CMUL8_MODEL_REASONING_EFFORT", ""),
             ) or None,
             "codex_profile": os.getenv("CMUL8_CODEX_PROFILE") or None,
+            "model_route": ResponsesProviderRoute.from_config(configured).to_manifest(),
         }
 
     @staticmethod
@@ -418,7 +429,7 @@ class MissionService:
                 "autonomy": agent.get("autonomy"),
                 "execution_profile": run.execution_profile,
                 "runtime_config": self._runtime_identity(run.execution_profile),
-                "model_route": CodexProviderRoute.from_config(self._runtime_config(run.execution_profile)).to_manifest(),
+                "model_route": ResponsesProviderRoute.from_config(self._runtime_config(run.execution_profile)).to_manifest(),
                 "assigned_agent_ids": list(run.assigned_agent_ids),
                 "effective_budget": effective_budget(self._mission(records).budget, agent.get("budget")),
             }
@@ -504,7 +515,7 @@ class MissionService:
 
             if status != "succeeded":
                 persist_artifacts(failed_run=True)
-                run.status = "failed"; run.completed_at = now(); run.error = {"code": "provider_failed", "message": "Codex execution failed."}
+                run.status = "failed"; run.completed_at = now(); run.error = {"code": "provider_failed", "message": "Agent execution failed."}
                 run.lease_owner = run.lease_until = None; self._touch(run); self._event(records, run, "agent_failed", {**run.error, "artifact_candidates": len(artifacts)})
                 records["runs"][run.id] = run.to_dict(); return run
             run.usage = _safe_value(result.get("usage", {})); run.completed_agent_ids.append(agent_id)

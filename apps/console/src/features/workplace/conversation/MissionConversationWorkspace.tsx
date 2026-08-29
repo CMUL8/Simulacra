@@ -18,6 +18,7 @@ import {
 import { useMissionConversationLive } from "../shell/useWorkplaceQuery";
 import { MissionFiles } from "../files/MissionFiles";
 import { WorkList } from "../work/WorkList";
+import { CrewActions } from "../crew/CrewActions";
 import { ConversationComposer, type ConversationAgent, type ConversationHuman } from "./ConversationComposer";
 import { ConversationTimeline } from "./ConversationTimeline";
 import type { MentionChoice } from "./MentionPicker";
@@ -326,6 +327,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
         {crewLoading ? <p className="crew-state" role="status">Loading Mission crew…</p> : null}
         {crewError ? <div className="crew-state" role="alert"><span>Crew is unavailable. This Mission still works.</span><button type="button" onClick={() => void loadCrew()}>Retry</button></div> : null}
         {!crewLoading && !crewError ? <>
+          <CrewActions missionId={missionId} canAddAgent={Boolean(room?.permissions.review_graph)} canInviteHuman={Boolean(room?.permissions.invite)} onAgentAdded={() => void loadCrew()} />
           <section aria-label="Agents">
             <h4>Agents</h4>
             {agents.length ? agents.map((agent) => <div className="crew-member" key={agent.id}>

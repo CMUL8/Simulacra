@@ -49,6 +49,7 @@ class NetworkPolicy(str, Enum):
 
 _PROVIDERS = frozenset({"openai", "ollama", "lmstudio", "custom"})
 _HARNESSES = frozenset({"codex", "prime", "fake"})
+_EXECUTION_BACKEND_ID = re.compile(r"[a-z][a-z0-9_-]{1,63}")
 
 
 def _readonly(values: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -185,8 +186,8 @@ class HarnessConfig:
     codex_profile: str | None = None
 
     def __post_init__(self) -> None:
-        if self.harness not in _HARNESSES:
-            raise ValueError(f"Unsupported harness {self.harness!r}; expected one of {sorted(_HARNESSES)}")
+        if not isinstance(self.harness, str) or not _EXECUTION_BACKEND_ID.fullmatch(self.harness):
+            raise ValueError("execution backend must be a lowercase deployment-owned identifier")
 
     def with_model(self, model_id: str, *, reasoning_effort: str | None = None, codex_profile: str | None = None) -> "HarnessConfig":
         """Keep the machine-owned provider route while selecting a run model."""
@@ -202,15 +203,18 @@ class HarnessConfig:
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "HarnessConfig":
         env = os.environ if environ is None else environ
         def setting(canonical: str, legacy: str | None, default: str = "") -> str:
-            # Presence of a canonical variable is authoritative, even if it is
-            # blank; aliases only support installations predating this contract.
-            if canonical in env:
-                return str(env[canonical]).strip() or default
-            if legacy and legacy in env:
-                return str(env[legacy]).strip() or default
+            # A non-empty canonical value wins. Empty container placeholders do
+            # not mask a legacy value during the compatibility window.
+            canonical_value = str(env.get(canonical, "")).strip()
+            if canonical_value:
+                return canonical_value
+            if legacy:
+                legacy_value = str(env.get(legacy, "")).strip()
+                if legacy_value:
+                    return legacy_value
             return default
 
-        harness = setting("CMUL8_AGENT_HARNESS", None, "codex").lower()
+        harness = setting("CMUL8_EXECUTION_BACKEND", "CMUL8_AGENT_HARNESS", "codex").lower()
         provider = setting("CMUL8_MODEL_PROVIDER", "CMUL8_AGENT_PROVIDER", "openai").lower()
         model = setting("CMUL8_MODEL", "CMUL8_AGENT_MODEL", "default")
         endpoint = setting("CMUL8_MODEL_BASE_URL", None) or None
@@ -222,10 +226,8 @@ class HarnessConfig:
         # An explicitly supplied mapping is likewise an internal test seam;
         # a process environment only admits it while pytest is executing.
         test_seam = environ is not None or bool(env.get("PYTEST_CURRENT_TEST"))
-        if harness != "codex" and not test_seam:
-            raise ValueError("production harness configuration supports the Codex runtime only")
         if provider not in {"openai", "custom"} and not test_seam:
-            raise ValueError("production Codex provider must be openai or custom")
+            raise ValueError("production model provider must be openai or custom")
         if provider == "openai" and not test_seam:
             if endpoint not in {None, "https://api.openai.com/v1"} or credential not in {None, "OPENAI_API_KEY"}:
                 raise ValueError("OpenAI provider routing is fixed to the official endpoint and credential")

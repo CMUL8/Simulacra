@@ -156,7 +156,8 @@ Named volumes preserve PostgreSQL, Redis, CMUL8 data, runs, approved graphs, run
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CMUL8_AGENT_HARNESS` | `codex` | Fixed managed agent runtime. Production does not expose alternate runtimes. |
+| `CMUL8_EXECUTION_BACKEND` | `codex` | Selects an executor already reviewed and baked into the deployment image. It is never exposed as an end-user choice. |
+| `CMUL8_AGENT_HARNESS` | unset | Deprecated compatibility alias for `CMUL8_EXECUTION_BACKEND`; a non-empty canonical value wins. |
 | `CMUL8_MODEL_PROVIDER` | `openai` | Operator route: `openai` or a Responses-compatible `custom` endpoint. This is not an end-user choice. |
 | `CMUL8_MODEL` | account default | Operator-selected model ID for new runs. Each run binds its selected model immutably. |
 | `CMUL8_MODEL_BASE_URL` | unset | HTTPS base URL when `CMUL8_MODEL_PROVIDER=custom`. Query strings and embedded credentials are rejected. |
@@ -229,6 +230,25 @@ git diff --check
 ```
 
 The test suite covers the neutral product journey, exact graph approval, credential and symlink attacks, room-role matrices, multiplayer operations, mixed graph revisions, worker leases/retries/dead letters, telemetry failures, dynamic worker discovery, Codex JSONL protocol, and deployment contracts.
+
+### Private or open-model deployment
+
+The built-in executor can use a private open model without changing the Missions UI:
+
+```bash
+CMUL8_EXECUTION_BACKEND=codex
+CMUL8_MODEL_PROVIDER=custom
+CMUL8_MODEL=gpt-oss-120b
+CMUL8_MODEL_BASE_URL=https://models.internal.example/v1
+CMUL8_MODEL_API_KEY_ENV=CMUL8_MODEL_API_KEY
+CMUL8_MODEL_API_KEY=replace-with-secret-manager-value
+```
+
+The endpoint must implement the Responses contract over HTTPS. The route and model ID are pinned into the admitted run; the credential value is read only by the executor and is never persisted in Mission evidence.
+
+Enterprise deployments can bake another reviewed `MissionAgentExecutor` adapter into their image and add it to the source-controlled certified registry. Environment configuration may select a baked adapter, but it cannot import arbitrary application-process code. `JsonProcessMissionAgentExecutor` is the provider-neutral adapter: it launches `/opt/cmul8/executors/<backend>/bin/mission-executor mission-executor --stdio` behind the same one-turn filesystem sandbox, sends one versioned JSON request, requires a request/ack admission before every action, and accepts one bounded normalized result. Certification requires the baked adapter to keep model traffic inside its trusted runtime and enforce the admitted network policy for every model-invoked tool; deployment rejects adapters that do not declare that boundary. Every adapter receives only the admitted request, managed isolation, and its execution-session store; Mission permissions, approvals, artifacts, and verification remain outside the adapter.
+
+Harness providers should start with the complete [Missions executor provider interface](docs/MISSION_EXECUTOR_PROVIDER_INTERFACE.md). It defines the JSON protocol, action-admission handshake, result schema, model/credential boundary, image layout, certified registry integration, and required release tests.
 
 ## Repository map
 

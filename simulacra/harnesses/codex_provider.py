@@ -7,14 +7,16 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from .contracts import HarnessConfig
+from .provider_route import (
+    CUSTOM_CREDENTIAL_ENV,
+    OPENAI_BASE_URL,
+    ResponsesProviderRoute,
+)
 
 
-OPENAI_BASE_URL = "https://api.openai.com/v1"
 CUSTOM_PROVIDER_ID = "cmul8_open"
-CUSTOM_CREDENTIAL_ENV = "CMUL8_MODEL_API_KEY"
 _MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
 
 
@@ -32,31 +34,14 @@ class CodexProviderRoute:
     credential_env_var: str | None
 
     def __post_init__(self) -> None:
-        if self.provider == "openai":
-            if self.endpoint != OPENAI_BASE_URL or self.credential_env_var != "OPENAI_API_KEY":
-                raise ValueError("invalid OpenAI model route")
-            return
-        if self.provider != "custom":
-            raise ValueError("unsupported Mission model provider")
-        parsed = urlsplit(self.endpoint)
-        if parsed.scheme != "https" or not parsed.netloc or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
-            raise ValueError("custom model route requires a credential-free HTTPS base URL")
-        if self.credential_env_var not in {None, CUSTOM_CREDENTIAL_ENV}:
-            raise ValueError("custom model route uses an unsupported credential variable")
+        ResponsesProviderRoute(self.provider, self.endpoint, self.credential_env_var)
 
     @classmethod
     def from_config(cls, config: HarnessConfig) -> "CodexProviderRoute":
         if config.harness != "codex" or not _MODEL_ID.fullmatch(config.model.model_id):
             raise ValueError("invalid Codex Mission model selection")
-        if config.provider.provider == "openai":
-            if config.provider.endpoint not in {None, OPENAI_BASE_URL} or config.provider.credential_env_var not in {None, "OPENAI_API_KEY"}:
-                raise ValueError("invalid OpenAI model route")
-            return cls("openai", OPENAI_BASE_URL, "OPENAI_API_KEY")
-        if config.provider.provider == "custom":
-            if not config.provider.endpoint:
-                raise ValueError("custom model route requires a base URL")
-            return cls("custom", config.provider.endpoint, config.provider.credential_env_var)
-        raise ValueError("unsupported Mission model provider")
+        route = ResponsesProviderRoute.from_config(config)
+        return cls(route.provider, route.endpoint, route.credential_env_var)
 
     @classmethod
     def from_manifest(cls, value: object) -> "CodexProviderRoute":

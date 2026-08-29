@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Bell, ListChecks, Plus, Settings, Target } from "lucide-react";
 
 import { markWorkspaceAttentionRead, type AttentionItem, type MissionSummary, type WorkspaceEventStream } from "../../../api";
 import { AttentionInbox } from "../attention/AttentionInbox";
@@ -10,11 +11,11 @@ import { useAttention, useMissionSummaries } from "./useWorkplaceQuery";
 import "./workplace.css";
 import "../attention/attention.css";
 
-const navigation: Array<{ id: WorkplaceDestination; label: string }> = [
-  { id: "missions", label: "Missions" },
-  { id: "needs-you", label: "Needs you" },
-  { id: "work", label: "Work" },
-  { id: "settings", label: "Settings" },
+const navigation: Array<{ id: WorkplaceDestination; label: string; Icon: typeof Target }> = [
+  { id: "missions", label: "Missions", Icon: Target },
+  { id: "needs-you", label: "Needs you", Icon: Bell },
+  { id: "work", label: "Work", Icon: ListChecks },
+  { id: "settings", label: "Settings", Icon: Settings },
 ];
 
 const stateLabels: Record<string, string> = {
@@ -193,21 +194,22 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
 
   return <div className="workplace-shell">
     <aside className="workplace-rail" aria-label="Global navigation">
-      <strong className="workplace-brand">Missions</strong>
-      {navigation.map((item) => <button
+      <strong className="workplace-brand" aria-label="Missions"><span aria-hidden="true">M</span></strong>
+      {navigation.map(({ Icon, ...item }) => <button
         key={item.id}
         ref={item.id === "settings" ? settingsButton : undefined}
         className={`workplace-nav-target${destination === item.id ? " is-current" : ""}`}
         type="button"
         aria-current={destination === item.id ? "page" : undefined}
+        title={item.label}
         onClick={() => navigate(item.id)}
-      >{item.label}</button>)}
+      ><Icon size={19} aria-hidden="true" /><span>{item.label}</span></button>)}
     </aside>
     <main className={`workplace-main${missionDetail && conversationEnabled ? " is-mission-detail" : ""}${newMission ? " is-new-mission" : ""}`} aria-label="Workplace">
       {missionDetail && conversationEnabled || newMission ? null : <header className="workplace-header">
         <div><p className="workplace-eyebrow">Workspace</p><h1>{heading}</h1></div>
         <div className="workplace-header-actions">
-          {bootstrapEnabled ? <button className="workplace-new-mission" type="button" onClick={openNewMission}>New Mission</button> : null}
+          {bootstrapEnabled ? <button className="workplace-new-mission" type="button" onClick={openNewMission}><Plus size={16} aria-hidden="true" /> New Mission</button> : null}
           <button type="button" disabled aria-label="Search Missions (coming soon)" title="Mission search is coming soon">Search</button>
         </div>
       </header>}
@@ -261,6 +263,7 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
           {missions.data?.items.length ? <div className="mission-grid">{missions.data.items.map((mission) => <button
             key={mission.id}
             className="mission-summary-card"
+            data-state={mission.public_state}
             type="button"
             onClick={() => {
               window.history.pushState({ workplaceMissionState: missionState }, "", `/missions/${encodeURIComponent(mission.id)}/conversation`);
@@ -272,7 +275,7 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
             <span className="mission-card-outcome">{mission.outcome_summary || "Outcome not described yet."}</span>
             <footer>
               <span>{mission.human_count} {mission.human_count === 1 ? "human" : "humans"} · {mission.agent_count} {mission.agent_count === 1 ? "agent" : "agents"}</span>
-              <span>{activitySummary(mission)}</span>
+              <span className="mission-card-activity">{activitySummary(mission)}</span>
             </footer>
           </button>)}</div> : <div className="workplace-empty workplace-empty-state"><strong>No Missions here yet.</strong><span>Set an outcome to give humans and agents a shared place to carry the work forward.</span></div>}
           {missions.error ? <div className="workplace-inline-error" role="alert"><span>{missions.error}</span><button type="button" onClick={missions.retry}>Retry loading more Missions</button></div> : null}

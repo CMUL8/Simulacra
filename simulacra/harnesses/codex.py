@@ -180,14 +180,14 @@ def _semantic_step_count(notifications: Iterable[Mapping[str, Any]]) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class CodexIsolationSpec:
+class MissionIsolationSpec:
     """Immutable external-sandbox launch material for exactly one Mission turn.
 
     This object is deliberately constructed from file descriptors, not merely
-    file names.  Every use re-opens and re-hashes those same files, then binds
+    file names. Every use re-opens and re-hashes those same files, then binds
     the parsed manifest to the exact ``AgentRunRequest`` that is about to reach
-    Codex.  Production accepts only the baked root-owned launcher; tests may
-    opt into a temporary launcher explicitly.
+    a certified executor. Production accepts only the baked root-owned launcher;
+    tests may opt into a temporary launcher explicitly.
     """
 
     _launcher: _IsolatedFile
@@ -208,7 +208,7 @@ class CodexIsolationSpec:
         launcher: str | Path,
         manifest: str | Path,
         allow_test_launcher: bool = False,
-    ) -> "CodexIsolationSpec":
+    ) -> "MissionIsolationSpec":
         launcher_path, manifest_path = Path(launcher), Path(manifest)
         if not launcher_path.is_absolute() or not manifest_path.is_absolute():
             raise RuntimeError("external sandbox paths must be absolute")
@@ -327,6 +327,11 @@ class CodexIsolationSpec:
             return
         if stat.S_ISREG(info.st_mode) and (info.st_dev, info.st_ino) == (self._manifest._device, self._manifest._inode):
             self._manifest._path.unlink()
+
+
+# Compatibility for existing harness integrations. The isolation contract is
+# executor-neutral; only the Codex transport was its original consumer.
+CodexIsolationSpec = MissionIsolationSpec
 
 
 @runtime_checkable

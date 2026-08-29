@@ -820,7 +820,7 @@ def test_code_agent_stages_until_exact_verifier_promotes(monkeypatch, tmp_path: 
             assert all(path != workspace / "app" for path in run_request.write_paths)
             staged = run_request.write_paths[0] / "index.html"
             staged.write_text("unverified source-secret", encoding="utf-8")
-            return AgentRunResult("codex", "openai", "model", "session", TerminalStatus.SUCCEEDED, "ok", {}, (staged.relative_to(workspace),), (), 0, {})
+            return AgentRunResult("codex", "openai", run_request.config.model.model_id, "session", TerminalStatus.SUCCEEDED, "ok", {}, (staged.relative_to(workspace),), (), 0, {})
     completed = MissionWorker(service, workspace, "worker", lambda _config, **_kw: Writer()).run_once("tenant_api", "project_api")
     assert completed is not None and completed.status == "succeeded"
     item = service.deliverables("tenant_api", "project_api")[0]

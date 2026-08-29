@@ -94,6 +94,15 @@ def _isolation_spec(tmp_path: Path, request: AgentRunRequest) -> tuple[CodexIsol
 
 def test_default_selection_is_codex_and_no_adapter_fallback() -> None:
     assert HarnessConfig.from_env({}).harness == "codex"
+    assert HarnessConfig.from_env({"CMUL8_EXECUTION_BACKEND": "enterprise"}).harness == "enterprise"
+    assert HarnessConfig.from_env({
+        "CMUL8_EXECUTION_BACKEND": "enterprise",
+        "CMUL8_AGENT_HARNESS": "codex",
+    }).harness == "enterprise"
+    assert HarnessConfig.from_env({
+        "CMUL8_EXECUTION_BACKEND": "",
+        "CMUL8_AGENT_HARNESS": "enterprise",
+    }).harness == "enterprise"
     assert isinstance(create_harness(HarnessConfig.from_env({})), CodexHarness)
     assert isinstance(create_harness(_config("prime"), prime_runner=lambda _: {"response": "ok"}), PrimeHarness)
     assert {item.value for item in TaskType} == {
@@ -103,6 +112,9 @@ def test_default_selection_is_codex_and_no_adapter_fallback() -> None:
         assert ProviderConfig(name).provider == name
     with pytest.raises(ValueError):
         ProviderConfig("unsupported")
+    for invalid in ("", "../backend", "backend:factory", "UPPER", "a" * 65):
+        with pytest.raises(ValueError):
+            HarnessConfig(invalid, ProviderConfig("custom"), ModelCapability("test"))
 
 
 def test_operator_model_routes_are_exact_and_never_render_secret_values(tmp_path: Path) -> None:

@@ -91,6 +91,9 @@ class CollaborationService:
 	def conversation_message_view(self, tenant_id: str, project_id: str, message_id: str, authenticated_human_actor_id: str):
 		return self._conversation.message_view(tenant_id, project_id, message_id, authenticated_human_actor_id)
 
+	def project_agent_completion(self, **kwargs):
+		return self._conversation.project_agent_completion(**kwargs)
+
 	def conversation_audits(self, tenant_id: str, project_id: str):
 		return self._conversation.audits(tenant_id, project_id)
 

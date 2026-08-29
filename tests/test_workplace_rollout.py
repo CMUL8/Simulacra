@@ -68,6 +68,16 @@ def test_rollout_environment_contract_documents_validated_internal_allowlist():
     ).ok
 
 
+def test_environment_contract_does_not_require_codex_paths_for_other_baked_executors():
+    contract = json.loads((ROOT / "deploy" / "environment-contract.json").read_text())
+
+    assert "CMUL8_EXECUTION_BACKEND_FACTORY" not in contract["properties"]
+    assert "CMUL8_CODEX_BIN" not in contract["required"]
+    codex_rule = contract["allOf"][0]
+    assert codex_rule["if"]["properties"]["CMUL8_EXECUTION_BACKEND"] == {"const": "codex"}
+    assert codex_rule["then"]["required"] == ["CMUL8_CODEX_BIN"]
+
+
 def test_empty_rollout_allowlist_keeps_every_tenant_off(monkeypatch):
     monkeypatch.setenv(ALLOWLIST_ENV, "")
     assert validate_environment(_production_environment(**{ALLOWLIST_ENV: ""})).ok

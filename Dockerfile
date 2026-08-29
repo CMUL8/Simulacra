@@ -42,7 +42,6 @@ RUN pip install --no-cache-dir -e ".[demo]" \
 	&& mkdir -p /app/data/codex /app/runs \
 	&& chown -R 65532:65532 /app/data /app/runs
 ENV SIMULACRA_AUTH_REQUIRED=1
-ENV CMUL8_AGENT_HARNESS=codex
 ENV CMUL8_MODEL_PROVIDER=openai
 ENV CMUL8_CODEX_BIN=/opt/codex/bin/codex
 ENV CODEX_HOME=/app/data/codex

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import hashlib
+import json
 import runpy
 import subprocess
 import sys
@@ -32,6 +33,94 @@ def test_launcher_rejects_manifest_hash_tamper_and_scrubs_environment(monkeypatc
     assert env["TMPDIR"] == str(tmp_path / "temp") and env["CODEX_HOME"] == str(tmp_path / "home")
 
 
+def test_launcher_accepts_only_the_selected_certified_executor_runtime(monkeypatch, tmp_path: Path):
+    launcher = _launcher_module()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    temp_root = tmp_path / "temp"
+    executor_home = tmp_path / "home"
+    temp_root.mkdir()
+    executor_home.mkdir()
+    executors_root = tmp_path / "executors"
+    runtime = executors_root / "enterprise"
+    (runtime / "bin").mkdir(parents=True)
+    executable = runtime / "bin" / "mission-executor"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o555)
+    launcher_globals = launcher["_manifest"].__globals__
+    monkeypatch.setitem(launcher_globals, "_EXECUTOR_RUNTIME_ROOT", executors_root)
+    monkeypatch.setitem(launcher_globals, "_EXECUTOR_OWNER_UID", os.getuid())
+    manifest = {
+        "workspace": str(workspace),
+        "read_roots": [],
+        "write_roots": [],
+        "temp_root": str(temp_root),
+        "executor_home": str(executor_home),
+        "executor_runtime_root": str(runtime),
+        "executor_executable": str(executable),
+        "execution_backend": "enterprise",
+        "execution_protocol": "mission-executor-json-v1",
+        "network": False,
+        "mission_id": "mission_1",
+        "run_id": "run_1",
+        "agent_id": "agent_1",
+        "invocation_id": "invocation_1",
+        "execution_binding_sha256": "f" * 64,
+    }
+    parsed = launcher["_manifest"](manifest, str(executable))
+    assert parsed[-2:] == ("enterprise", "mission-executor-json-v1")
+    manifest["executor_runtime_root"] = str(executors_root / "other")
+    with pytest.raises(SystemExit, match="manifest path|executor runtime"):
+        launcher["_manifest"](manifest, str(executable))
+
+
+def test_generic_executor_reaches_the_real_launcher_sandbox_edge(monkeypatch, tmp_path: Path):
+    launcher = _launcher_module()
+    workspace = tmp_path / "workspace"
+    temp_root = tmp_path / "temp"
+    executor_home = tmp_path / "home"
+    executors_root = tmp_path / "executors"
+    runtime = executors_root / "enterprise"
+    for path in (workspace, temp_root, executor_home, runtime / "bin"):
+        path.mkdir(parents=True)
+    executable = runtime / "bin" / "mission-executor"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o555)
+    manifest_value = {
+        "workspace": str(workspace), "read_roots": [], "write_roots": [],
+        "temp_root": str(temp_root), "executor_home": str(executor_home),
+        "executor_runtime_root": str(runtime), "executor_executable": str(executable),
+        "execution_backend": "enterprise", "execution_protocol": "mission-executor-json-v1",
+        "network": False, "mission_id": "mission_1", "run_id": "run_1", "agent_id": "agent_1",
+        "invocation_id": "invocation_1", "execution_binding_sha256": "f" * 64,
+        "model_route": {
+            "provider": "custom", "endpoint": "https://models.enterprise.example/v1",
+            "credential_env_var": None,
+        },
+    }
+    manifest = tmp_path / "manifest.json"
+    raw = json.dumps(manifest_value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    manifest.write_bytes(raw)
+    manifest.chmod(0o600)
+    launcher_globals = launcher["main"].__globals__
+    monkeypatch.setitem(launcher_globals, "_EXECUTOR_RUNTIME_ROOT", executors_root)
+    monkeypatch.setitem(launcher_globals, "_EXECUTOR_OWNER_UID", os.getuid())
+    applied: dict[str, object] = {}
+    monkeypatch.setitem(launcher_globals, "apply", lambda *args, **kwargs: applied.update(kwargs))
+
+    class ExecCalled(Exception):
+        pass
+
+    monkeypatch.setattr(os, "execve", lambda *_args: (_ for _ in ()).throw(ExecCalled()))
+    with pytest.raises(ExecCalled):
+        launcher["main"]([
+            "cmul8-mission-sandbox", str(manifest), hashlib.sha256(raw).hexdigest(),
+            str(executable), "mission-executor", "--stdio",
+        ])
+    assert applied["runtime_root"] == runtime
+    assert applied["executor_home"] == executor_home
+
+
 class _Libc:
     def __init__(self, abi=3, fail_at=None): self.calls=[]; self.abi=abi; self.fail_at=fail_at
     def prctl(self, *args): self.calls.append(("prctl", args)); return -1 if self.fail_at == "prctl" else 0
@@ -48,7 +137,6 @@ def _roots(monkeypatch, tmp_path: Path):
     for path in (read, write, temp, home): path.mkdir()
     runtime = tmp_path / "opt" / "codex"; (runtime / "bin").mkdir(parents=True)
     executable = runtime / "bin" / "codex"; executable.write_text("x"); executable.chmod(0o555)
-    monkeypatch.setattr(landlock, "_CODEX_RUNTIME_ROOT", runtime)
     monkeypatch.setattr(landlock, "_null_device", lambda: Path("/dev/null"))
     return workspace, read, write, runtime, executable, temp, home
 
@@ -100,7 +188,6 @@ from pathlib import Path
 import subprocess
 import sys
 from simulacra.missions import landlock
-landlock._CODEX_RUNTIME_ROOT = Path('/usr')
 try:
     landlock.apply(Path(sys.argv[1]), [Path(sys.argv[2])], [Path(sys.argv[3])], runtime_root=Path('/usr'), executable=Path(sys.executable).resolve(), temp_root=Path(sys.argv[4]), codex_home=Path(sys.argv[5]))
 except RuntimeError as exc:

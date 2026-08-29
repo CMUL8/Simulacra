@@ -8,10 +8,25 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from simulacra.harnesses import AgentRunResult, TerminalStatus
+from simulacra.harnesses import (
+    AgentRunRequest,
+    AgentRunResult,
+    HarnessConfig,
+    JsonSessionRepository,
+    ModelCapability,
+    ProviderConfig,
+    TerminalStatus,
+)
 from simulacra.harnesses.codex_provider import CUSTOM_CREDENTIAL_ENV, OPENAI_BASE_URL
 from simulacra.harnesses.codex import CodexIsolationSpec
-from simulacra.missions import JsonMissionRepository, MissionConflictError, MissionService, MissionWorker
+from simulacra.missions import (
+    JsonMissionRepository,
+    JsonProcessMissionAgentExecutor,
+    MissionAgentExecutor,
+    MissionConflictError,
+    MissionService,
+    MissionWorker,
+)
 import simulacra.missions.worker as worker_module
 from simulacra.missions.artifacts import artifact_bytes, artifact_evidence
 from simulacra.operation_graph import OperationGraphStore, load_operation_graph
@@ -254,7 +269,7 @@ def test_relative_artifact_is_evidenced_and_versioned(tmp_path: Path):
             target = request.write_paths[0] / "result.py"; target.write_text("x = 1\n")
             assert artifact_bytes(request.workspace, target.relative_to(request.workspace).as_posix()) == b"x = 1\n"
             assert artifact_evidence(request.workspace, target.relative_to(request.workspace).as_posix())[1]["size"] == 6
-            return AgentRunResult("codex", "openai", "model", "s", TerminalStatus.SUCCEEDED, "ok", {}, (target.relative_to(request.workspace),), (), 0, {})
+            return AgentRunResult("codex", "openai", request.config.model.model_id, "s", TerminalStatus.SUCCEEDED, "ok", {}, (target.relative_to(request.workspace),), (), 0, {})
     worker = MissionWorker(service, tmp_path, "worker", lambda _config, **_kw: Writer())
     for _ in range(2):
         service.create_run("tenant_1", "project_1", {"type": "manual"}, verified_contract_revision=revision)
@@ -287,7 +302,7 @@ def test_failed_budget_turn_keeps_only_confined_artifact_candidates_for_verifica
             else:
                 changed = ()
             return AgentRunResult(
-                "codex", "openai", "model", "session", TerminalStatus.FAILED, None, {}, changed, (), 0,
+                "codex", "openai", request.config.model.model_id, "session", TerminalStatus.FAILED, None, {}, changed, (), 0,
                 {"steps": 2}, {"code": "step_budget_exceeded"},
             )
 
@@ -320,7 +335,7 @@ def test_code_staging_is_attempt_unique_and_preserves_prior_failed_candidate(tmp
             body = "first failed candidate" if len(staging_roots) == 1 else "second verified candidate"
             target.write_text(body, encoding="utf-8")
             return AgentRunResult(
-                "codex", "openai", "model", "session", TerminalStatus.FAILED if len(staging_roots) == 1 else TerminalStatus.SUCCEEDED,
+                "codex", "openai", request.config.model.model_id, "session", TerminalStatus.FAILED if len(staging_roots) == 1 else TerminalStatus.SUCCEEDED,
                 None, {}, (target.relative_to(request.workspace),), (), 0, {},
             )
     worker = MissionWorker(service, tmp_path, "worker", lambda _config, **_kw: RetryingWriter())
@@ -464,7 +479,7 @@ def _test_isolation_seam(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("CMUL8_MISSION_ISOLATION_LAUNCHER", str(launcher))
     monkeypatch.setenv("CMUL8_MISSION_RUNTIME_ROOT", str(tmp_path / "mission-runtime"))
     original = CodexIsolationSpec.from_files.__func__
-    monkeypatch.setattr(worker_module.CodexIsolationSpec, "from_files", classmethod(lambda cls, **kwargs: original(cls, allow_test_launcher=True, **kwargs)))
+    monkeypatch.setattr(worker_module.MissionIsolationSpec, "from_files", classmethod(lambda cls, **kwargs: original(cls, allow_test_launcher=True, **kwargs)))
     return runtime
 
 
@@ -634,7 +649,7 @@ def test_effective_mission_budget_is_bound_prompted_and_wired_to_codex_request(t
             captured["wall_timeout_seconds"] = request.wall_timeout_seconds
             captured["prompt"] = request.prompt
             captured["binding"] = service.runs("tenant_1", "project_1")[0].execution_binding
-            return AgentRunResult("codex", "openai", "model", "session", TerminalStatus.SUCCEEDED, "ok", {}, (), (), 0, {})
+            return AgentRunResult("codex", "openai", request.config.model.model_id, "session", TerminalStatus.SUCCEEDED, "ok", {}, (), (), 0, {})
     completed = MissionWorker(service, tmp_path, "worker", lambda _config, **_kw: BudgetHarness()).run_once("tenant_1", "project_1")
     expected = {"max_steps": 10, "wall_timeout_seconds": 120}
     assert completed is not None and completed.status == "succeeded"
@@ -674,6 +689,334 @@ def test_operator_can_route_new_run_to_custom_open_model_without_user_runtime_ch
     assert binding["model_route"] == {"provider": "custom", "endpoint": "https://models.example/v1", "credential_env_var": CUSTOM_CREDENTIAL_ENV}
     persisted = (tmp_path / "control" / "tenant_1" / "project_1" / "missions" / "state.json").read_text()
     assert "provider-secret-never-persisted" not in persisted
+
+
+def test_queued_run_keeps_its_admitted_model_route_after_operator_change(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CMUL8_MODEL_PROVIDER", "custom")
+    monkeypatch.setenv("CMUL8_MODEL_BASE_URL", "https://models.first.example/v1")
+    monkeypatch.setenv("CMUL8_MODEL_API_KEY_ENV", CUSTOM_CREDENTIAL_ENV)
+    monkeypatch.setenv("CMUL8_MODEL", "open-first-70b")
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    run = service.create_run(
+        "tenant_1", "project_1", {"type": "manual"},
+        verified_contract_revision=revision,
+    )
+
+    # Even a newly malformed deployment route cannot redirect or invalidate
+    # the complete route already admitted into this queued run.
+    monkeypatch.setenv("CMUL8_MODEL_PROVIDER", "custom")
+    monkeypatch.setenv("CMUL8_MODEL_BASE_URL", "http://invalid-current-route.example/v1")
+    monkeypatch.setenv("CMUL8_MODEL_API_KEY_ENV", "UNSUPPORTED_CURRENT_KEY")
+    monkeypatch.setenv("CMUL8_MODEL", "new-default")
+    captured: dict[str, object] = {}
+
+    class PinnedHarness:
+        async def run(self, request):
+            captured["config"] = request.config
+            return AgentRunResult(
+                "codex", "custom", request.config.model.model_id, "session",
+                TerminalStatus.SUCCEEDED, "ok", {}, (), (), 0, {},
+            )
+
+    completed = MissionWorker(
+        service, tmp_path, "worker", lambda _config, **_kw: PinnedHarness(),
+    ).run_once("tenant_1", "project_1")
+    config = captured["config"]
+    assert completed is not None and completed.status == "succeeded"
+    assert run.execution_profile["model_route"] == {
+        "provider": "custom",
+        "endpoint": "https://models.first.example/v1",
+        "credential_env_var": CUSTOM_CREDENTIAL_ENV,
+    }
+    assert config.provider.provider == "custom"
+    assert config.provider.endpoint == "https://models.first.example/v1"
+    assert config.model.model_id == "open-first-70b"
+
+
+def test_executor_result_identity_must_match_admitted_backend_provider_and_model(tmp_path: Path):
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    run = service.create_run(
+        "tenant_1", "project_1", {"type": "manual"},
+        verified_contract_revision=revision,
+    )
+
+    class MismatchedHarness:
+        async def run(self, _request):
+            return AgentRunResult(
+                "codex", "openai", "unadmitted-model", "session",
+                TerminalStatus.SUCCEEDED, "untrusted", {}, (), (), 0, {},
+            )
+
+    completed = MissionWorker(
+        service, tmp_path, "worker", lambda _config, **_kw: MismatchedHarness(),
+    ).run_once("tenant_1", "project_1")
+    assert completed is not None and completed.id == run.id
+    assert completed.status == "failed"
+    assert completed.result is None
+    assert completed.error == {
+        "code": "provider_failed", "message": "Agent execution failed.",
+    }
+
+
+def test_certified_execution_backend_receives_only_admitted_request_and_isolation(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CMUL8_EXECUTION_BACKEND", "enterprise")
+    monkeypatch.setenv("CMUL8_MODEL_PROVIDER", "custom")
+    monkeypatch.setenv("CMUL8_MODEL_BASE_URL", "https://models.enterprise.example/v1")
+    monkeypatch.setenv("CMUL8_MODEL_API_KEY_ENV", CUSTOM_CREDENTIAL_ENV)
+    monkeypatch.setenv(CUSTOM_CREDENTIAL_ENV, "private-enterprise-model-key")
+    monkeypatch.setenv("CMUL8_MODEL", "open-enterprise-70b")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    revision = _approved_workspace(workspace)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "x"})
+    service.add_agent("tenant_1", "project_1", {"name": "A", "role": "r", "mandate": "m"})
+    run = service.create_run("tenant_1", "project_1", {"type": "manual"}, verified_contract_revision=revision)
+    captured: dict[str, object] = {}
+    launcher = tmp_path / "mission-sandbox"
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    launcher.chmod(0o555)
+    runtime = tmp_path / "enterprise-runtime"
+    (runtime / "bin").mkdir(parents=True)
+    executable = runtime / "bin" / "mission-executor"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o555)
+    monkeypatch.setattr(
+        worker_module,
+        "_trusted_launcher",
+        lambda path, configured: path == launcher and configured == str(launcher),
+    )
+    monkeypatch.setenv("CMUL8_MISSION_ISOLATION_LAUNCHER", str(launcher))
+    monkeypatch.setenv("CMUL8_MISSION_RUNTIME_ROOT", str(tmp_path / "mission-runtime"))
+    original = CodexIsolationSpec.from_files.__func__
+    monkeypatch.setattr(
+        worker_module.MissionIsolationSpec,
+        "from_files",
+        classmethod(lambda cls, **kwargs: original(cls, allow_test_launcher=True, **kwargs)),
+    )
+
+    class EnterpriseExecutor(MissionAgentExecutor):
+        name = "enterprise"
+        enforces_network_policy = True
+
+        def runtime_root(self):
+            return runtime
+
+        def executable_path(self):
+            return executable
+
+        def execute(self, request, *, isolation, session_repository):
+            captured["config"] = request.config
+            captured["binding"] = service.runs("tenant_1", "project_1")[0].execution_binding
+            captured["isolation"] = isolation
+            captured["session_repository"] = session_repository
+            captured["manifest"] = __import__("json").loads(isolation.manifest.read_text(encoding="utf-8"))
+            captured["manifest_path"] = isolation.manifest
+            return AgentRunResult(
+                "enterprise", "custom", request.config.model.model_id, "enterprise-session",
+                TerminalStatus.SUCCEEDED, "done", {}, (), (), 0, {"steps": 1},
+            )
+
+    completed = MissionWorker(
+        service, workspace, "worker", execution_backend=EnterpriseExecutor(),
+    ).run_once("tenant_1", "project_1")
+
+    config = captured["config"]
+    binding = captured["binding"]
+    assert completed is not None and completed.status == "succeeded"
+    assert run.execution_profile["runtime"] == "enterprise"
+    assert config.harness == "enterprise" and config.model.model_id == "open-enterprise-70b"
+    assert binding["runtime_config"]["harness"] == "enterprise"
+    assert binding["model_route"] == {
+        "provider": "custom",
+        "endpoint": "https://models.enterprise.example/v1",
+        "credential_env_var": CUSTOM_CREDENTIAL_ENV,
+    }
+    assert captured["isolation"] is not None and captured["session_repository"] is not None
+    manifest = captured["manifest"]
+    assert manifest["execution_backend"] == "enterprise"
+    assert manifest["execution_protocol"] == "mission-executor-json-v1"
+    assert manifest["executor_runtime_root"] == str(runtime)
+    assert manifest["executor_executable"] == str(executable)
+    assert "codex_home" not in manifest and "codex_runtime_root" not in manifest
+    assert not captured["manifest_path"].exists()
+    persisted = (tmp_path / "control" / "tenant_1" / "project_1" / "missions" / "state.json").read_text()
+    assert "private-enterprise-model-key" not in persisted
+
+
+def test_json_process_executor_runs_a_provider_neutral_certified_adapter(tmp_path: Path):
+    executable = tmp_path / "mission-executor"
+    executable.write_text(
+        """#!/usr/bin/env python3
+import json
+import sys
+request = json.loads(sys.stdin.readline())
+assert sys.argv[1:] == ["mission-executor", "--stdio"]
+assert request["schema_version"] == 1
+assert request["network"] == "deny"
+assert request["model"]["provider"] == "custom"
+print(json.dumps({"type": "action_request", "id": "step_1"}), flush=True)
+assert json.loads(sys.stdin.readline()) == {"type": "action_admitted", "id": "step_1"}
+print(json.dumps({
+    "type": "result",
+    "harness": "enterprise",
+    "provider": "custom",
+    "model_id": "open-enterprise-70b",
+    "session_id": "enterprise-session",
+    "status": "succeeded",
+    "response": "done",
+    "structured_output": {"verified": True},
+    "changed_files": [],
+    "usage": {"steps": 1}
+}))
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o555)
+    config = HarnessConfig(
+        harness="enterprise",
+        provider=ProviderConfig("custom", endpoint="https://models.enterprise.example/v1"),
+        model=ModelCapability("open-enterprise-70b"),
+    )
+    request = AgentRunRequest(
+        project_id="project_1",
+        environment_id="production",
+        workspace=tmp_path,
+        prompt="Prepare the verified report.",
+        role="mission:mission_1:agent:agent_1",
+        task_type="research",
+        config=config,
+        metadata={"mission_id": "mission_1", "run_id": "run_1", "agent_id": "agent_1"},
+    )
+
+    class Spec:
+        def request_fingerprint(self, supplied):
+            assert supplied is request
+            return "f" * 64
+
+        def command_prefix(self):
+            return ()
+
+    isolation = type("Isolation", (), {
+        "spec": Spec(), "executable": str(executable), "temp_root": tmp_path,
+    })()
+    result = JsonProcessMissionAgentExecutor("enterprise").execute(
+        request,
+        isolation=isolation,
+        session_repository=JsonSessionRepository(tmp_path),
+    )
+    assert result.status is TerminalStatus.SUCCEEDED
+    assert result.harness == "enterprise" and result.provider == "custom"
+    assert result.model_id == "open-enterprise-70b"
+    assert result.structured_output == {"verified": True}
+
+
+def test_json_process_executor_stops_before_an_action_exceeds_the_admitted_step_budget(tmp_path: Path):
+    executable = tmp_path / "mission-executor"
+    executable.write_text(
+        """#!/usr/bin/env python3
+import json
+import time
+from pathlib import Path
+import sys
+request = json.loads(sys.stdin.readline())
+print(json.dumps({"type": "action_request", "id": "step_1"}), flush=True)
+assert json.loads(sys.stdin.readline()) == {"type": "action_admitted", "id": "step_1"}
+Path(request["workspace"], "first-action.txt").write_text("admitted")
+print(json.dumps({"type": "action_request", "id": "step_2"}), flush=True)
+if sys.stdin.readline():
+    Path(request["workspace"], "second-action.txt").write_text("must not happen")
+time.sleep(10)
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o555)
+    config = HarnessConfig(
+        harness="enterprise",
+        provider=ProviderConfig("custom", endpoint="https://models.enterprise.example/v1"),
+        model=ModelCapability("open-enterprise-70b"),
+    )
+    request = AgentRunRequest(
+        project_id="project_1",
+        environment_id="production",
+        workspace=tmp_path,
+        prompt="Prepare the verified report.",
+        role="mission:mission_1:agent:agent_1",
+        task_type="research",
+        wall_timeout_seconds=5,
+        step_budget=1,
+        config=config,
+        metadata={"mission_id": "mission_1", "run_id": "run_1", "agent_id": "agent_1"},
+    )
+
+    class Spec:
+        def request_fingerprint(self, _supplied):
+            return "f" * 64
+
+        def command_prefix(self):
+            return ()
+
+    isolation = type("Isolation", (), {
+        "spec": Spec(), "executable": str(executable), "temp_root": tmp_path,
+    })()
+    result = JsonProcessMissionAgentExecutor("enterprise").execute(
+        request,
+        isolation=isolation,
+        session_repository=JsonSessionRepository(tmp_path),
+    )
+    assert result.status is TerminalStatus.FAILED
+    assert result.duration_seconds < 2
+    assert (tmp_path / "first-action.txt").read_text(encoding="utf-8") == "admitted"
+    assert not (tmp_path / "second-action.txt").exists()
+
+
+def test_json_process_executor_stops_a_turn_at_the_admitted_wall_time(tmp_path: Path):
+    executable = tmp_path / "mission-executor"
+    executable.write_text(
+        "#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o555)
+    config = HarnessConfig(
+        harness="enterprise",
+        provider=ProviderConfig("custom", endpoint="https://models.enterprise.example/v1"),
+        model=ModelCapability("open-enterprise-70b"),
+    )
+    request = AgentRunRequest(
+        project_id="project_1",
+        environment_id="production",
+        workspace=tmp_path,
+        prompt="Prepare the verified report.",
+        role="mission:mission_1:agent:agent_1",
+        task_type="research",
+        wall_timeout_seconds=0.1,
+        config=config,
+        metadata={"mission_id": "mission_1", "run_id": "run_1", "agent_id": "agent_1"},
+    )
+
+    class Spec:
+        def request_fingerprint(self, _supplied):
+            return "f" * 64
+
+        def command_prefix(self):
+            return ()
+
+    isolation = type("Isolation", (), {
+        "spec": Spec(), "executable": str(executable), "temp_root": tmp_path,
+    })()
+    result = JsonProcessMissionAgentExecutor("enterprise").execute(
+        request,
+        isolation=isolation,
+        session_repository=JsonSessionRepository(tmp_path),
+    )
+    assert result.status is TerminalStatus.TIMED_OUT
+    assert result.duration_seconds < 2
 
 
 def test_execution_binding_rejects_effective_budget_tamper(tmp_path: Path):
@@ -749,7 +1092,7 @@ def test_approval_overview_keeps_old_actionable_record_and_worker_reads_exact_ap
     class ApprovedHarness:
         async def run(self, request):
             seen.append(request.role)
-            return AgentRunResult("codex", "openai", "model", "session", TerminalStatus.SUCCEEDED, "ok", {}, (), (), 0, {})
+            return AgentRunResult("codex", "openai", request.config.model.model_id, "session", TerminalStatus.SUCCEEDED, "ok", {}, (), (), 0, {})
     completed = MissionWorker(service, tmp_path, "worker-2", lambda _config, **_kw: ApprovedHarness()).run_once("tenant_1", "project_1")
     assert completed is not None and completed.id == approved.id and completed.status == "succeeded" and seen
 

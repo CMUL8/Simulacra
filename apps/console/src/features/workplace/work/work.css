@@ -52,7 +52,7 @@
 .work-detail dl div { border-block-start: 1px solid var(--mission-color-border); display: grid; gap: var(--mission-space-1); padding-block: var(--mission-space-3); }
 .work-detail dt { color: var(--mission-color-muted); font-size: 0.75rem; }
 .work-detail dd { margin: 0; }
-.work-detail-action { background: var(--mission-color-accent) !important; color: var(--mission-color-canvas) !important; }
+.work-detail-action { background: var(--mission-color-accent) !important; color: var(--mission-color-accent-ink) !important; }
 .work-action-panel { align-self: end; border-block-start: 1px solid var(--mission-color-border); display: grid; gap: var(--mission-space-3); padding-block-start: var(--mission-space-3); }
 .work-action-panel h4 { font-size: 0.875rem; margin: 0; }
 .work-action-panel label { color: var(--mission-color-muted); display: grid; font-size: 0.75rem; gap: var(--mission-space-1); }

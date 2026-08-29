@@ -20,10 +20,15 @@ function luminance(hex: string): number {
 test("tokens_imports_and_meets_contrast_contract", () => {
   const foreground = tokenValue("--mission-color-fg");
   const canvas = tokenValue("--mission-color-canvas");
-  const contrast = (Math.max(luminance(foreground), luminance(canvas)) + 0.05) /
-    (Math.min(luminance(foreground), luminance(canvas)) + 0.05);
+  const surface = tokenValue("--mission-color-surface");
+  const contrast = (background: string) => (Math.max(luminance(foreground), luminance(background)) + 0.05) /
+    (Math.min(luminance(foreground), luminance(background)) + 0.05);
 
   expect(tokens).toContain(":root");
+  expect(tokens).toContain("color-scheme: light");
   expect(tokenValue("--mission-color-focus")).toMatch(/^#[0-9a-f]{6}$/i);
-  expect(contrast).toBeGreaterThanOrEqual(4.5);
+  expect(luminance(canvas)).toBeGreaterThan(luminance(foreground));
+  expect(canvas).not.toBe(surface);
+  expect(contrast(canvas)).toBeGreaterThanOrEqual(7);
+  expect(contrast(surface)).toBeGreaterThanOrEqual(7);
 });

@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 WORKER_SOCKET = Path(os.environ.get("CMUL8_WORKER_SOCKET", "/tmp/cmul8-worker.sock"))
 _MAX_DISCOVERY_STATE_BYTES = 8 * 1024 * 1024
 _DEFAULT_MISSION_CRON_INTERVAL_SECONDS = 15.0
+_CERTIFIED_EXECUTION_BACKENDS: dict[str, object] = {"codex": lambda: None}
 
 
 def bootstrap_recovery_tick(*, limit: int = 100) -> int:
@@ -34,6 +35,40 @@ def bootstrap_recovery_tick(*, limit: int = 100) -> int:
 		return WorkspaceBootstrapCoordinator().recovery_tick(limit=min(100, max(1, limit)))
 	except Exception:
 		return 0
+
+
+def _configured_mission_execution_backend() -> object | None:
+	"""Create one reviewed, image-baked Mission executor.
+
+	The registry is source-controlled and shipped in the deployment image. An
+	environment variable can select a certified entry but can never import or
+	execute arbitrary application-process code.
+	"""
+	from simulacra.harnesses import HarnessConfig
+	from simulacra.missions.executor import MissionAgentExecutor
+
+	backend_name = HarnessConfig.from_env().harness
+	factory = _CERTIFIED_EXECUTION_BACKENDS.get(backend_name)
+	if not callable(factory):
+		raise ValueError("execution backend is not certified in this deployment image")
+	backend = factory()
+	if backend is None and backend_name == "codex":
+		return None
+	if not isinstance(backend, MissionAgentExecutor):
+		raise ValueError("certified execution backend returned an invalid implementation")
+	if backend.name != backend_name:
+		raise ValueError("certified execution backend name does not match configuration")
+	if backend.enforces_network_policy is not True:
+		raise ValueError("certified execution backend must enforce the admitted network policy")
+	return backend
+
+
+def _mission_execution_configuration_ready() -> bool:
+	try:
+		_configured_mission_execution_backend()
+		return True
+	except (ImportError, AttributeError, TypeError, ValueError):
+		return False
 
 
 def _configured_notification_adapter() -> object | None:
@@ -197,6 +232,9 @@ def preflight() -> int:
 	if os.environ.get("CMUL8_TLS_REQUIRED", "true").lower() != "true":
 		print("private runtime requires CMUL8_TLS_REQUIRED=true", file=sys.stderr)
 		return 78
+	if not _mission_execution_configuration_ready():
+		print("configured Mission execution backend is unavailable", file=sys.stderr)
+		return 78
 	return 0
 
 
@@ -308,7 +346,7 @@ def _runtime_roots_ready() -> bool:
 			root.mkdir(parents=True, exist_ok=True)
 			if not os.access(root, os.R_OK | os.W_OK):
 				return False
-		return _queue_reachable()
+		return _queue_reachable() and _mission_execution_configuration_ready()
 	except OSError:
 		return False
 
@@ -323,6 +361,12 @@ def _discovered_mission_workers(*, project_only: str | None = None, tenant_only:
         if project_only is not None: validate_scope_id(project_only, "project_id")
         if tenant_only is not None: validate_scope_id(tenant_only, "tenant_id")
     except ValueError:
+        return []
+    try:
+        # Validate deployment configuration before enumerating tenant work.
+        # A fresh instance is still created for each worker below.
+        _configured_mission_execution_backend()
+    except (ImportError, AttributeError, TypeError, ValueError):
         return []
     runs_root = Path(os.environ.get("SIMULACRA_RUNS_DIR", "/app/runs")).resolve()
     control_root = runs_root / ".mission-control"
@@ -375,7 +419,13 @@ def _discovered_mission_workers(*, project_only: str | None = None, tenant_only:
                 JsonCollaborationRepository(runs_root / ".cmul8-control"), service, workspace,
                 runs_root=runs_root, clock=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             )
-            output.append((MissionWorker(service, workspace, coordinator=coordinator), tenant_id, project_id))
+            execution_backend = _configured_mission_execution_backend()
+            output.append((MissionWorker(
+                service,
+                workspace,
+                coordinator=coordinator,
+                execution_backend=execution_backend,
+            ), tenant_id, project_id))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
     return output

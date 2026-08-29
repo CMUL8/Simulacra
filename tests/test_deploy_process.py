@@ -18,6 +18,7 @@ from apps.api.main import liveness, readiness
 from simulacra.operation_graph import OperationGraphStore, load_operation_graph
 from simulacra.runtime import RuntimePlane
 from simulacra.missions import JsonMissionRepository, MissionService
+from simulacra.missions import MissionAgentExecutor
 from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
 from simulacra.workplace import AssignmentCoordinator
 
@@ -37,6 +38,51 @@ def test_preflight_accepts_explicit_external_services(monkeypatch):
 	for key, value in values.items():
 		monkeypatch.setenv(key, value)
 	assert deploy_process.preflight() == 0
+
+
+def test_execution_backend_registry_is_image_baked_and_name_bound(monkeypatch):
+	class EnterpriseExecutor(MissionAgentExecutor):
+		name = "enterprise"
+		enforces_network_policy = True
+
+		def execute(self, request, *, isolation, session_repository):
+			raise AssertionError("factory validation must not execute work")
+
+	monkeypatch.setenv("CMUL8_EXECUTION_BACKEND", "enterprise")
+	monkeypatch.setitem(deploy_process._CERTIFIED_EXECUTION_BACKENDS, "enterprise", lambda: EnterpriseExecutor())
+
+	configured = deploy_process._configured_mission_execution_backend()
+	assert isinstance(configured, EnterpriseExecutor)
+
+	monkeypatch.setenv("CMUL8_EXECUTION_BACKEND", "not_baked")
+	with pytest.raises(ValueError, match="not certified"):
+		deploy_process._configured_mission_execution_backend()
+
+	monkeypatch.setenv("CMUL8_EXECUTION_BACKEND", "different")
+	monkeypatch.setitem(deploy_process._CERTIFIED_EXECUTION_BACKENDS, "different", lambda: EnterpriseExecutor())
+	with pytest.raises(ValueError, match="does not match"):
+		deploy_process._configured_mission_execution_backend()
+
+	class UncertifiedExecutor(EnterpriseExecutor):
+		name = "uncertified"
+		enforces_network_policy = False
+
+	monkeypatch.setenv("CMUL8_EXECUTION_BACKEND", "uncertified")
+	monkeypatch.setitem(deploy_process._CERTIFIED_EXECUTION_BACKENDS, "uncertified", lambda: UncertifiedExecutor())
+	with pytest.raises(ValueError, match="network policy"):
+		deploy_process._configured_mission_execution_backend()
+
+
+def test_preflight_and_readiness_fail_when_selected_executor_is_not_baked(monkeypatch):
+	values = {
+		"CMUL8_TENANT_ID": "tenant", "CMUL8_ENVIRONMENT": "production",
+		"CMUL8_POSTGRES_URL": "postgres://db/app", "CMUL8_REDIS_URL": "redis://queue/0",
+		"CMUL8_TLS_REQUIRED": "true", "CMUL8_EXECUTION_BACKEND": "missing_backend",
+	}
+	for key, value in values.items():
+		monkeypatch.setenv(key, value)
+	assert deploy_process.preflight() == 78
+	assert not deploy_process._mission_execution_configuration_ready()
 
 
 def test_mission_cron_cadence_is_bounded_and_scheduler_failures_are_contained(monkeypatch):

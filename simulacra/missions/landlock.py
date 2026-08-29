@@ -1,4 +1,4 @@
-"""Small fail-closed Linux Landlock boundary for the Mission Codex launcher."""
+"""Small fail-closed Linux Landlock boundary for a Mission executor turn."""
 from __future__ import annotations
 
 import ctypes
@@ -10,7 +10,6 @@ from typing import Iterable
 
 
 CREATE, ADD, RESTRICT, VERSION = 444, 445, 446, 1
-_CODEX_RUNTIME_ROOT = Path("/opt/codex")
 EXECUTE = 1 << 0
 WRITE_FILE = 1 << 1
 READ_FILE = 1 << 2
@@ -90,13 +89,14 @@ def apply(
     runtime_root: Path,
     executable: Path,
     temp_root: Path,
-    codex_home: Path,
+    executor_home: Path | None = None,
+    codex_home: Path | None = None,
     libc=None,
 ) -> None:
-    """Restrict the current process to exact Mission and Codex runtime roots.
+    """Restrict the current process to exact Mission and executor roots.
 
     Runtime and TLS/DNS files are explicit.  Mission roots are constrained to
-    the supplied workspace; temporary and Codex state roots are separate,
+    the supplied workspace; temporary and executor state roots are separate,
     private directories under the worker control root.
     """
     if platform.system() != "Linux":
@@ -105,14 +105,17 @@ def apply(
     runtime_root = _canonical(runtime_root, directory=True)
     executable = _canonical(executable, directory=False)
     temp_root = _canonical(temp_root, directory=True)
-    codex_home = _canonical(codex_home, directory=True)
-    if runtime_root != _CODEX_RUNTIME_ROOT or not _under(runtime_root, executable):
-        raise RuntimeError("unsafe Codex runtime root")
+    selected_home = executor_home or codex_home
+    if selected_home is None:
+        raise RuntimeError("executor state root is required")
+    selected_home = _canonical(selected_home, directory=True)
+    if not _under(runtime_root, executable):
+        raise RuntimeError("unsafe executor runtime root")
     read_paths = [_canonical(item) for item in read_roots]
     write_paths = [_canonical(item) for item in write_roots]
     if any(not _under(workspace, item) for item in read_paths + write_paths):
         raise RuntimeError("Mission Landlock root escapes workspace")
-    if _under(workspace, temp_root) or _under(workspace, codex_home) or _under(Path("/app/runs"), temp_root) or _under(Path("/app/runs"), codex_home):
+    if _under(workspace, temp_root) or _under(workspace, selected_home) or _under(Path("/app/runs"), temp_root) or _under(Path("/app/runs"), selected_home):
         raise RuntimeError("unsafe Mission private root")
     libc = libc or ctypes.CDLL(None, use_errno=True)
     if libc.syscall(CREATE, 0, 0, VERSION) < 3:
@@ -127,7 +130,7 @@ def apply(
         roots: list[tuple[Path, int]] = [(Path("/usr"), EXEC_READ), (runtime_root, EXEC_READ)]
         roots += [(item, READ if item.is_dir() else READ_FILE) for item in read_paths]
         roots += [(item, WRITE) for item in write_paths]
-        roots += [(temp_root, WRITE), (codex_home, WRITE)]
+        roots += [(temp_root, WRITE), (selected_home, WRITE)]
         # Codex 0.148 shell-tool children use Stdio::null().  Landlock needs
         # this one exact character device; directory traversal or any other
         # /dev node remains denied.

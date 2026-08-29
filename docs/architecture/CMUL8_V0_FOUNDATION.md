@@ -71,7 +71,7 @@ control plane. Generated operational bundles contain an independent runtime plan
 - Task types are the exact brief values: chat, architect, build_app, build_workflow,
   configure_agent, qa, research, iterate and repair.
 - Terminal statuses: succeeded, failed, cancelled and timed_out.
-- Default selection is `CMUL8_AGENT_HARNESS=codex`; fallback is never implicit.
+- Default selection is `CMUL8_EXECUTION_BACKEND=codex`; non-default executors must be reviewed and baked into the image's source-controlled certified registry, and fallback is never implicit.
 - Provider credentials are referenced by environment-variable name only and are never
   serialized into projects or generated bundles.
 

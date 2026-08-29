@@ -1059,17 +1059,21 @@ body {
   min-height: min(70vh, 560px);
   padding-top: max(96px, 18vh);
 }
+.landing.landing-boot {
+  background: var(--mission-color-canvas, #f2f0e9);
+  color: var(--mission-color-fg, #20231e);
+}
 .boot-mark {
   margin: 0;
   font-family: var(--font-ui);
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.03em;
-  color: var(--text-bright);
+  color: var(--mission-color-fg, #20231e);
 }
 .landing-boot-status {
   margin: 11px 0 0;
-  color: var(--text-dim);
+  color: var(--mission-color-muted, #686d65);
   font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 450;

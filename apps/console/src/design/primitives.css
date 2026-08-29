@@ -5,7 +5,7 @@
   background: var(--mission-color-accent);
   border: 1px solid transparent;
   border-radius: var(--mission-radius-sm);
-  color: var(--mission-color-canvas);
+  color: var(--mission-color-accent-ink);
   cursor: pointer;
   display: inline-flex;
   font: inherit;

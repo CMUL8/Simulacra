@@ -49,7 +49,7 @@
 .file-original-message { color: var(--mission-color-accent) !important; justify-self: start; }
 .file-detail-actions { display: flex; gap: var(--mission-space-2); justify-content: end; }
 .file-detail-actions button { border: 1px solid var(--mission-color-border); color: var(--mission-color-fg); }
-.file-verify-action { background: var(--mission-color-accent) !important; color: var(--mission-color-canvas) !important; font-weight: 650 !important; margin-block-start: var(--mission-space-2); }
+.file-verify-action { background: var(--mission-color-accent) !important; color: var(--mission-color-accent-ink) !important; font-weight: 650 !important; margin-block-start: var(--mission-space-2); }
 .file-verify-action:disabled { cursor: wait; opacity: 0.62; }
 .file-verification-feedback { margin-block-end: 0; }
 .file-verification-feedback.is-success { color: var(--mission-color-success); }

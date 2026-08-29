@@ -1,4 +1,4 @@
-"""One-at-a-time durable Mission consumer for the official Codex harness."""
+"""One-at-a-time durable Mission consumer with a certified executor boundary."""
 from __future__ import annotations
 
 import asyncio
@@ -15,19 +15,21 @@ from typing import Any, Callable, Mapping
 
 from simulacra.harnesses import (
     AgentRunRequest, HarnessConfig, JsonSessionRepository,
-    NetworkPolicy, TaskType, create_harness,
+    MissionIsolationSpec, NetworkPolicy, TaskType, create_harness,
 )
-from simulacra.harnesses.codex import CodexAppServerTransport, CodexIsolationSpec
-from simulacra.harnesses.codex_provider import CodexProviderRoute
+from simulacra.harnesses.codex import CodexAppServerTransport
+from simulacra.harnesses.provider_route import ResponsesProviderRoute
 from simulacra.operation_graph import OperationGraphStore
 
 from .artifacts import artifact_evidence
+from .executor import MissionAgentExecutor
 from .models import AgentDefinition, MissionRun, effective_budget
 from .repository import MissionConflictError
 from .service import MissionService
 
 _TOOLS = frozenset({"document.read", "code.read", "artifact.write", "code.write"})
 _BAKED_LAUNCHER = Path("/opt/cmul8/bin/cmul8-mission-sandbox")
+_PRODUCTION_LAUNCHER = Path("/opt/cmul8/bin/cmul8-mission-sandbox")
 _CODEX_RUNTIME_ROOT = Path("/opt/codex")
 _DEFAULT_MISSION_RUNTIME_ROOT = Path("/app/data/mission-runtime")
 
@@ -44,7 +46,7 @@ def _trusted_launcher(path: Path, configured: str) -> bool:
 
 @dataclass(slots=True)
 class _IsolationResources:
-    spec: CodexIsolationSpec
+    spec: MissionIsolationSpec
     executable: str
     manifest: Path
     manifest_inode: tuple[int, int]
@@ -67,13 +69,67 @@ class _IsolationResources:
             pass
 
 
+class CodexMissionAgentExecutor(MissionAgentExecutor):
+    """Built-in executor backed by the open Codex app-server harness."""
+
+    name = "codex"
+    protocol = "codex-app-server-v1"
+    enforces_network_policy = True
+
+    def runtime_root(self) -> Path:
+        return _CODEX_RUNTIME_ROOT
+
+    def executable_path(self) -> Path:
+        return Path(os.environ.get("CMUL8_CODEX_BIN", str(_CODEX_RUNTIME_ROOT / "bin" / "codex")))
+
+    def execute(self, request: AgentRunRequest, *, isolation: _IsolationResources,
+                session_repository: JsonSessionRepository):
+        harness = create_harness(
+            request.config,
+            session_repository=session_repository,
+            codex_transport=CodexAppServerTransport(
+                executable=isolation.executable,
+                isolation_spec=isolation.spec,
+            ),
+        )
+        return asyncio.run(harness.run(request))
+
+
+class _HarnessFactoryMissionAgentExecutor(MissionAgentExecutor):
+    """Compatibility seam for deterministic in-process tests and migrations."""
+
+    def __init__(self, factory: Callable[..., Any]) -> None:
+        self.factory = factory
+        self.name = ""
+
+    def config_for(self, run: MissionRun) -> HarnessConfig:
+        base = HarnessConfig.from_env()
+        self.name = str(run.execution_profile.get("runtime") or base.harness)
+        return super().config_for(run)
+
+    def readiness_error(self, config: HarnessConfig, *, isolation_ready: bool) -> tuple[str, str] | None:
+        return None
+
+    def execute(self, request: AgentRunRequest, *, isolation: _IsolationResources | None,
+                session_repository: JsonSessionRepository):
+        harness = self.factory(request.config, session_repository=session_repository)
+        return asyncio.run(harness.run(request))
+
+
 class MissionWorker:
     def __init__(self, service: MissionService, workspace: str | Path, worker_id: str | None = None,
-                 harness_factory: Callable[..., Any] = create_harness, coordinator: Any | None = None) -> None:
+                 harness_factory: Callable[..., Any] = create_harness, coordinator: Any | None = None,
+                 execution_backend: MissionAgentExecutor | None = None) -> None:
         self.service, self.workspace = service, Path(workspace).resolve(),
         self.worker_id = worker_id or os.environ.get("CMUL8_WORKER_ID", f"mission-{socket.gethostname()}")
         self.harness_factory = harness_factory
         self.coordinator = coordinator
+        if execution_backend is not None and harness_factory is not create_harness:
+            raise ValueError("supply either execution_backend or the legacy harness_factory, not both")
+        self.execution_backend = execution_backend or (
+            CodexMissionAgentExecutor() if harness_factory is create_harness
+            else _HarnessFactoryMissionAgentExecutor(harness_factory)
+        )
 
     def _admitted(self, run: MissionRun):
         try:
@@ -195,13 +251,7 @@ class MissionWorker:
             for item in reversed(descriptors): os.close(item)
 
     def _config(self, run: MissionRun) -> HarnessConfig:
-        profile = run.execution_profile
-        base = HarnessConfig.from_env()
-        return base.with_model(
-            str(profile.get("model") or base.model.model_id or "default"),
-            reasoning_effort=profile.get("reasoning_effort"),
-            codex_profile=profile.get("codex_profile"),
-        )
+        return self.execution_backend.config_for(run)
 
     @staticmethod
     def _private_directory(path: Path, *, root: Path) -> None:
@@ -258,9 +308,24 @@ class MissionWorker:
             path = Path(launcher)
             if not _trusted_launcher(path, launcher):
                 return None
-            runtime = _CODEX_RUNTIME_ROOT.resolve(strict=True)
-            executable = Path(os.environ.get("CMUL8_CODEX_BIN", str(runtime / "bin" / "codex"))).resolve(strict=True)
-            if runtime != _CODEX_RUNTIME_ROOT or runtime.is_symlink() or not executable.is_file() or runtime not in executable.parents:
+            expected_runtime = Path(self.execution_backend.runtime_root())
+            expected_executable = Path(self.execution_backend.executable_path())
+            if not expected_runtime.is_absolute() or not expected_executable.is_absolute():
+                return None
+            runtime = expected_runtime.resolve(strict=True)
+            executable = expected_executable.resolve(strict=True)
+            runtime_info, executable_info = os.lstat(runtime), os.lstat(executable)
+            expected_owner = 0 if path == _PRODUCTION_LAUNCHER and launcher == str(_PRODUCTION_LAUNCHER) else os.getuid()
+            if (
+                runtime != expected_runtime or runtime.is_symlink()
+                or not stat.S_ISDIR(runtime_info.st_mode)
+                or executable.is_symlink() or not stat.S_ISREG(executable_info.st_mode)
+                or runtime not in executable.parents
+                or runtime_info.st_uid != expected_owner
+                or executable_info.st_uid != expected_owner
+                or runtime_info.st_mode & 0o022
+                or executable_info.st_mode & 0o022
+            ):
                 return None
             runtime_root = self._runtime_root()
             if runtime_root == self.workspace or runtime_root in self.workspace.parents or self.workspace in runtime_root.parents:
@@ -269,7 +334,7 @@ class MissionWorker:
             # the official Codex thread id across long-haul runs/retries, while
             # keeping every other mission or agent from reusing its state. Each
             # new app-server still re-pins trust/provider and clears skills/MCP.
-            state_root = runtime_root / "codex-state" / run.tenant_id / run.project_id / run.mission_id / agent.id
+            state_root = runtime_root / self.execution_backend.state_namespace / run.tenant_id / run.project_id / run.mission_id / agent.id
             self._private_directory(state_root, root=runtime_root)
             temp_root = Path(tempfile.mkdtemp(prefix="mission-turn-", dir=runtime_root))
             os.chmod(temp_root, 0o700)
@@ -282,21 +347,32 @@ class MissionWorker:
             manifest_inode = (created_manifest_info.st_dev, created_manifest_info.st_ino)
             try:
                 os.fchmod(descriptor, 0o600)
-                route = CodexProviderRoute.from_config(config or self._config(run))
+                selected_config = config or self._config(run)
+                route = ResponsesProviderRoute.from_config(selected_config)
                 payload = {
                     "workspace": str(self.workspace.resolve(strict=True)),
                     "read_roots": sorted(str(item.resolve(strict=True)) for item in reads),
                     "write_roots": sorted(str(item.resolve(strict=True)) for item in writes),
                     "temp_root": str(temp_root.resolve(strict=True)),
-                    "codex_home": str(state_root.resolve(strict=True)),
-                    "codex_runtime_root": str(runtime),
-                    "codex_executable": str(executable),
+                    "executor_home": str(state_root.resolve(strict=True)),
+                    "executor_runtime_root": str(runtime),
+                    "executor_executable": str(executable),
+                    "execution_backend": self.execution_backend.name,
+                    "execution_protocol": self.execution_backend.protocol,
                     "network": False,
                     "mission_id": run.mission_id,
                     "run_id": run.id,
                     "agent_id": agent.id,
                     "model_route": route.to_manifest(),
                 }
+                if self.execution_backend.name == "codex":
+                    # One-release compatibility for the pinned Codex launcher
+                    # and operational manifest inspection.
+                    payload.update({
+                        "codex_home": payload["executor_home"],
+                        "codex_runtime_root": payload["executor_runtime_root"],
+                        "codex_executable": payload["executor_executable"],
+                    })
                 if run.invocation_id and run.execution_binding:
                     payload["invocation_id"] = run.invocation_id
                     payload["execution_binding_sha256"] = self.service._binding_digest(run.execution_binding)
@@ -308,7 +384,7 @@ class MissionWorker:
             manifest_info = os.lstat(manifest)
             if not stat.S_ISREG(manifest_info.st_mode) or stat.S_ISLNK(manifest_info.st_mode) or stat.S_IMODE(manifest_info.st_mode) != 0o600:
                 raise ValueError("unsafe Mission manifest")
-            spec = CodexIsolationSpec.from_files(launcher=path, manifest=manifest)
+            spec = MissionIsolationSpec.from_files(launcher=path, manifest=manifest)
             return _IsolationResources(spec, str(executable), manifest, manifest_inode, temp_root, (temp_info.st_dev, temp_info.st_ino))
         except (OSError, ValueError, RuntimeError):
             # If construction fails after mkdtemp/mkstemp the caller has no
@@ -348,12 +424,19 @@ class MissionWorker:
             run = self.service.claim_next(tenant_id, project_id, self.worker_id)
         else:
             self.coordinator.recover_project(tenant_id, project_id)
+            # A committed agent result must reach the humans' shared room
+            # before more work is claimed. Re-running this repair is safe and
+            # closes a crash between Mission completion and Conversation write.
+            try:
+                self.coordinator.project_agent_results(tenant_id, project_id)
+            except Exception:
+                return None
             with self.coordinator.project_claim_guard(tenant_id, project_id) as admission:
                 run = self.service.claim_next(tenant_id, project_id, self.worker_id, assignment_admission=admission)
         if run is None: return None
         admitted, code, graph = self._admitted(run)
         if not admitted:
-            return self.service.gate(tenant_id, project_id, run.id, code, "An exact approved Operation Graph is required before Codex can run.", lease_owner=self.worker_id)
+            return self.service.gate(tenant_id, project_id, run.id, code, "An exact approved Operation Graph is required before the agent can run.", lease_owner=self.worker_id)
         try:
             agents = self.service.run_agents(tenant_id, project_id, run)
         except MissionConflictError:
@@ -378,17 +461,20 @@ class MissionWorker:
         # Validate exact contract again immediately before the durable start marker.
         admitted, code, graph = self._admitted(run)
         if not admitted:
-            return self.service.gate(tenant_id, project_id, run.id, code, "The approved Operation Graph changed before Codex could start.", lease_owner=self.worker_id)
+            return self.service.gate(tenant_id, project_id, run.id, code, "The approved Operation Graph changed before the agent could start.", lease_owner=self.worker_id)
         try:
             config = self._config(run)
-            route = CodexProviderRoute.from_config(config)
+            route_binding = dict(self.execution_backend.route_binding(config))
         except ValueError:
             return self.service.gate(tenant_id, project_id, run.id, "model_route_invalid", "The managed model route is not valid.", lease_owner=self.worker_id, agent_id=agent.id)
-        if self.harness_factory is create_harness and not route.credential_ready(os.environ):
-            return self.service.gate(tenant_id, project_id, run.id, "credential_unavailable", "The managed model route is not ready.", lease_owner=self.worker_id, agent_id=agent.id)
-        if self.harness_factory is create_harness and not self._sandbox_ready():
-            return self.service.gate(tenant_id, project_id, run.id, "sandbox_unavailable", "Mission isolation launcher is unavailable.", lease_owner=self.worker_id, agent_id=agent.id)
-        isolation = None
+        compatibility_test_backend = isinstance(self.execution_backend, _HarnessFactoryMissionAgentExecutor)
+        readiness_error = self.execution_backend.readiness_error(
+            config,
+            isolation_ready=compatibility_test_backend or self._sandbox_ready(),
+        )
+        if readiness_error is not None:
+            error_code, error_message = readiness_error
+            return self.service.gate(tenant_id, project_id, run.id, error_code, error_message, lease_owner=self.worker_id, agent_id=agent.id)
         started: MissionRun | None = None
         try:
             budget = effective_budget(self.service.mission(tenant_id, project_id).budget, agent.budget)
@@ -403,7 +489,7 @@ class MissionWorker:
                 "tools": list(agent.tools), "autonomy": agent.autonomy,
                 "execution_profile": run.execution_profile,
                 "runtime_config": config.persisted_identity(),
-                "model_route": route.to_manifest(),
+                "model_route": route_binding,
                 "assigned_agent_ids": list(run.assigned_agent_ids),
                 "effective_budget": budget,
             }
@@ -415,19 +501,38 @@ class MissionWorker:
             admitted, code, current_graph = self._admitted(started)
             if not admitted or current_graph is None or started.execution_binding is None or current_graph.revision != started.execution_binding.get("operation_graph_revision"):
                 return self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {"status": "failed"}, [])
-            isolation = None if self.harness_factory is not create_harness else self._isolation(started, agent, reads, writes, config)
-            if self.harness_factory is create_harness and isolation is None:
-                return self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {"status": "failed"}, [])
             request = AgentRunRequest(project_id=project_id, environment_id="production", workspace=self.workspace,
                 prompt=prompt, role=role_key,
                 task_type=TaskType.RESEARCH if agent.autonomy == "assist" else TaskType.BUILD_APP,
                 read_paths=reads, write_paths=writes, network_policy=NetworkPolicy.DENY,
                 wall_timeout_seconds=budget["wall_timeout_seconds"], step_budget=budget["max_steps"],
                 config=config, session_id=started.session_ids.get(agent.id), metadata={"mission_id": started.mission_id, "run_id": started.id, "agent_id": agent.id, "invocation_id": started.invocation_id, "execution_binding_sha256": self.service._binding_digest(started.execution_binding)})
-            adapters = {"session_repository": JsonSessionRepository(self.workspace)}
-            if isolation: adapters["codex_transport"] = CodexAppServerTransport(executable=isolation.executable, isolation_spec=isolation.spec)
-            harness = self.harness_factory(request.config, **adapters)
-            result = asyncio.run(harness.run(request))
+            isolation = None if compatibility_test_backend else self._isolation(
+                started, agent, reads, writes, request.config,
+            )
+            if not compatibility_test_backend and isolation is None:
+                return self.service.record_result(
+                    tenant_id, project_id, started.id, self.worker_id, agent.id,
+                    {"status": "failed"}, [],
+                )
+            try:
+                result = self.execution_backend.execute(
+                    request,
+                    isolation=isolation,
+                    session_repository=JsonSessionRepository(self.workspace),
+                )
+            finally:
+                if isolation is not None:
+                    isolation.cleanup()
+            if (
+                result.harness != config.harness
+                or result.provider != config.provider.provider
+                or result.model_id != config.model.model_id
+            ):
+                return self.service.record_result(
+                    tenant_id, project_id, started.id, self.worker_id, agent.id,
+                    {"status": "failed"}, [],
+                )
             changed: list[dict[str, object]] = []
             invalid_artifact = False
             code_staging = next((path for path in writes if path.name.startswith("code-staging-r") and path.name[14:].isdigit()), None)
@@ -457,15 +562,21 @@ class MissionWorker:
                     invalid_artifact = True
             if invalid_artifact and writes:
                 return self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {"status": "failed"}, [])
-            return self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {
+            completed = self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {
                 "status": result.status.value, "session_id": result.session_id, "response": result.response,
                 "structured_output": dict(result.structured_output), "usage": dict(result.usage),
                 "model_id": result.model_id,
                 "events": [{"id": event.id, "action": event.action, "result": event.result, "payload": dict(event.payload)} for event in result.events]}, changed)
+            if self.coordinator is not None:
+                try:
+                    self.coordinator.project_agent_results(tenant_id, project_id)
+                except Exception:
+                    # The Mission result is already durable. The next bounded
+                    # worker tick repairs the Conversation from that source
+                    # event; never misreport completed agent work as failed.
+                    pass
+            return completed
         except Exception:
             if started is None:
                 raise
             return self.service.record_result(tenant_id, project_id, started.id, self.worker_id, agent.id, {"status": "failed"}, [])
-        finally:
-            if isolation is not None:
-                isolation.cleanup()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""TCB launcher for one exact, network-denied Mission Codex invocation.
+"""TCB launcher for one exact, network-denied Mission executor invocation.
 
-argv: MANIFEST MANIFEST_SHA256 CODEX <pinned Mission app-server arguments>
+argv: MANIFEST MANIFEST_SHA256 EXECUTABLE <pinned executor arguments>
 """
 from __future__ import annotations
 
@@ -14,11 +14,14 @@ import sys
 from pathlib import Path
 
 from simulacra.harnesses.codex_provider import CodexProviderRoute, mission_app_server_args
+from simulacra.harnesses.provider_route import ResponsesProviderRoute
 from simulacra.missions.landlock import apply
 
 
 _MAX_MANIFEST_BYTES = 64 * 1024
-_RUNTIME_ROOT = Path("/opt/codex")
+_CODEX_RUNTIME_ROOT = Path("/opt/codex")
+_EXECUTOR_RUNTIME_ROOT = Path("/opt/cmul8/executors")
+_EXECUTOR_OWNER_UID = 0
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _ENV_ALLOWLIST = frozenset({"LANG", "LC_ALL"})
 
@@ -79,7 +82,7 @@ def _roots(value: object, *, workspace: Path) -> list[Path]:
     return result
 
 
-def _manifest(data: dict[str, object], executable: str) -> tuple[Path, list[Path], list[Path], Path, Path, Path]:
+def _manifest(data: dict[str, object], executable: str) -> tuple[Path, list[Path], list[Path], Path, Path, Path, str, str]:
     if data.get("network") is not False:
         die("network must be denied")
     if any(not isinstance(data.get(key), str) or not _ID.fullmatch(str(data[key])) for key in ("mission_id", "run_id", "agent_id")):
@@ -90,38 +93,62 @@ def _manifest(data: dict[str, object], executable: str) -> tuple[Path, list[Path
         die("invalid execution binding")
     workspace = _canonical(data.get("workspace"), directory=True)
     reads, writes = _roots(data.get("read_roots"), workspace=workspace), _roots(data.get("write_roots"), workspace=workspace)
-    temp_root, codex_home = _canonical(data.get("temp_root"), directory=True), _canonical(data.get("codex_home"), directory=True)
-    runtime = _canonical(data.get("codex_runtime_root"), directory=True)
-    codex = _canonical(data.get("codex_executable"), directory=False)
-    if runtime != _RUNTIME_ROOT or runtime not in codex.parents or str(codex) != executable:
-        die("invalid Codex runtime")
-    return workspace, reads, writes, temp_root, codex_home, runtime
+    temp_root = _canonical(data.get("temp_root"), directory=True)
+    executor_home = _canonical(data.get("executor_home") or data.get("codex_home"), directory=True)
+    runtime = _canonical(data.get("executor_runtime_root") or data.get("codex_runtime_root"), directory=True)
+    selected_executable = _canonical(data.get("executor_executable") or data.get("codex_executable"), directory=False)
+    backend = str(data.get("execution_backend") or "codex")
+    protocol = str(data.get("execution_protocol") or "codex-app-server-v1")
+    if not _ID.fullmatch(backend) or runtime not in selected_executable.parents or str(selected_executable) != executable:
+        die("invalid executor runtime")
+    if backend == "codex":
+        if runtime != _CODEX_RUNTIME_ROOT or protocol != "codex-app-server-v1":
+            die("invalid Codex runtime")
+    else:
+        expected_runtime = _EXECUTOR_RUNTIME_ROOT / backend
+        if runtime != expected_runtime or protocol != "mission-executor-json-v1":
+            die("invalid certified executor runtime")
+    executable_info = os.stat(selected_executable, follow_symlinks=False)
+    if executable_info.st_uid != _EXECUTOR_OWNER_UID or executable_info.st_mode & 0o022:
+        die("unsafe executor executable")
+    return workspace, reads, writes, temp_root, executor_home, runtime, backend, protocol
 
 
-def _child_environment(*, temp_root: Path, codex_home: Path, route: CodexProviderRoute) -> dict[str, str]:
+def _child_environment(*, temp_root: Path, route: ResponsesProviderRoute,
+                       executor_home: Path | None = None, codex_home: Path | None = None,
+                       backend: str = "codex") -> dict[str, str]:
+    executor_home = executor_home or codex_home
+    if executor_home is None:
+        die("executor home is required")
     allowed = _ENV_ALLOWLIST | route.allowed_environment_names()
     environment = {key: os.environ[key] for key in allowed if os.environ.get(key)}
     environment.update({
-        "HOME": str(codex_home), "CODEX_HOME": str(codex_home), "TMPDIR": str(temp_root),
-        "XDG_CACHE_HOME": str(codex_home / "cache"), "XDG_CONFIG_HOME": str(codex_home / "config"),
-        "XDG_DATA_HOME": str(codex_home / "data"), "PATH": "/opt/codex/bin:/usr/bin:/bin",
+        "HOME": str(executor_home), "CMUL8_EXECUTOR_HOME": str(executor_home), "TMPDIR": str(temp_root),
+        "XDG_CACHE_HOME": str(executor_home / "cache"), "XDG_CONFIG_HOME": str(executor_home / "config"),
+        "XDG_DATA_HOME": str(executor_home / "data"), "PATH": "/usr/bin:/bin",
     })
+    if backend == "codex":
+        environment.update({"CODEX_HOME": str(executor_home), "PATH": "/opt/codex/bin:/usr/bin:/bin"})
     return environment
 
 
 def main(argv: list[str]) -> None:
-    if len(argv) < 7: die("invalid sandbox argv")
+    if len(argv) < 6: die("invalid sandbox argv")
     manifest = _open_manifest(Path(argv[1]), argv[2])
-    workspace, reads, writes, temp_root, codex_home, runtime = _manifest(manifest, argv[3])
+    workspace, reads, writes, temp_root, executor_home, runtime, backend, protocol = _manifest(manifest, argv[3])
     try:
-        route = CodexProviderRoute.from_manifest(manifest.get("model_route"))
+        route = ResponsesProviderRoute.from_manifest(manifest.get("model_route"))
     except ValueError:
         die("invalid manifest model route")
-    expected = mission_app_server_args(workspace, route)
+    expected = (
+        mission_app_server_args(workspace, CodexProviderRoute.from_manifest(manifest.get("model_route")))
+        if protocol == "codex-app-server-v1"
+        else ("mission-executor", "--stdio")
+    )
     if len(argv) != 4 + len(expected) or tuple(argv[4:]) != expected:
         die("invalid sandbox argv")
-    apply(workspace, reads, writes, runtime_root=runtime, executable=Path(argv[3]), temp_root=temp_root, codex_home=codex_home)
-    os.execve(argv[3], argv[3:], _child_environment(temp_root=temp_root, codex_home=codex_home, route=route))
+    apply(workspace, reads, writes, runtime_root=runtime, executable=Path(argv[3]), temp_root=temp_root, executor_home=executor_home)
+    os.execve(argv[3], argv[3:], _child_environment(temp_root=temp_root, executor_home=executor_home, route=route, backend=backend))
 
 
 if __name__ == "__main__":

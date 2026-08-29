@@ -341,3 +341,35 @@ def test_sse_publication_membership_check_is_serialized_with_concurrent_removal(
     asyncio.run(stream.aclose())
     assert removal_finished.wait(timeout=2)
     thread.join(timeout=2)
+
+
+def test_sse_disconnect_can_release_publication_lock_from_stream_cleanup_thread(event_repository):
+    """A browser disconnect may finalize Starlette's stream off the producer thread."""
+    repository, service = event_repository
+    service.create_conversation_message(
+        tenant_id="tenant_1", project_id="project_1", authenticated_human_actor_id="human_1",
+        client_request_id="message_cross_thread_close", body="Durable",
+    )
+    buffered = workplace_event_routes._authorized_wakeups(repository, _context(), None)
+    stream = workplace_event_routes._stream_workspace_events(
+        repository, _context(), last_event_id=None, initial_events=buffered,
+        max_cycles=1, poll_seconds=0,
+    )
+
+    assert "event: wakeup" in asyncio.run(stream.__anext__())
+    cleanup_errors: list[BaseException] = []
+
+    def close_after_disconnect() -> None:
+        try:
+            asyncio.run(stream.aclose())
+        except BaseException as exc:  # pragma: no branch - the RED assertion records it
+            cleanup_errors.append(exc)
+
+    cleanup = threading.Thread(target=close_after_disconnect)
+    cleanup.start()
+    cleanup.join(timeout=2)
+
+    assert not cleanup.is_alive()
+    assert cleanup_errors == []
+    with repository.room_lock("tenant_1", "project_1") as room:
+        assert room.project_id == "project_1"

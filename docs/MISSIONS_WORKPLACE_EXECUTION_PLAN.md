@@ -65,7 +65,7 @@ The implementation must extend the current system rather than create a parallel 
 - Durable Mission, agent, run, trigger, deliverable, approval, and trajectory records.
 - Project-scoped multiplayer room with humans, presence, tasks, comments, reviews, and revision checks.
 - Exact approved Operation Graph binding before execution.
-- Codex-only managed runtime with operator-controlled model routing, including compatible open-model endpoints.
+- Interchangeable, deployment-owned agent execution boundary with Codex app-server as the first built-in certified executor and operator-controlled Responses-compatible model routing, including private open-model endpoints.
 - Strict Mission and agent budgets.
 - One live run per Mission across worker replicas.
 - Durable leases, retry, cancellation boundaries, and recovery gates.
@@ -969,26 +969,26 @@ The first implementation should formalize the existing dark interface into seman
 
 #### Color direction
 
-Use a warm near-black base, quiet graphite surfaces, restrained periwinkle for coordination, amber only for required human attention, green only for verified success, and red only for stopped/destructive states.
+Use a warm paper canvas, quiet porcelain and stone surfaces, a deep mineral navigation rail, restrained periwinkle for coordination, amber only for required human attention, green only for verified success, and red only for stopped/destructive states. Product work surfaces are light by default; dark chrome must not surround or overpower the Mission.
 
 Initial token targets:
 
 ```css
 :root {
-  --mission-canvas: #0c0d0f;
-  --mission-surface-1: #111318;
-  --mission-surface-2: #171a20;
-  --mission-surface-3: #20242c;
-  --mission-border: #272c36;
-  --mission-border-strong: #394150;
+  --mission-canvas: #f2f0e9;
+  --mission-surface-1: #fbfaf6;
+  --mission-surface-2: #e9e6dc;
+  --mission-surface-3: #ddd9ce;
+  --mission-border: #cfccc1;
+  --mission-border-strong: #aaa79d;
 
-  --mission-text: #f1f0eb;
-  --mission-text-secondary: #b3b5bc;
-  --mission-text-muted: #7f838c;
+  --mission-text: #20231e;
+  --mission-text-secondary: #555b52;
+  --mission-text-muted: #6c7169;
 
-  --mission-accent: #8da6ff;
-  --mission-accent-strong: #b2c1ff;
-  --mission-accent-wash: rgba(141, 166, 255, 0.10);
+  --mission-accent: #465bb8;
+  --mission-accent-strong: #34469b;
+  --mission-accent-wash: rgba(70, 91, 184, 0.10);
 
   --mission-attention: #dfb85c;
   --mission-attention-wash: rgba(223, 184, 92, 0.10);
@@ -2314,15 +2314,19 @@ The existing dependency DAG remains authoritative. Codex orchestration applies i
 - **W6B:** bootstrap reservation and graph finalization are one coordinator lane; fault-injection analysis may run in parallel, implementation may not.
 - **W7:** real-worker integration, deterministic browser journeys, and visual/accessibility capture are independent after the W6B gate. Release activation remains a single owner and runs last.
 
-### 14.6 Product-runtime orchestration contract
+### 14.6 Product-execution orchestration contract
 
-Missions uses Codex as the managed agent harness, but **Missions owns the product orchestration**.
+Missions uses a versioned `MissionAgentExecutor` boundary and ships Codex app-server as its first built-in executor, but **Missions owns the product orchestration**.
 
-- Use the Codex app-server boundary for V0 because the product requires persistent threads, streamed events, interruption, tools, and approval handling. Keep it behind the existing transport adapter so a later SDK migration does not change Mission APIs or durable records.
-- One customer-visible Mission agent maps to one durable Mission identity and one resumable Codex thread lineage. Display names and roles come from Mission records, never from runtime thread metadata.
+- The executor is deployment configuration, never an end-user or tenant choice. A non-default executor must be reviewed and baked into the deployment image's source-controlled certified registry, implement the versioned boundary, match the backend pinned into the admitted run, use managed isolation, and fail readiness closed when unavailable. Environment input may select a certified entry but may not import arbitrary application-process code.
+- Use the Codex app-server executor by default because the product requires persistent threads, streamed events, interruption, tools, and approval handling. Keep it behind the executor and transport adapters so another certified harness or a later SDK migration does not change Mission APIs or durable records.
+- One customer-visible Mission agent maps to one durable Mission identity and one resumable executor session lineage. Display names and roles come from Mission records, never from executor session metadata.
+- Every certified executor consumes the same immutable admission snapshot and returns the same normalized result/evidence contract. The adapter API receives the admitted request, managed isolation, and its execution-session repository—not the Mission service or repository. Switching executors cannot bypass scope, budget, approval, artifact, or verification rules, and returned backend/provider/model identity must match admission before results can become Mission evidence.
+- A non-Codex executor uses the `mission-executor-json-v1` process contract from its own root-owned `/opt/cmul8/executors/<backend>` runtime. The trusted launcher supplies the same request-bound filesystem sandbox and secret allowlist and starts exactly `mission-executor --stdio`; before each action the child must emit an `action_request` and wait for the matching `action_admitted` response. The supervisor withholds that response at the action ceiling, stops the process at its wall-time or output ceiling, accepts one normalized result whose usage equals admitted actions, and fails closed on malformed output. Because the trusted adapter must reach the selected model while model-invoked tools must remain offline, certification requires the baked runtime to implement and declare that internal network separation; discovery/readiness rejects an adapter that does not. No alternate executor inherits Codex state, paths, profiles, or transport arguments.
+- Model routing is independent from executor selection. The built-in Codex executor accepts the official OpenAI route or an operator-owned, credential-free HTTPS base URL implementing the Responses contract; model IDs and routes are pinned into the run while credential values are never persisted.
 - Multi-agent collaboration is coordinated by durable Mission assignments, dependencies, handoffs, permissions, checkpoints, and evidence. A model may recommend delegation, but only the application coordinator can create a new customer-visible assignment or start another agent.
 - Do **not** enable invisible nested Codex subagents inside a customer Mission in V0. They would bypass stable identity, role/scope enforcement, human routing, cost attribution, durable progress, and evidence provenance. Reconsider only after every nested agent event, tool action, approval, artifact, and failure can be projected one-to-one into the Mission record.
-- The Mission database and immutable artifacts are authoritative. Codex thread state is resumable execution context; streamed deltas are transient UI progress and cannot independently resolve work, permission, or verification state.
+- The Mission database and immutable artifacts are authoritative. Executor session state is resumable execution context; streamed deltas are transient UI progress and cannot independently resolve work, permission, or verification state.
 - Each run receives only its role-relevant sources and tools. Server-side allowed-tool selection enforces the effective capability set; prompt text alone never grants authority.
 - A long-running agent run binds outcome, definition of done, role, source versions, permission scope, effective budget, approved graph revision/hash, and evidence requirements before launch.
 - Consequential choices pause at a durable human checkpoint. Cancellation, replacement, retry, and lease recovery must interrupt or fence the active runtime before another writer can mutate the same Mission scope.

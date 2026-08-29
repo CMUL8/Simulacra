@@ -20,7 +20,7 @@ from .models import ActorType, Comment, DomainEvent, Invitation, Member, Project
 Record = TypeVar("Record", ProjectRoom, Task, Comment, Review)
 T = TypeVar("T", bound=object)
 _LOCKS_GUARD = threading.Lock()
-_ROOT_LOCKS: dict[str, threading.RLock] = {}
+_ROOT_LOCKS: dict[str, threading.Lock] = {}
 _WRITE_LOCK_STATE = threading.local()
 
 
@@ -81,7 +81,11 @@ class JsonCollaborationRepository:
 		self.root = Path(root).resolve()
 		self.root.mkdir(parents=True, exist_ok=True)
 		with _LOCKS_GUARD:
-			self._lock = _ROOT_LOCKS.setdefault(str(self.root), threading.RLock())
+			# Re-entrancy is handled explicitly by ``_WRITE_LOCK_STATE`` below.
+			# A plain lock is intentionally used here because an async response can
+			# be finalized by a different thread after a browser disconnect. Python
+			# locks may be released by that cleanup thread; RLocks may not.
+			self._lock = _ROOT_LOCKS.setdefault(str(self.root), threading.Lock())
 
 	def _project_dir(self, tenant_id: str, project_id: str, *, create: bool = False) -> Path:
 		validate_scope_id(tenant_id, "tenant_id")
@@ -118,6 +122,28 @@ class JsonCollaborationRepository:
 		return path
 
 	@contextmanager
+	def _root_lock(self):
+		"""Re-enter per root while permitting ownerless async-stream cleanup."""
+		key = str(self.root)
+		depths = getattr(_WRITE_LOCK_STATE, "root_depths", {})
+		if depths.get(key, 0):
+			depths[key] += 1
+			_WRITE_LOCK_STATE.root_depths = depths
+			try:
+				yield
+			finally:
+				depths[key] -= 1
+			return
+		self._lock.acquire()
+		depths[key] = 1
+		_WRITE_LOCK_STATE.root_depths = depths
+		try:
+			yield
+		finally:
+			depths.pop(key, None)
+			self._lock.release()
+
+	@contextmanager
 	def _write_lock(self, tenant_id: str, project_id: str):
 		"""Serialize complete project writes across threads and POSIX processes."""
 		key = (str(self.root), tenant_id, project_id)
@@ -130,7 +156,7 @@ class JsonCollaborationRepository:
 			finally:
 				depths[key] -= 1
 			return
-		with self._lock:
+		with self._root_lock():
 			path = self._lock_path(tenant_id, project_id)
 			flags = os.O_CREAT | os.O_RDWR
 			if hasattr(os, "O_NOFOLLOW"):

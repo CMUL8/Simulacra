@@ -911,6 +911,58 @@ class AssignmentCoordinator:
             finally:
                 os.close(transactions)
 
+    def project_agent_results(self, tenant_id: str, project_id: str) -> list[str]:
+        """Repair the shared Conversation from durable completed-agent events."""
+        self._check_scope(tenant_id, project_id, "projector", "projector")
+        from simulacra.collaboration import CollaborationService
+
+        runs = {run.id: run for run in self.mission_service.runs(tenant_id, project_id)}
+        agents = {agent.id: agent for agent in self.mission_service.agents(tenant_id, project_id)}
+        outputs = self.mission_service.deliverables(tenant_id, project_id)
+        conversation = CollaborationService(self.collaboration_repository)
+        projected: list[str] = []
+        for event in self.mission_service.events(tenant_id, project_id):
+            if event.get("type") != "agent_completed":
+                continue
+            event_id, run_id = event.get("id"), event.get("run_id")
+            payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+            agent_id = payload.get("agent_id")
+            if not all(isinstance(value, str) and value for value in (event_id, run_id, agent_id)):
+                continue
+            run = runs.get(run_id)
+            if run is None or agent_id not in agents or (
+                run.assigned_agent_ids and agent_id not in run.assigned_agent_ids
+            ):
+                continue
+            linked_outputs = sorted(
+                (
+                    item for item in outputs
+                    if item.producer_id == agent_id and any(
+                        isinstance(evidence, Mapping) and evidence.get("run_id") == run_id
+                        for evidence in item.validation_evidence
+                    )
+                ),
+                key=lambda item: (item.created_at, item.id),
+            )
+            output_id = linked_outputs[0].id if linked_outputs else None
+            trigger = run.trigger_snapshot if isinstance(run.trigger_snapshot, Mapping) else {}
+            task_id = trigger.get("task_id")
+            work_item_id = task_id if isinstance(task_id, str) and task_id else run.id
+            # Provider prose is execution evidence, not public product copy.
+            # Task titles and artifact filenames may also contain agent-chosen
+            # text, so the shared room gets fixed product copy plus opaque links.
+            response = (
+                "Work completed. An output is ready for human verification."
+                if linked_outputs else "Work completed. Review the result in Work."
+            )
+            message = conversation.project_agent_completion(
+                tenant_id=tenant_id, project_id=project_id, source_event_id=event_id,
+                agent_id=agent_id, body=response, created_at=str(event.get("timestamp") or run.updated_at),
+                work_item_id=work_item_id, run_id=run.id, output_id=output_id,
+            )
+            projected.append(message.id)
+        return projected
+
     @contextmanager
     def project_claim_guard(self, tenant_id: str, project_id: str) -> Iterator[object]:
         with self._lock(tenant_id, project_id) as project_fd:
