@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import shutil
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -14,6 +17,15 @@ import yaml
 from .design_brief import default_brief, write_brief
 from .paths import FIXTURES, RUNS_DIR, ensure_runs_dir
 from .tenants import default_tenant_id
+
+
+def _fsync_dir(directory: Path) -> None:
+	"""Make an already-replaced state filename durable before trusting it."""
+	fd = os.open(directory, os.O_RDONLY)
+	try:
+		os.fsync(fd)
+	finally:
+		os.close(fd)
 
 
 @dataclass
@@ -383,6 +395,8 @@ def state_path(project_id: str) -> Path:
 
 def load_state(project_id: str) -> ProjectState:
 	path = state_path(project_id)
+	if path.exists():
+		_fsync_dir(path.parent)
 	raw = path.read_text().strip() if path.exists() else ""
 	if not raw:
 		raise FileNotFoundError(f"Empty or missing state for {project_id}")
@@ -393,34 +407,55 @@ def load_state(project_id: str) -> ProjectState:
 
 
 def save_state(state: ProjectState) -> None:
-	"""Atomic write so concurrent readers never see empty/partial JSON."""
+	"""Durably replace state so a returned write is restart-safe."""
 	sync_chat_threads(state)
 	state.updated_at = datetime.now(UTC).isoformat()
 	path = state_path(state.id)
 	path.parent.mkdir(parents=True, exist_ok=True)
 	payload = json.dumps(state.to_dict(), indent=2)
-	tmp = path.with_suffix(".json.tmp")
-	tmp.write_text(payload)
-	tmp.replace(path)
+	fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+	try:
+		with os.fdopen(fd, "w", encoding="utf-8") as handle:
+			handle.write(payload)
+			handle.flush()
+			os.fsync(handle.fileno())
+		os.replace(temporary, path)
+		_fsync_dir(path.parent)
+	finally:
+		if os.path.exists(temporary):
+			os.unlink(temporary)
 
 
 def create_project(
 	prompt: str,
 	*,
+	project_id: str | None = None,
 	use_fixture: bool = False,
 	goal: str = "",
 	design_brief: dict[str, Any] | None = None,
 	tenant_id: str | None = None,
 	artifact_kind: str | None = None,
+	bootstrap_request_hash: str | None = None,
 ) -> ProjectState:
 	from .formats import brief_defaults_for, infer_kind_from_prompt, normalize_kind
 	from .tenants import assert_under_project_quota
 
 	ensure_runs_dir()
 	tid = tenant_id or default_tenant_id()
-	assert_under_project_quota(tid)
 
-	project_id = f"proj_{uuid.uuid4().hex[:12]}"
+	project_id = project_id or f"proj_{uuid.uuid4().hex[:12]}"
+	if not re.fullmatch(r"proj_[A-Za-z0-9]{6,64}", project_id):
+		raise ValueError("invalid reserved project id")
+	if state_path(project_id).exists():
+		existing = load_state(project_id)
+		if existing.tenant_id != tid or existing.prompt != prompt:
+			raise ValueError("reserved project already belongs to another bootstrap request")
+		if bootstrap_request_hash and existing.prime.get("bootstrap_request_hash") != bootstrap_request_hash:
+			raise ValueError("reserved project does not match its bootstrap request")
+		return existing
+	# A retry must recover its already-reserved project even when the tenant is
+	# now at quota.  The limit applies only to a genuinely new allocation.
+	assert_under_project_quota(tid)
 	root = project_dir(project_id)
 	for sub in ("inputs/data-room", "outputs", "work", "app", "audit"):
 		(root / sub).mkdir(parents=True, exist_ok=True)
@@ -461,6 +496,8 @@ def create_project(
 			subtitle=str(brief.get("one_liner") or "From your sources")[:120],
 		),
 	)
+	if bootstrap_request_hash:
+		state.prime = {**state.prime, "bootstrap_request_hash": bootstrap_request_hash}
 	first = ChatMessage(role="user", content=prompt, source="system")
 	cid = _new_chat_id()
 	state.active_chat_id = cid

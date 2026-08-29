@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { markWorkspaceAttentionRead, type AttentionItem, type MissionSummary, type WorkspaceEventStream } from "../../../api";
 import { AttentionInbox } from "../attention/AttentionInbox";
 import { MissionConversationWorkspace } from "../conversation/MissionConversationWorkspace";
+import { MissionCreationFlow } from "../onboarding/MissionCreationFlow";
 import { WorkList } from "../work/WorkList";
 import type { AttentionFilter, MissionStateFilter, WorkplaceDestination } from "./contracts";
 import { useAttention, useMissionSummaries } from "./useWorkplaceQuery";
@@ -57,12 +58,14 @@ function activitySummary(mission: MissionSummary): string {
   return `${active} · ${mission.needs_human_count} need a human`;
 }
 
-export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, filesEnabled = false, previewEnabled = false, sseEnabled = false, currentHumanId = "", eventStream, onSearch: _onSearch, onSettings }: {
+export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, filesEnabled = false, previewEnabled = false, sseEnabled = false, bootstrapEnabled = false, workspaceId = "", currentHumanId = "", eventStream, onSearch: _onSearch, onSettings }: {
   attentionEnabled: boolean;
   conversationEnabled?: boolean;
   filesEnabled?: boolean;
   previewEnabled?: boolean;
   sseEnabled?: boolean;
+  bootstrapEnabled?: boolean;
+  workspaceId?: string;
   currentHumanId?: string;
   eventStream?: WorkspaceEventStream;
   onSearch: () => void;
@@ -81,7 +84,8 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
 
   const url = new URL(location);
   const destination = destinationFromPath(url.pathname);
-  const missionDetail = url.pathname.startsWith("/missions/");
+  const newMission = url.pathname === "/missions/new";
+  const missionDetail = !newMission && url.pathname.startsWith("/missions/");
   const missionId = missionDetail ? decodeURIComponent(url.pathname.split("/")[2] || "") : "";
   const pathMissionView = url.pathname.split("/")[3];
   const queryMissionView = url.searchParams.get("tab");
@@ -110,7 +114,12 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
   }, [destination]);
 
   useEffect(() => {
-    if (!missionDetail && destination === "missions" && url.searchParams.get("state") !== missionState) {
+    if (newMission && !bootstrapEnabled) {
+      replaceUrl("/missions", new URLSearchParams({ state: "active" }));
+      setLocation(window.location.href);
+      return;
+    }
+    if (!newMission && !missionDetail && destination === "missions" && url.searchParams.get("state") !== missionState) {
       replaceUrl("/missions", new URLSearchParams({ state: missionState }));
       setLocation(window.location.href);
     }
@@ -118,7 +127,7 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
       replaceUrl("/needs-you", new URLSearchParams({ filter: attentionFilter }));
       setLocation(window.location.href);
     }
-  }, [attentionFilter, destination, missionDetail, missionState, url.searchParams]);
+  }, [attentionFilter, bootstrapEnabled, destination, missionDetail, missionState, newMission, url.searchParams]);
 
   useEffect(() => {
     if (!missionDetail || filesEnabled || (pathMissionView !== "files" && queryMissionView !== "files")) return;
@@ -130,7 +139,7 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
     if (destination === "settings") onSettings();
   }, [destination, onSettings]);
 
-  const missions = useMissionSummaries(missionState, destination === "missions" && !missionDetail);
+  const missions = useMissionSummaries(missionState, destination === "missions" && !missionDetail && !newMission);
   const attention = useAttention(attentionFilter, attentionEnabled && destination === "needs-you");
 
   const updateLocation = () => setLocation(window.location.href);
@@ -149,6 +158,10 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
   };
   const setMissionState = (next: MissionStateFilter) => {
     window.history.pushState({}, "", `/missions?state=${next}`);
+    updateLocation();
+  };
+  const openNewMission = () => {
+    window.history.pushState({}, "", "/missions/new");
     updateLocation();
   };
   const setAttentionFilter = (next: AttentionFilter) => {
@@ -190,10 +203,13 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
         onClick={() => navigate(item.id)}
       >{item.label}</button>)}
     </aside>
-    <main className={`workplace-main${missionDetail && conversationEnabled ? " is-mission-detail" : ""}`} aria-label="Workplace">
-      {missionDetail && conversationEnabled ? null : <header className="workplace-header">
+    <main className={`workplace-main${missionDetail && conversationEnabled ? " is-mission-detail" : ""}${newMission ? " is-new-mission" : ""}`} aria-label="Workplace">
+      {missionDetail && conversationEnabled || newMission ? null : <header className="workplace-header">
         <div><p className="workplace-eyebrow">Workspace</p><h1>{heading}</h1></div>
-        <button type="button" disabled aria-label="Search Missions (coming soon)" title="Mission search is coming soon">Search</button>
+        <div className="workplace-header-actions">
+          {bootstrapEnabled ? <button className="workplace-new-mission" type="button" onClick={openNewMission}>New Mission</button> : null}
+          <button type="button" disabled aria-label="Search Missions (coming soon)" title="Mission search is coming soon">Search</button>
+        </div>
       </header>}
 
       {readNotice ? <p className={`workplace-notice is-${readNotice}`} role={readNotice === "error" ? "alert" : "status"}>
@@ -202,7 +218,18 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
           : "This item is still unread. Try again from Needs you."}
       </p> : null}
 
-      {destination === "missions" ? missionDetail ? conversationEnabled && missionId ? <MissionConversationWorkspace
+      {destination === "missions" ? newMission && bootstrapEnabled ? <MissionCreationFlow
+        workspaceId={workspaceId}
+        humanId={currentHumanId}
+        onComplete={(createdMissionId) => {
+          window.history.replaceState({}, "", `/missions/${encodeURIComponent(createdMissionId)}/conversation`);
+          updateLocation();
+        }}
+        onCancel={() => {
+          window.history.pushState({}, "", "/missions?state=active");
+          updateLocation();
+        }}
+      /> : missionDetail ? conversationEnabled && missionId ? <MissionConversationWorkspace
         key={missionId}
         missionId={missionId}
         activeView={missionView}

@@ -89,6 +89,25 @@ def test_mission_cron_scheduler_ticks_and_stops_while_runtime_work_is_blocked():
 	assert not scheduler_thread.is_alive()
 
 
+def test_scheduler_repairs_bootstrap_before_each_worker_discovery(monkeypatch):
+	events: list[str] = []
+
+	class StopAfterOneSweep:
+		def __init__(self) -> None:
+			self.waits = 0
+		def is_set(self) -> bool:
+			return False
+		def wait(self, _seconds: float) -> bool:
+			self.waits += 1
+			return self.waits >= 1
+
+	monkeypatch.setattr(deploy_process, "bootstrap_recovery_tick", lambda: events.append("recover") or 0)
+	deploy_process._mission_cron_scheduler(
+		StopAfterOneSweep(), discover=lambda **_kwargs: events.append("discover") or [], interval_seconds=0.01,
+	)
+	assert events == ["recover", "discover"]
+
+
 def test_worker_serializes_initial_discovery_before_scheduler_and_reuses_it(monkeypatch, tmp_path):
 	"""Startup imports both worker planes before any scheduler execution begins."""
 	events: list[str] = []

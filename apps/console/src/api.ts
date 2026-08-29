@@ -486,11 +486,13 @@ export function clearAuth() {
 
 export class ApiError extends Error {
   status: number;
+  code: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code = "request_failed") {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -1033,6 +1035,89 @@ export async function fetchPlatformAudit(limit = 50): Promise<{ events: Record<s
 }
 
 export type ArtifactKind = "data_app" | "report" | "slides" | "one_pager";
+
+export type StagedMissionSource = {
+  source_ref: string;
+  sha256: string;
+  filename: string;
+  media_type: string;
+};
+
+export type MissionBootstrapRequest = {
+  client_request_id: string;
+  prompt: string;
+  goal: string;
+  design_brief: DesignBrief | null;
+  artifact_kind: ArtifactKind;
+  staged_source_refs: string[];
+};
+
+export type MissionBootstrapPending = {
+  status: "PREPARED" | "COMMIT_DECIDED" | "STORES_DURABLE" | "provisioning";
+  transaction_id: string;
+  project_id: string;
+  provisioning: true;
+  retry_after_seconds: number;
+};
+
+export type MissionBootstrapComplete = {
+  status: "COMPLETE";
+  transaction_id: string;
+  project: { id: string; [key: string]: unknown };
+  project_id?: string;
+  provisioning: false;
+  [key: string]: unknown;
+};
+
+export type MissionBootstrapAborted = { status: "ABORTED"; code: "bootstrap_aborted" };
+export type MissionBootstrapResult = MissionBootstrapPending | MissionBootstrapComplete | MissionBootstrapAborted;
+
+const bootstrapErrorCopy: Record<string, string> = {
+  idempotency_mismatch: "This Mission draft changed after creation began. Discard it and start a new Mission.",
+  bootstrap_aborted: "This Mission could not be created safely. Start a new Mission to try again.",
+  bootstrap_unavailable: "This Mission setup is no longer available. Return to Missions and start again.",
+  source_stage_failed: "One source could not be added. Try that source again before creating the Mission.",
+};
+
+async function bootstrapResponse<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  const tid = getTenantId();
+  if (tid) headers.set("X-Tenant-Id", tid);
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (!(init?.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  const response = await fetch(`${API}${path}`, { ...init, headers });
+  const body = await response.json().catch(() => null) as { code?: unknown; message?: unknown; detail?: unknown } | null;
+  if (!response.ok) {
+    const code = typeof body?.code === "string"
+      ? body.code
+      : body?.detail && typeof body.detail === "object" && "code" in body.detail && typeof body.detail.code === "string"
+        ? body.detail.code
+        : "request_failed";
+    const fallback = response.status === 401 || response.status === 403
+      ? "Sign in again, then continue creating this Mission."
+      : response.status >= 500
+        ? "Missions could not finish that step. Try again."
+        : "Missions could not complete that request. Review the details and try again.";
+    throw new ApiError(response.status, bootstrapErrorCopy[code] || fallback, code);
+  }
+  return body as T;
+}
+
+export async function stageMissionSource(file: File, clientRequestId: string): Promise<StagedMissionSource> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("client_request_id", clientRequestId);
+  return bootstrapResponse("/workspace/bootstrap/sources", { method: "POST", body });
+}
+
+export async function createWorkplaceMission(body: MissionBootstrapRequest): Promise<MissionBootstrapResult> {
+  return bootstrapResponse("/projects", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function getWorkplaceMissionBootstrap(transactionId: string): Promise<MissionBootstrapResult> {
+  return bootstrapResponse(`/projects/bootstrap/${encodeURIComponent(transactionId)}`);
+}
 
 export type FormatInfo = {
   kind: ArtifactKind;

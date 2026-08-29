@@ -1138,6 +1138,8 @@ export default function App({
           filesEnabled={workplaceFlags.workplace_files_v1}
           previewEnabled={workplaceFlags.workplace_preview_origin_v1}
           sseEnabled={workplaceFlags.workplace_sse_v1}
+          bootstrapEnabled={workplaceFlags.workplace_bootstrap_v1}
+          workspaceId={tenants.find((tenant) => tenant.id === getTenantId())?.id || tenants[0]?.id || ""}
           currentHumanId={user?.id || ""}
           onSearch={() => undefined}
           onSettings={() => openAccount("account")}

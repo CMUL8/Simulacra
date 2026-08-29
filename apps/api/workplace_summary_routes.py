@@ -9,11 +9,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from apps.api.security import get_auth
+from apps.api.security import get_auth, is_normal_project_visible
 from simulacra.collaboration import JsonCollaborationRepository
 from simulacra.demo.identity import AuthContext
 from simulacra.demo.paths import RUNS_DIR
 from simulacra.demo.runs import project_dir
+from simulacra.demo.runs import load_state
 from simulacra.missions import JsonMissionRepository
 from simulacra.missions.projections import (
     AttentionRevisionConflict,
@@ -44,6 +45,27 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code, {"code": code, "message": message})
 
 
+def _normal_rows_only(rows: list[dict]) -> list[dict]:
+    """Apply the same completion boundary as project detail authorization."""
+    visible: list[dict] = []
+    for row in rows:
+        project_id = row.get("id") if isinstance(row, dict) else None
+        if not isinstance(project_id, str):
+            continue
+        try:
+            if is_normal_project_visible(load_state(project_id)):
+                visible.append(row)
+        except FileNotFoundError:
+            # Older Mission/room records predate the runnable-project state file.
+            # With no bootstrap marker they are legacy Mission records and remain
+            # visible; only an explicit bootstrap reservation can hide a Mission.
+            visible.append(row)
+        except Exception:
+            # A broken project record cannot become an accidental list leak.
+            continue
+    return visible
+
+
 @router.get("/missions")
 def missions(
     state: str = Query("active"), cursor: str | None = None, limit: int = Query(50),
@@ -53,7 +75,7 @@ def missions(
         raise _error(400, "cursor_invalid", _CURSOR_MESSAGE)
     repository = JsonMissionRepository(_mission_root)
     collaboration = JsonCollaborationRepository(_collaboration_root)
-    rows = project_mission_summaries(repository, collaboration, tenant_id=ctx.tenant_id, human_id=ctx.user.id, state=state)
+    rows = _normal_rows_only(project_mission_summaries(repository, collaboration, tenant_id=ctx.tenant_id, human_id=ctx.user.id, state=state))
     try:
         page, next_cursor = paginate(
             rows, endpoint="missions", scope=f"{ctx.tenant_id}:{ctx.user.id}:{state}", cursor=cursor, limit=limit, secret=_cursor_secret,
@@ -72,7 +94,7 @@ def workspace_attention(
         raise _error(400, "cursor_invalid", _CURSOR_MESSAGE)
     repository = JsonMissionRepository(_mission_root)
     collaboration = JsonCollaborationRepository(_collaboration_root)
-    rows = project_attention_items(repository, collaboration, tenant_id=ctx.tenant_id, human_id=ctx.user.id, workspace_for_project=project_dir)
+    rows = _normal_rows_only(project_attention_items(repository, collaboration, tenant_id=ctx.tenant_id, human_id=ctx.user.id, workspace_for_project=project_dir))
     unread_count = sum(1 for row in rows if not row["read"])
     actionable_count = sum(1 for row in rows if row["actionable"])
     selected = [row for row in rows if filter == "all" or row["actionable"]]
@@ -91,7 +113,7 @@ def read_attention(
 ) -> dict:
     collaboration = JsonCollaborationRepository(_collaboration_root)
     repository = JsonMissionRepository(_mission_root)
-    rows = project_attention_items(repository, collaboration, tenant_id=ctx.tenant_id, human_id=ctx.user.id, workspace_for_project=project_dir)
+    rows = _normal_rows_only(project_attention_items(repository, collaboration, tenant_id=ctx.tenant_id, human_id=ctx.user.id, workspace_for_project=project_dir))
     source = next((row for row in rows if row["id"] == body.event_id), None)
     if source is None:
         raise _error(404, "attention_unavailable", "This attention item is unavailable.")

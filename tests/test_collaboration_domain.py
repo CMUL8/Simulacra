@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import hashlib
 import multiprocessing
@@ -221,6 +222,126 @@ def test_project_lock_rejects_symlink_escape(tmp_path: Path) -> None:
 	repository = JsonCollaborationRepository(root)
 	with pytest.raises(ScopeError, match="lock directory escapes"):
 		repository._lock_path("tenant_a", "project_a")
+
+
+def test_project_lock_is_reentrant_across_repository_instances_and_remains_exclusive(tmp_path: Path) -> None:
+	root = tmp_path / "store"
+	repository_a = JsonCollaborationRepository(root)
+	CollaborationService(repository_a).create_room(
+		tenant_id="tenant_a", project_id="project_a", creator_id="alice",
+	)
+	repository_b = JsonCollaborationRepository(root)
+	repository_competitor = JsonCollaborationRepository(root)
+	outer_entered = threading.Event()
+	competitor_attempting = threading.Event()
+	nested_entered = threading.Event()
+	release_outer = threading.Event()
+	holder_finished = threading.Event()
+	competitor_finished = threading.Event()
+	order: list[str] = []
+	order_guard = threading.Lock()
+
+	def record(step: str) -> None:
+		with order_guard:
+			order.append(step)
+
+	def hold_nested_locks() -> None:
+		with repository_a.room_lock("tenant_a", "project_a"):
+			record("outer_entered")
+			outer_entered.set()
+			with repository_b.room_lock("tenant_a", "project_a"):
+				record("nested_entered")
+				nested_entered.set()
+				if not release_outer.wait(timeout=5):
+					record("release_wait_timed_out")
+			record("nested_released")
+		record("outer_released")
+		holder_finished.set()
+
+	def compete_for_lock() -> None:
+		if not outer_entered.wait(timeout=5):
+			record("outer_wait_timed_out")
+			competitor_finished.set()
+			return
+		record("competitor_attempting")
+		competitor_attempting.set()
+		with repository_competitor.room_lock("tenant_a", "project_a"):
+			record("competitor_entered")
+		competitor_finished.set()
+
+	holder = threading.Thread(target=hold_nested_locks, daemon=True)
+	competitor = threading.Thread(target=compete_for_lock, daemon=True)
+	holder.start()
+	assert outer_entered.wait(timeout=5), "outer repository never acquired the room lock"
+	competitor.start()
+	assert competitor_attempting.wait(timeout=5), "competing thread never attempted the room lock"
+	try:
+		assert nested_entered.wait(timeout=5), "nested repository deadlocked on the same room lock"
+	finally:
+		release_outer.set()
+	holder.join(timeout=5)
+	competitor.join(timeout=5)
+	assert holder_finished.is_set(), "outermost room lock did not release"
+	assert competitor_finished.is_set(), "competing thread did not acquire after outermost release"
+	assert order.index("nested_entered") < order.index("outer_released") < order.index("competitor_entered")
+
+
+def test_nested_project_lock_exception_cleans_shared_reentrant_state(tmp_path: Path, monkeypatch) -> None:
+	root = tmp_path / "store"
+	repository_a = JsonCollaborationRepository(root)
+	CollaborationService(repository_a).create_room(
+		tenant_id="tenant_a", project_id="project_a", creator_id="alice",
+	)
+	repository_b = JsonCollaborationRepository(root)
+
+	with pytest.raises(RuntimeError, match="nested mutation failed"):
+		with repository_a.room_lock("tenant_a", "project_a"):
+			with repository_b.room_lock("tenant_a", "project_a"):
+				raise RuntimeError("nested mutation failed")
+
+	original_flock = fcntl.flock
+	exclusive_acquisitions = 0
+
+	def count_flock(fd: int, operation: int) -> None:
+		nonlocal exclusive_acquisitions
+		if operation == fcntl.LOCK_EX:
+			exclusive_acquisitions += 1
+		original_flock(fd, operation)
+
+	monkeypatch.setattr(fcntl, "flock", count_flock)
+	with repository_b.room_lock("tenant_a", "project_a"):
+		pass
+	assert exclusive_acquisitions == 1
+
+
+def test_project_lock_reentrant_state_is_isolated_by_project_and_root(tmp_path: Path, monkeypatch) -> None:
+	first_root = tmp_path / "first"
+	second_root = tmp_path / "second"
+	first_project = JsonCollaborationRepository(first_root)
+	service = CollaborationService(first_project)
+	service.create_room(tenant_id="tenant_a", project_id="project_a", creator_id="alice")
+	service.create_room(tenant_id="tenant_a", project_id="project_b", creator_id="alice")
+	second_project = JsonCollaborationRepository(first_root)
+	other_root = JsonCollaborationRepository(second_root)
+	CollaborationService(other_root).create_room(
+		tenant_id="tenant_a", project_id="project_a", creator_id="alice",
+	)
+
+	original_flock = fcntl.flock
+	exclusive_acquisitions = 0
+
+	def count_flock(fd: int, operation: int) -> None:
+		nonlocal exclusive_acquisitions
+		if operation == fcntl.LOCK_EX:
+			exclusive_acquisitions += 1
+		original_flock(fd, operation)
+
+	monkeypatch.setattr(fcntl, "flock", count_flock)
+	with first_project.room_lock("tenant_a", "project_a"):
+		with second_project.room_lock("tenant_a", "project_b"):
+			with other_root.room_lock("tenant_a", "project_a"):
+				pass
+	assert exclusive_acquisitions == 3
 
 
 def test_transition_rules_and_review_metadata(collaboration) -> None:

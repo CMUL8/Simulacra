@@ -26,6 +26,12 @@
     "CMUL8_SECRET_PROVIDER": {"type": "string"},
     "CMUL8_IMAGE_REGISTRY": {"type": "string"},
     "CMUL8_TLS_REQUIRED": {"type": "string", "default": "true"},
+    "SIMULACRA_WORKPLACE_INTERNAL_TENANTS": {
+      "type": "string",
+      "pattern": "^(?:$|[a-z][a-z0-9_-]{1,62}(?:,[a-z][a-z0-9_-]{1,62})*)$",
+      "default": "",
+      "description": "Server-owned, comma-separated exact tenant IDs enabled for the internal Missions workplace rollout. Empty keeps every tenant on the legacy experience."
+    },
     "CMUL8_WORKPLACE_PREVIEW_ORIGIN_V1": {"type": "string", "enum": ["true", "false", "1", "0"], "default": "false"},
     "CONTROL_ORIGIN": {"type": "string"},
     "PREVIEW_ORIGIN": {"type": "string"},

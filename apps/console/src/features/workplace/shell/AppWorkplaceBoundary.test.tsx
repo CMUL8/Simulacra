@@ -4,6 +4,10 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import type { WorkplaceFlags } from "../../../api";
 
+const missionCreation = vi.hoisted(() => ({
+  props: null as null | { workspaceId: string; humanId: string; onComplete: (missionId: string) => void },
+}));
+
 vi.mock("../../../components/Landing", () => ({
   Landing: ({ projects = [], onOpenProject, onPrompt, onBuild, onLogin }: {
     projects?: Array<{ id: string }>;
@@ -38,17 +42,23 @@ vi.mock("../../../components/ProfileManageModal", () => ({
     <button type="button" onClick={onClose}>Close account</button>
   </div> : null,
 }));
+vi.mock("../onboarding/MissionCreationFlow", () => ({
+  MissionCreationFlow: (props: { workspaceId: string; humanId: string; onComplete: (missionId: string) => void }) => {
+    missionCreation.props = props;
+    return <section><h1>Create a Mission</h1><button type="button" onClick={() => props.onComplete("mission_created")}>Complete Mission creation</button></section>;
+  },
+}));
 
 import App from "../../../App";
 
-const flags = (enabled: boolean): WorkplaceFlags => ({
+const flags = (enabled: boolean, bootstrap = false): WorkplaceFlags => ({
   workplace_shell_v1: enabled,
   workplace_attention_v1: enabled,
   workplace_conversation_v1: enabled,
   workplace_files_v1: false,
   workplace_preview_origin_v1: false,
   workplace_sse_v1: false,
-  workplace_bootstrap_v1: false,
+  workplace_bootstrap_v1: bootstrap,
 });
 
 function isLegacyProjectRequest(input: unknown): boolean {
@@ -83,7 +93,30 @@ beforeEach(() => {
   vi.stubGlobal("EventSource", FakeEventSource);
   localStorage.setItem("simulacra_token", "test-token");
   localStorage.setItem("simulacra_tenant_id", "tenant_a");
+  missionCreation.props = null;
   window.history.replaceState({}, "", "/missions?state=active");
+});
+
+test("bootstrap_route_receives_the_authenticated_workspace_and_human_without_legacy_project_loading", async () => {
+  window.history.replaceState({}, "", "/missions/new");
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return response({
+      user: { id: "human_exact", email: "human@example.com", name: "Human" },
+      tenant_id: "workspace_exact",
+      role: "owner",
+      tenants: [{ id: "workspace_exact", name: "Exact workspace" }],
+      workplace_flags: flags(true, true),
+    });
+    throw new Error(`Unexpected request ${path}`);
+  });
+
+  render(<App />);
+  await screen.findByRole("heading", { name: "Create a Mission" });
+  expect(missionCreation.props).toMatchObject({ workspaceId: "workspace_exact", humanId: "human_exact" });
+  expect(fetcher.mock.calls.some(([input]) => isLegacyProjectRequest(input))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Complete Mission creation" }));
+  await waitFor(() => expect(window.location.pathname).toBe("/missions/mission_created/conversation"));
 });
 
 afterEach(() => {

@@ -1,6 +1,8 @@
 """Mission route contract tests using the same durable Project Room authority."""
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -10,15 +12,18 @@ import threading
 from contextlib import contextmanager
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from pydantic import ValidationError
 
 from apps.api import mission_routes
 from apps.api import main as api_main
+from apps.api import security as api_security
+from apps.api import workplace_summary_routes
 from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
 from simulacra.collaboration.models import Member
 from simulacra.demo import mutation_authorization
 from simulacra.demo.identity import AuthContext, User
+from simulacra.demo.runs import ProjectState
 from simulacra.operation_graph import OperationGraphStore, load_operation_graph
 from simulacra.harnesses import AgentRunResult, TerminalStatus
 from simulacra.missions import MissionConflictError, MissionWorker
@@ -116,6 +121,390 @@ def _context(user_id: str, role: str) -> AuthContext:
         user=User(id=user_id, email=f"{user_id}@example.test", name=user_id, password_hash="unused"),
         tenant_id="tenant_api", role=role, auth_via="test",
     )
+
+
+def test_post_projects_uses_current_tenant_bootstrap_reservation_and_rejects_client_tenant(monkeypatch):
+    context = _context("owner", "owner")
+    monkeypatch.setattr(api_main, "workplace_flags_for_tenant", lambda _tenant: {"workplace_bootstrap_v1": True})
+    body = api_main.CreateProjectBody(
+        client_request_id="bootstrap_1", prompt="Prepare a useful report", goal="A verified report",
+        artifact_kind="report", staged_source_refs=[], tenant_id="tenant_other",
+    )
+    with pytest.raises(HTTPException) as denied:
+        api_main.post_project(body, SimpleNamespace(url=SimpleNamespace(path="/projects")), Response(), context)
+    assert denied.value.status_code == 400
+    assert denied.value.detail["code"] == "invalid_request"
+
+
+def test_normal_project_views_hide_incomplete_bootstrap_but_keep_legacy_visible(monkeypatch):
+    legacy = ProjectState(id="proj_legacy", prompt="Legacy work", tenant_id="tenant_api")
+    pending = ProjectState(id="proj_pending", prompt="Pending work", tenant_id="tenant_api")
+    pending.prime["bootstrap_request_hash"] = "a" * 64
+
+    class Coordinator:
+        def project_is_public(self, *, tenant_id, project_id):
+            assert tenant_id == "tenant_api"
+            return project_id != "proj_pending"
+
+    monkeypatch.setattr(api_main, "WorkspaceBootstrapCoordinator", Coordinator)
+    monkeypatch.setattr(api_main, "list_projects", lambda **_kwargs: [legacy, pending])
+    result = api_main.get_projects(_context("viewer", "viewer"))
+    assert [item["id"] for item in result["projects"]] == ["proj_legacy"]
+
+    monkeypatch.setattr(api_main, "load_state", lambda _project_id: pending)
+    with pytest.raises(HTTPException) as missing:
+        api_main.get_project("proj_pending", _context("viewer", "viewer"))
+    assert missing.value.status_code == 404
+
+
+def test_shared_completion_boundary_hides_pending_missions_from_project_access_and_lists(monkeypatch):
+    """The shared route dependency is also the Mission detail boundary."""
+    legacy = ProjectState(id="proj_legacy", prompt="Legacy", tenant_id="tenant_api")
+    pending = ProjectState(id="proj_pending", prompt="Pending", tenant_id="tenant_api")
+    pending.prime["bootstrap_request_hash"] = "a" * 64
+    completed = False
+
+    class Coordinator:
+        def project_is_public(self, *, tenant_id, project_id):
+            assert tenant_id == "tenant_api" and project_id == "proj_pending"
+            return completed
+
+    monkeypatch.setattr(api_security, "WorkspaceBootstrapCoordinator", Coordinator)
+    monkeypatch.setattr(api_security, "load_state", lambda project_id: pending if project_id == pending.id else legacy)
+    monkeypatch.setattr(api_security, "get_auth", lambda **_kwargs: _context("owner", "owner"))
+    guarded = api_security.require_project_access("project:read")
+    with pytest.raises(HTTPException) as hidden:
+        guarded("proj_pending")
+    assert hidden.value.status_code == 404
+    assert guarded("proj_legacy").user.id == "owner"
+
+    monkeypatch.setattr(workplace_summary_routes, "load_state", lambda project_id: pending if project_id == pending.id else legacy)
+    assert [row["id"] for row in workplace_summary_routes._normal_rows_only([{"id": legacy.id}, {"id": pending.id}])] == [legacy.id]
+
+    completed = True
+    assert guarded("proj_pending").user.id == "owner"
+    assert [row["id"] for row in workplace_summary_routes._normal_rows_only([{"id": pending.id}])] == [pending.id]
+
+
+def test_enabled_bootstrap_requires_a_request_identifier(monkeypatch):
+    context = _context("owner", "owner")
+    monkeypatch.setattr(api_main, "workplace_flags_for_tenant", lambda _tenant: {"workplace_bootstrap_v1": True})
+    with pytest.raises(HTTPException) as denied:
+        api_main.post_project(
+            api_main.CreateProjectBody(prompt="Prepare a useful report"),
+            SimpleNamespace(url=SimpleNamespace(path="/projects")), Response(), context,
+        )
+    assert denied.value.status_code == 400
+    assert denied.value.detail["code"] == "invalid_request"
+
+
+def test_bootstrap_reservation_idempotency_mismatch_is_public_409(monkeypatch):
+    context = _context("owner", "owner")
+    monkeypatch.setattr(api_main, "workplace_flags_for_tenant", lambda _tenant: {"workplace_bootstrap_v1": True})
+
+    class Coordinator:
+        def begin(self, **_kwargs):
+            raise ValueError("idempotency_mismatch")
+
+    monkeypatch.setattr(api_main, "WorkspaceBootstrapCoordinator", Coordinator)
+    with pytest.raises(HTTPException) as denied:
+        api_main.post_project(
+            api_main.CreateProjectBody(client_request_id="retry_1", prompt="Prepare a useful report"),
+            SimpleNamespace(url=SimpleNamespace(path="/projects")), Response(), context,
+        )
+    assert denied.value.status_code == 409
+    assert denied.value.detail["code"] == "idempotency_mismatch"
+
+
+def test_project_upload_replays_by_client_request_id_and_rejects_hash_or_path_overwrite():
+    # The durable source-upload tests live with the route implementation; this
+    # contract assertion documents the public error code consumers rely on.
+    assert "idempotency_mismatch" in api_main.upload_files.__code__.co_consts
+
+
+def test_project_upload_request_replay_is_exact_and_crash_resumes_without_new_name(tmp_path, monkeypatch):
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.sources import list_source_files
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        def __init__(self, name: str, data: bytes) -> None:
+            self.filename, self.content_type, self._data = name, "text/plain", data
+        async def read(self) -> bytes:
+            return self._data
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    context = _context("owner", "owner")
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    first = asyncio.run(api_main.upload_files(project.id, request, context, [Upload("report.txt", b"one")], "upload_1", False))
+    replay = asyncio.run(api_main.upload_files(project.id, request, context, [Upload("report.txt", b"one")], "upload_1", False))
+    assert first["files"] == replay["files"]
+    assert [source.name for source in list_source_files(project.id)] == ["report.txt"]
+    with pytest.raises(HTTPException) as mismatch:
+        asyncio.run(api_main.upload_files(project.id, request, context, [Upload("report.txt", b"two")], "upload_1", False))
+    assert mismatch.value.status_code == 409
+
+
+def test_project_upload_replay_includes_processing_choice_and_returns_exact_saved_response(tmp_path, monkeypatch):
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    calls: list[str] = []
+    monkeypatch.setattr("simulacra.demo.pipeline.start_reingest", lambda project_id: calls.append(project_id))
+    # upload_files imports this name at call time, so patch the route namespace too.
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    first = asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", True))
+    replay = asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", True))
+    assert replay == first
+    assert calls == [project.id]
+    with pytest.raises(HTTPException) as mismatch:
+        asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert mismatch.value.status_code == 409
+
+
+def test_project_upload_replays_pending_processing_after_interrupted_start_without_new_side_effect(tmp_path, monkeypatch):
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    starts: list[str] = []
+    monkeypatch.setattr("simulacra.demo.pipeline.start_reingest", lambda project_id: starts.append(project_id))
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    workspace = runs.project_dir(project.id)
+    control = workspace / ".workplace-control"; control.mkdir()
+    digest = hashlib.sha256(b"one").hexdigest()
+    ledger = {
+        "schema_version": 1,
+        "requests": {"tenant_api": {project.id: {"owner": {"upload_1": {
+            "manifest": [{"filename": "report.txt", "media_type": "text/plain", "sha256": digest}],
+            "reingest": True, "files": [], "complete": False, "reingest_state": "starting",
+        }}}}},
+    }
+    (control / "project-source-uploads.json").write_text(json.dumps(ledger))
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    first = asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", True))
+    replay = asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", True))
+    assert first == replay
+    assert first["processing"] == "pending"
+    assert starts == []
+
+
+@pytest.mark.parametrize("target", ["project-root", ".workplace-control", "project-source-uploads.json", ".project-source-uploads.lock"])
+def test_project_upload_control_paths_reject_symlinks(tmp_path, monkeypatch, target):
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    workspace = runs.project_dir(project.id)
+    outside = tmp_path / "outside"; outside.write_text("outside")
+    control = workspace / ".workplace-control"
+    if target == "project-root":
+        alias = tmp_path / "workspace-alias"; alias.symlink_to(workspace, target_is_directory=True)
+        monkeypatch.setattr(api_main, "project_dir", lambda _project_id: alias)
+    elif target == ".workplace-control":
+        control.symlink_to(outside)
+    else:
+        control.mkdir(); (control / target).symlink_to(outside)
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    with pytest.raises(HTTPException) as unavailable:
+        asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.detail == {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."}
+
+
+def test_reingest_failures_have_stable_safe_copy(monkeypatch):
+    context = _context("owner", "owner")
+    monkeypatch.setattr("simulacra.demo.pipeline.start_reingest", lambda _project: (_ for _ in ()).throw(ValueError("/secret/job_123")))
+    with pytest.raises(HTTPException) as unavailable:
+        api_main.post_reingest("project_api", SimpleNamespace(url=SimpleNamespace(path="/")), context)
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.detail == {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."}
+
+
+def test_project_upload_retry_repairs_a_crash_between_source_and_request_ledger(tmp_path, monkeypatch):
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.sources import list_source_files
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    original_replace = api_main.os.replace
+    ledger_replacements = 0
+
+    def crash_after_source(temp, target, *args, **kwargs):
+        nonlocal ledger_replacements
+        if str(target).endswith("project-source-uploads.json"):
+            ledger_replacements += 1
+            if ledger_replacements == 2:
+                raise OSError("simulated interruption")
+        return original_replace(temp, target, *args, **kwargs)
+
+    monkeypatch.setattr(api_main.os, "replace", crash_after_source)
+    with pytest.raises(HTTPException) as interrupted:
+        asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert interrupted.value.status_code == 503
+    assert interrupted.value.detail["code"] == "source_unavailable"
+    monkeypatch.setattr(api_main.os, "replace", original_replace)
+    repaired = asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert repaired["uploaded"] == 1
+    assert [source.name for source in list_source_files(project.id)] == ["report.txt"]
+
+
+def test_enabled_project_upload_requires_human_scoped_request_key(tmp_path, monkeypatch):
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(api_main, "workplace_flags_for_tenant", lambda _tenant: {"workplace_bootstrap_v1": True})
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    with pytest.raises(HTTPException) as missing:
+        asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], None, False))
+    assert missing.value.status_code == 400
+    asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    asyncio.run(api_main.upload_files(project.id, request, _context("other", "owner"), [Upload()], "upload_1", False))
+    ledger = json.loads((runs.project_dir(project.id) / ".workplace-control" / "project-source-uploads.json").read_text())
+    scoped = ledger["requests"]["tenant_api"][project.id]
+    assert set(scoped) == {"owner", "other"}
+
+
+def test_corrupt_existing_upload_ledger_fails_closed(tmp_path, monkeypatch):
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    ledger_path = runs.project_dir(project.id) / ".workplace-control" / "project-source-uploads.json"
+    ledger_path.parent.mkdir(parents=True)
+    ledger_path.write_text("{not-json")
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    with pytest.raises(HTTPException) as unavailable:
+        asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert unavailable.value.status_code == 503
+    assert not (runs.project_dir(project.id) / "inputs" / "data-room" / "report.txt").exists()
+
+
+@pytest.mark.parametrize("ledger", [
+    {},
+    {"schema_version": 1, "requests": []},
+    {"schema_version": 1, "requests": {"tenant_api": []}},
+    {"schema_version": 1, "requests": {"tenant_api": {"project": {"owner": {"upload_1": {"manifest": "not-a-list", "files": [], "complete": False}}}}}},
+    {"schema_version": 1, "requests": {"tenant api": {}}},
+])
+def test_malformed_existing_upload_ledger_structure_fails_closed(tmp_path, monkeypatch, ledger):
+    """A present control ledger is never silently rebuilt from an unknown shape."""
+    from simulacra.demo import runs
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    ledger_path = runs.project_dir(project.id) / ".workplace-control" / "project-source-uploads.json"
+    ledger_path.parent.mkdir(parents=True)
+    ledger_path.write_text(json.dumps(ledger))
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    with pytest.raises(HTTPException) as unavailable:
+        asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.detail["code"] == "source_unavailable"
+    assert not (runs.project_dir(project.id) / "inputs" / "data-room" / "report.txt").exists()
+
+
+def test_project_upload_retry_accepts_replace_only_after_data_room_sync(tmp_path, monkeypatch):
+    from simulacra.demo import runs
+    from simulacra.demo import sources as source_module
+    from simulacra.demo.identity import ensure_bootstrap
+    from simulacra.demo.tenants import default_tenant_id
+
+    class Upload:
+        filename = "report.txt"
+        content_type = "text/plain"
+        async def read(self) -> bytes:
+            return b"one"
+
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "audit_request", lambda *_args, **_kwargs: None)
+    ensure_bootstrap()
+    project = runs.create_project("Prepare a useful report", tenant_id=default_tenant_id())
+    request = SimpleNamespace(url=SimpleNamespace(path=f"/projects/{project.id}/upload"))
+    original = source_module.sync_data_room
+    monkeypatch.setattr(source_module, "sync_data_room", lambda _project: (_ for _ in ()).throw(OSError("source sync failed")))
+    with pytest.raises(HTTPException) as unavailable:
+        asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert unavailable.value.status_code == 503
+    monkeypatch.setattr(source_module, "sync_data_room", original)
+    replay = asyncio.run(api_main.upload_files(project.id, request, _context("owner", "owner"), [Upload()], "upload_1", False))
+    assert replay["uploaded"] == 1
 
 
 def test_pending_room_admin_cannot_build_or_authorize_legacy_mutations_until_acceptance_complete(monkeypatch, tmp_path):

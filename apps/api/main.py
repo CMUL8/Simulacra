@@ -1,22 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import hashlib
 import io
 import json
 import logging
 import os
 import queue
 import re
+import stat
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from apps.api.security import audit_request, get_auth, require_perm, require_project_access
+from apps.api.security import audit_request, get_auth, is_normal_project_visible, require_perm, require_project_access
 from apps.api.file_routes import authorized_file_inventory
 from apps.api.workplace_routes import router as workplace_router
 from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
@@ -82,6 +86,8 @@ from simulacra.demo.tenants import (
 from simulacra.env import load_dotenv
 from simulacra.resolve import resolve_prime_agent
 from simulacra.workplace.config import workplace_flags_for_tenant
+from simulacra.workplace.bootstrap_coordinator import WorkspaceBootstrapCoordinator
+from simulacra.workplace.source_staging import SourceStaging
 from simulacra.operation_graph import OperationGraphStore
 from simulacra.operation_graph.errors import OperationGraphError, UnapprovedRevisionError
 from simulacra.collaboration.errors import CollaborationError
@@ -201,6 +207,18 @@ def _public_project_snapshot(value: dict[str, Any]) -> dict[str, Any]:
 		if key in value:
 			public[key] = _public_text(value[key])
 	return public
+
+
+def _is_normal_project_viewable(state: ProjectState) -> bool:
+	"""Keep recoverable bootstrap children out of normal Mission views.
+
+	A legacy project has no bootstrap marker and remains visible.  Once a
+	bootstrap reservation created a project, only its verified COMPLETE journal
+	can expose it through the ordinary list/detail experience.
+	"""
+	# Keep the old injection point for compatibility tests while sharing the
+	# exact predicate used by list and project-route authorization.
+	return is_normal_project_visible(state, coordinator_factory=WorkspaceBootstrapCoordinator)
 
 
 def _public_project_event(value: Any) -> dict[str, Any]:
@@ -332,6 +350,10 @@ async def _isolate_preview_origin(request: Request, call_next):
 def _startup() -> None:
 	migrate()
 	info = ensure_bootstrap()
+	# Recover at most the bounded bootstrap batch; incomplete setup remains in its
+	# provisioning state until all durable child records exist.
+	from simulacra.deploy_process import bootstrap_recovery_tick
+	bootstrap_recovery_tick()
 	log.info("bootstrap %s auth_required=%s", info, auth_required())
 
 
@@ -339,6 +361,10 @@ class CreateProjectBody(BaseModel):
 	prompt: str = Field(min_length=3)
 	goal: str = ""
 	design_brief: dict[str, Any] | None = None
+	# Legacy clients without a request id retain the pre-bootstrap behavior while
+	# every new Mission bootstrap is reserved/recoverable below.
+	client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
+	staged_source_refs: list[str] = Field(default_factory=list)
 	tenant_id: str | None = None
 	artifact_kind: str | None = None
 
@@ -803,8 +829,8 @@ def delete_source(
 	audit_request(request, ctx, "sources.remove", project_id=project_id, file=file_name)
 	try:
 		start_reingest(project_id)
-	except ValueError as exc:
-		raise HTTPException(409, str(exc)) from exc
+	except Exception as exc:
+		raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."}) from exc
 	return _public_project_snapshot(project_snapshot(project_id))
 
 
@@ -818,8 +844,8 @@ def post_reingest(
 
 	try:
 		start_reingest(project_id)
-	except ValueError as exc:
-		raise HTTPException(409, str(exc)) from exc
+	except Exception as exc:
+		raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."}) from exc
 	audit_request(request, ctx, "sources.reingest", project_id=project_id)
 	return _public_project_snapshot(project_snapshot(project_id))
 
@@ -896,9 +922,9 @@ def get_projects(ctx: Annotated[AuthContext, Depends(require_perm("project:read"
 		return d
 
 	if ctx.tenant_id == "*":
-		return {"projects": [_list_item(p) for p in list_projects()], "tenant_id": "*"}
+		return {"projects": [_list_item(p) for p in list_projects() if _is_normal_project_viewable(p)], "tenant_id": "*"}
 	return {
-		"projects": [_list_item(p) for p in list_projects(tenant_id=ctx.tenant_id)],
+		"projects": [_list_item(p) for p in list_projects(tenant_id=ctx.tenant_id) if _is_normal_project_viewable(p)],
 		"tenant_id": ctx.tenant_id,
 	}
 
@@ -910,15 +936,70 @@ def list_formats() -> dict:
 	return {"formats": formats_catalog()}
 
 
+@app.post("/workspace/bootstrap/sources")
+async def stage_bootstrap_source(
+	file: UploadFile = File(...),
+	client_request_id: str = Form(...),
+	ctx: Annotated[AuthContext, Depends(require_perm("project:write"))] = None,  # type: ignore[assignment]
+) -> dict:
+	"""Stage one immutable source before a Mission ID exists."""
+	try:
+		data = await file.read()
+		record = SourceStaging().stage(
+			tenant_id=ctx.tenant_id, actor_id=ctx.user.id, client_request_id=client_request_id,
+			filename=file.filename or "source", media_type=file.content_type or "application/octet-stream", data=data,
+		)
+		return record.public()
+	except ValueError as exc:
+		if str(exc) == "idempotency_mismatch":
+			raise HTTPException(409, {"code": "idempotency_mismatch", "message": "This source request does not match its earlier upload."}) from exc
+		raise HTTPException(400, {"code": "source_unavailable", "message": "This source could not be staged."}) from exc
+
+
+@app.get("/projects/bootstrap/{transaction_id}")
+def get_project_bootstrap(
+	transaction_id: str,
+	ctx: Annotated[AuthContext, Depends(require_perm("project:read"))],
+) -> Response:
+	try:
+		record = WorkspaceBootstrapCoordinator().lookup(tenant_id=ctx.tenant_id, actor_id=ctx.user.id, transaction_id=transaction_id)
+		status, payload = WorkspaceBootstrapCoordinator().public(record)
+		return JSONResponse(payload, status_code=status)
+	except KeyError as exc:
+		raise HTTPException(404, {"code": "bootstrap_unavailable", "message": "Mission setup is unavailable."}) from exc
+
+
 @app.post("/projects")
 def post_project(
 	body: CreateProjectBody,
 	request: Request,
+	response: Response,
 	ctx: Annotated[AuthContext, Depends(require_perm("project:write"))],
 ) -> dict:
 	try:
 		if ctx.role not in {"owner", "admin"} and not ctx.user.is_platform_admin:
 			raise HTTPException(403, "only tenant owners and admins can bootstrap a project")
+		# New callers receive a recoverable reservation rather than a one-shot
+		# project creation. Tenant and human identity always come from auth.
+		if workplace_flags_for_tenant(ctx.tenant_id).get("workplace_bootstrap_v1", False):
+			if not body.client_request_id:
+				raise HTTPException(400, {"code": "invalid_request", "message": "Mission setup needs a request identifier."})
+			if body.tenant_id is not None:
+				raise HTTPException(400, {"code": "invalid_request", "message": "Mission setup uses the current workspace."})
+			coordinator = WorkspaceBootstrapCoordinator()
+			record = coordinator.begin(tenant_id=ctx.tenant_id, actor_id=ctx.user.id, request={
+				"client_request_id": body.client_request_id, "prompt": body.prompt, "goal": body.goal,
+				"design_brief": body.design_brief, "artifact_kind": body.artifact_kind,
+				"staged_source_refs": body.staged_source_refs,
+			})
+			status, payload = coordinator.public(record)
+			if status == 409:
+				raise HTTPException(409, payload)
+			if status == 202:
+				response.status_code = 202
+				return payload
+			audit_request(request, ctx, "project.bootstrap", project_id=record["reserved_project_id"])
+			return payload
 		brief = merge_brief(None, body.design_brief) if body.design_brief else None
 		tid = body.tenant_id or ctx.tenant_id
 		if tid == "*":
@@ -946,6 +1027,10 @@ def post_project(
 		return _public_project_snapshot(snap)
 	except HTTPException:
 		raise
+	except ValueError as exc:
+		if str(exc) == "idempotency_mismatch":
+			raise HTTPException(409, {"code": "idempotency_mismatch", "message": "This Mission request does not match its earlier submission."}) from exc
+		raise
 	except PermissionError as exc:
 		log.exception("project_storage_unavailable tenant=%s user=%s", ctx.tenant_id, ctx.user.id)
 		raise HTTPException(
@@ -955,7 +1040,8 @@ def post_project(
 	except KeyError as exc:
 		raise HTTPException(404, str(exc)) from exc
 	except Exception as exc:
-		raise HTTPException(500, f"Failed to create project: {exc}") from exc
+		log.exception("project_create_failed tenant=%s user=%s", ctx.tenant_id, ctx.user.id)
+		raise HTTPException(500, {"code": "project_unavailable", "message": "Mission setup is temporarily unavailable."}) from exc
 
 
 @app.post("/projects/{project_id}/plan")
@@ -978,6 +1064,15 @@ def get_project(
 	project_id: str,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:read"))],
 ) -> dict:
+	# The normal HTTP dependency already loaded the project before this handler.
+	# Keep direct compatibility callers (and their public-snapshot contract) from
+	# manufacturing a second storage dependency solely for this visibility gate.
+	try:
+		state = load_state(project_id)
+	except FileNotFoundError:
+		state = None
+	if state is not None and not _is_normal_project_viewable(state):
+		raise HTTPException(404, "Project not found")
 	return _public_project_snapshot(project_snapshot(project_id))
 
 
@@ -1162,35 +1257,298 @@ async def upload_files(
 	request: Request,
 	ctx: Annotated[AuthContext, Depends(require_project_access("project:write"))],
 	files: list[UploadFile] = File(...),
+	client_request_id: str | None = Form(default=None),
 	reingest: bool = True,
 ) -> dict:
 	from simulacra.demo.pipeline import start_reingest
-	from simulacra.demo.sources import SourceError, add_upload
+	from simulacra.demo.sources import SourceError, add_upload, list_source_files, safe_source_name, sync_data_room
 
 	if not files:
 		raise HTTPException(400, "No files uploaded")
+	bootstrap_enabled = workplace_flags_for_tenant(ctx.tenant_id).get("workplace_bootstrap_v1", False)
+	if bootstrap_enabled and not client_request_id:
+		raise HTTPException(400, {"code": "invalid_request", "message": "Mission source uploads need a request identifier."})
+	if client_request_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", client_request_id):
+		raise HTTPException(400, {"code": "invalid_request", "message": "Mission source uploads need a valid request identifier."})
 	uploaded: list[dict] = []
 	errors: list[str] = []
-	for f in files:
+	# Keep idempotency control data outside the human-visible data room.
+	# It is opened only through checked directory descriptors below: a symlinked
+	# control file or ancestor is never followed.
+	ledger_name = "project-source-uploads.json"
+	lock_name = ".project-source-uploads.lock"
+	items: list[dict[str, Any]] = []
+	try:
+		for upload in files:
+			data = await upload.read()
+			items.append({
+				"filename": safe_source_name(str(upload.filename or "")),
+				"media_type": upload.content_type or "application/octet-stream",
+				"sha256": hashlib.sha256(data).hexdigest(), "data": data,
+			})
+	except SourceError as exc:
+		raise HTTPException(400, str(exc)) from exc
+	if len({item["filename"] for item in items}) != len(items):
+		raise HTTPException(400, {"code": "invalid_request", "message": "Each uploaded file needs a distinct name."})
+
+	def unavailable() -> None:
+		raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."})
+
+	def open_control_dir() -> int:
+		flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
 		try:
-			data = await f.read()
-			src = add_upload(project_id, filename=f.filename, data=data, overwrite=True)
-			uploaded.append(_public_source_file(src.to_dict()))
-		except SourceError as exc:
-			errors.append(str(exc))
+			workspace_fd = os.open(project_dir(project_id), flags)
+			try:
+				if not stat.S_ISDIR(os.fstat(workspace_fd).st_mode):
+					unavailable()
+				try:
+					os.mkdir(".workplace-control", 0o700, dir_fd=workspace_fd)
+				except FileExistsError:
+					pass
+				control_fd = os.open(".workplace-control", flags, dir_fd=workspace_fd)
+				if not stat.S_ISDIR(os.fstat(control_fd).st_mode):
+					os.close(control_fd); unavailable()
+				return control_fd
+			finally:
+				os.close(workspace_fd)
+		except HTTPException:
+			raise
+		except OSError:
+			unavailable()
+
+	def read_ledger(control_fd: int) -> dict[str, Any]:
+		def unavailable() -> None:
+			raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."})
+
+		def valid_key(value: object) -> bool:
+			return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value))
+
+		def valid_hash(value: object) -> bool:
+			return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+		def valid_name(value: object) -> bool:
+			if not isinstance(value, str) or not value:
+				return False
+			try:
+				return safe_source_name(value) == value
+			except SourceError:
+				return False
+
+		def valid_public_value(value: object, *, depth: int = 0) -> bool:
+			"""Bound replay records to the public JSON shape, never opaque objects."""
+			if depth > 8:
+				return False
+			if value is None or isinstance(value, (bool, int, float)):
+				return True
+			if isinstance(value, str):
+				return len(value) <= 20_000
+			if isinstance(value, list):
+				return len(value) <= 1_000 and all(valid_public_value(item, depth=depth + 1) for item in value)
+			if isinstance(value, dict):
+				return len(value) <= 100 and all(isinstance(key, str) and len(key) <= 128 and valid_public_value(item, depth=depth + 1) for key, item in value.items())
+			return False
+
+		def valid_response(value: object, *, project_key: str, entry: dict[str, Any]) -> bool:
+			if not isinstance(value, dict):
+				return False
+			allowed = {"project", "preview_data", "preview_url", "status", "cancelled", "already_idle", "uploaded", "files", "errors", "project_id", "processing"}
+			if set(value) - allowed or {"uploaded", "files", "errors", "project_id"} - set(value):
+				return False
+			if value.get("project_id") != project_key or not isinstance(value.get("uploaded"), int) or value["uploaded"] < 0:
+				return False
+			if "processing" in value and value["processing"] != "pending":
+				return False
+			if not isinstance(value.get("files"), list) or not isinstance(value.get("errors"), list) or value["errors"]:
+				return False
+			if value["uploaded"] != len(value["files"]) or len(value["files"]) != len(entry["files"]):
+				return False
+			for public, persisted in zip(value["files"], entry["files"], strict=True):
+				if not isinstance(public, dict) or set(public) - {"name", "size", "type", "status", "detail", "row_count"}:
+					return False
+				if public.get("name") != persisted["name"] or not valid_public_value(public):
+					return False
+			return all(valid_public_value(item) for item in value.values())
+
+		try:
+			descriptor = os.open(ledger_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), dir_fd=control_fd)
+		except FileNotFoundError:
+			return {"schema_version": 1, "requests": {}}
+		except OSError:
+			unavailable()
+		try:
+			if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+				unavailable()
+			with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+				value = json.load(handle)
+		except (OSError, json.JSONDecodeError):
+			unavailable()
+		if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("requests"), dict):
+			unavailable()
+		for tenant_key, projects in value["requests"].items():
+			if not valid_key(tenant_key) or not isinstance(projects, dict):
+				unavailable()
+			for project_key, humans in projects.items():
+				if not valid_key(project_key) or not isinstance(humans, dict):
+					unavailable()
+				for human_key, requests in humans.items():
+					if not valid_key(human_key) or not isinstance(requests, dict):
+						unavailable()
+					for request_key, entry in requests.items():
+						if (
+							not valid_key(request_key) or not isinstance(entry, dict)
+							or set(entry) - {"manifest", "reingest", "files", "complete", "response", "reingest_state"}
+							or not isinstance(entry.get("manifest"), list) or not isinstance(entry.get("files"), list)
+							or not isinstance(entry.get("complete"), bool) or not isinstance(entry.get("reingest"), bool)
+						):
+							unavailable()
+						if entry.get("complete") != ("response" in entry):
+							unavailable()
+						if "reingest_state" in entry and entry["reingest_state"] not in {"starting", "completed", "failed"}:
+							unavailable()
+						for item in entry["manifest"]:
+							if (
+								not isinstance(item, dict) or set(item) != {"filename", "media_type", "sha256"}
+								or not valid_name(item.get("filename"))
+								or not isinstance(item.get("media_type"), str) or not item["media_type"] or "\n" in item["media_type"]
+								or not valid_hash(item.get("sha256"))
+							):
+								unavailable()
+						for item in entry["files"]:
+							if not isinstance(item, dict) or set(item) != {"name", "sha256"} or not valid_name(item.get("name")) or not valid_hash(item.get("sha256")):
+								unavailable()
+						if entry.get("complete") and not valid_response(entry["response"], project_key=project_key, entry=entry):
+							unavailable()
+		return value
+
+	def publish_ledger(control_fd: int, value: dict[str, Any]) -> None:
+		temp_name = f".{ledger_name}.{uuid.uuid4().hex}.tmp"
+		descriptor = -1
+		try:
+			descriptor = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=control_fd)
+			with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+				descriptor = -1
+				handle.write(json.dumps(value, sort_keys=True)); handle.flush(); os.fsync(handle.fileno())
+			os.replace(temp_name, ledger_name, src_dir_fd=control_fd, dst_dir_fd=control_fd)
+			os.fsync(control_fd)
+		except OSError:
+			unavailable()
+		finally:
+			if descriptor >= 0:
+				os.close(descriptor)
+			try:
+				os.unlink(temp_name, dir_fd=control_fd)
+			except FileNotFoundError:
+				pass
+			except OSError:
+				unavailable()
+
+	created_new = False
+	if client_request_id:
+		# A request-wide ledger is published before the first data-room write.
+		# Therefore a process crash can only leave a resumable manifest, never an
+		# untracked file that gets a new filename on retry.
+		control_fd = open_control_dir()
+		try:
+			lock_fd = os.open(lock_name, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=control_fd)
+			if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
+				os.close(lock_fd); unavailable()
+			lock = os.fdopen(lock_fd, "a+b")
+			fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+			try:
+				ledger = read_ledger(control_fd)
+				requests = (
+					ledger.setdefault("requests", {})
+					.setdefault(ctx.tenant_id, {})
+					.setdefault(project_id, {})
+					.setdefault(ctx.user.id, {})
+				)
+				manifest = [{key: item[key] for key in ("filename", "media_type", "sha256")} for item in items]
+				entry = requests.get(client_request_id)
+				if entry is not None and (entry.get("manifest") != manifest or entry.get("reingest") is not reingest):
+					raise HTTPException(409, {"code": "idempotency_mismatch", "message": "This source request does not match its earlier upload."})
+				if entry is not None and entry.get("complete"):
+					return dict(entry["response"])
+				if entry is None:
+					entry = {"manifest": manifest, "reingest": reingest, "files": [], "complete": False}
+					requests[client_request_id] = entry
+					publish_ledger(control_fd, ledger)
+				for item in items:
+					existing = next((source for source in list_source_files(project_id) if source.name == item["filename"]), None)
+					if existing is not None:
+						try:
+							sync_data_room(project_id)
+						except OSError as exc:
+							raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."}) from exc
+						if existing.sha256 != item["sha256"]:
+							raise HTTPException(409, {"code": "idempotency_mismatch", "message": "This source request does not match its earlier upload."})
+						src = existing
+					else:
+						try:
+							src = add_upload(project_id, filename=item["filename"], data=item["data"], overwrite=False)
+						except OSError as exc:
+							raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."}) from exc
+						created_new = True
+					if not any(value.get("name") == src.name for value in entry["files"]):
+						entry["files"].append({"name": src.name, "sha256": src.sha256})
+						publish_ledger(control_fd, ledger)
+					uploaded.append(_public_source_file(src.to_dict()))
+				state = load_state(project_id)
+				state.status = "uploaded"
+				save_state(state)
+				snap: dict[str, Any] = {"uploaded": len(uploaded), "files": uploaded, "errors": errors, "project_id": project_id}
+				if reingest:
+					# Persist intent before invoking processing.  A retry after an
+					# interruption returns a stable pending state rather than starting
+					# an identical processing pass a second time.
+					if entry.get("reingest_state") == "starting":
+						snap["processing"] = "pending"
+					elif entry.get("reingest_state") == "failed":
+						raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."})
+					else:
+						entry["reingest_state"] = "starting"; publish_ledger(control_fd, ledger)
+						try:
+							start_reingest(project_id)
+						except Exception:
+							entry["reingest_state"] = "failed"; publish_ledger(control_fd, ledger)
+							raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."})
+						entry["reingest_state"] = "completed"
+						snap = {**_public_project_snapshot(project_snapshot(project_id)), **snap}
+				entry["complete"] = True
+				entry["response"] = snap
+				publish_ledger(control_fd, ledger)
+			finally:
+				fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+				lock.close()
+		except HTTPException:
+			raise
+		except OSError:
+			unavailable()
+		finally:
+			os.close(control_fd)
+	else:
+		for item in items:
+			try:
+				src = add_upload(project_id, filename=item["filename"], data=item["data"], overwrite=True)
+				uploaded.append(_public_source_file(src.to_dict()))
+			except SourceError as exc:
+				errors.append(str(exc))
 	if not uploaded and errors:
 		raise HTTPException(400, "; ".join(errors[:5]))
+	if client_request_id:
+		# The exact response above is durably recorded before this audit event.
+		audit_request(request, ctx, "sources.upload", project_id=project_id, count=len(uploaded))
+		return snap
 	state = load_state(project_id)
 	state.status = "uploaded"
 	save_state(state)
 	audit_request(request, ctx, "sources.upload", project_id=project_id, count=len(uploaded))
 	snap: dict[str, Any] = {"uploaded": len(uploaded), "files": uploaded, "errors": errors, "project_id": project_id}
-	if reingest and uploaded:
+	if reingest and uploaded and (not client_request_id or created_new):
 		try:
 			start_reingest(project_id)
 			snap = {**_public_project_snapshot(project_snapshot(project_id)), **snap}
-		except ValueError as exc:
-			snap["reingest_error"] = str(exc)
+		except Exception:
+			raise HTTPException(503, {"code": "source_unavailable", "message": "Mission sources are temporarily unavailable."})
 	return snap
 
 

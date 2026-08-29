@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from pydantic import ValidationError
 
 from apps.api import cmul8_routes, main as api_main
@@ -827,11 +827,11 @@ def test_project_bootstrap_creates_an_owner_room_before_initial_plan(monkeypatch
 	monkeypatch.setattr(api_main, "init_plan", initial_plan)
 	body = api_main.CreateProjectBody(prompt="Create a controlled project")
 	with pytest.raises(HTTPException) as denied:
-		api_main.post_project(body, request, _member_context())
+		api_main.post_project(body, request, Response(), _member_context())
 	assert denied.value.status_code == 403
 	assert created == []
 
-	result = api_main.post_project(body, request, _context())
+	result = api_main.post_project(body, request, Response(), _context())
 	assert result["project"]["id"] == "project_bootstrap"
 	assert "session_id" not in str(result).lower() and "sandbox" not in str(result).lower()
 	assert created == ["project", "plan"]
@@ -850,7 +850,7 @@ def test_project_bootstrap_hides_storage_paths(monkeypatch, tmp_path):
 	)
 	body = api_main.CreateProjectBody(prompt="Create a project")
 	with pytest.raises(HTTPException) as unavailable:
-		api_main.post_project(body, request, _context())
+		api_main.post_project(body, request, Response(), _context())
 	assert unavailable.value.status_code == 503
 	assert unavailable.value.detail == "Project storage is temporarily unavailable. Please try again."
 	assert secret_path not in unavailable.value.detail

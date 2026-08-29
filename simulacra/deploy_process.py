@@ -23,6 +23,19 @@ _MAX_DISCOVERY_STATE_BYTES = 8 * 1024 * 1024
 _DEFAULT_MISSION_CRON_INTERVAL_SECONDS = 15.0
 
 
+def bootstrap_recovery_tick(*, limit: int = 100) -> int:
+	"""Resume a bounded number of interrupted Mission setups.
+
+	This intentionally uses the same coordinator recovery path as an HTTP retry.
+	It is safe to call on process start and never makes incomplete work visible.
+	"""
+	try:
+		from simulacra.workplace.bootstrap_coordinator import WorkspaceBootstrapCoordinator
+		return WorkspaceBootstrapCoordinator().recovery_tick(limit=min(100, max(1, limit)))
+	except Exception:
+		return 0
+
+
 def _configured_notification_adapter() -> object | None:
 	"""Build an explicitly configured real provider, never the test adapter."""
 	specification = os.environ.get("SIMULACRA_NOTIFICATION_ADAPTER_FACTORY", "").strip()
@@ -102,6 +115,11 @@ def _mission_cron_scheduler(
 	interval = _mission_cron_interval_seconds() if interval_seconds is None else max(0.01, interval_seconds)
 	first = True
 	while not stop_event.is_set():
+		# A newly completed Mission may only be discovered after its bootstrap
+		# journal has been repaired.  This bounded call also runs every scheduler
+		# sweep, so a process that stays up heals interrupted setup without a
+		# human retrying a request.
+		bootstrap_recovery_tick()
 		if first and initial_workers is not None:
 			workers = initial_workers
 		else:
@@ -387,6 +405,10 @@ def worker() -> int:
 			pass
 	configured_project = os.environ.get("CMUL8_PROJECT_ID", "").strip() or None
 	configured_tenant = os.environ.get("CMUL8_TENANT_ID", "").strip() or None
+	# Never discover or claim a Mission until recoverable setup has had one
+	# bounded chance to finish.  This preserves the graph/source contract for a
+	# worker started immediately after an API restart.
+	bootstrap_recovery_tick()
 	# Import/discover both planes serially before any scheduler thread starts.
 	# This prevents Python import-lock contention during process startup.
 	if explicit_requested:

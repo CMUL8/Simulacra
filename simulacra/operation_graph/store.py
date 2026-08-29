@@ -135,27 +135,17 @@ class OperationGraphStore:
 				handle.flush()
 				os.fsync(handle.fileno())
 			os.replace(temp_name, path)
-			try:
-				directory_fd = os.open(path.parent, os.O_RDONLY)
-				try:
-					os.fsync(directory_fd)
-				finally:
-					os.close(directory_fd)
-			except OSError:
-				pass
+			self._fsync_directory(path.parent)
 		finally:
 			if os.path.exists(temp_name):
 				os.unlink(temp_name)
 
 	def _fsync_directory(self, directory: Path) -> None:
+		directory_fd = os.open(directory, os.O_RDONLY)
 		try:
-			directory_fd = os.open(directory, os.O_RDONLY)
-			try:
-				os.fsync(directory_fd)
-			finally:
-				os.close(directory_fd)
-		except OSError:
-			pass
+			os.fsync(directory_fd)
+		finally:
+			os.close(directory_fd)
 
 	def _write_immutable(self, path: Path, value: Mapping[str, Any]) -> None:
 		payload = deterministic_json(value, indent=2)
@@ -211,11 +201,13 @@ class OperationGraphStore:
 			head = self._assert_expected(expected_revision_hash)
 			existing_path = self._revisions / f"{revision_hash}.json"
 			if existing_path.exists():
+				self._fsync_directory(self._revisions)
 				record = self.load_revision(revision_hash)
 				if head is None or head["revision_hash"] != revision_hash:
 					raise RevisionConflictError(
 						"historical Operation Graph revisions must be activated with rollback_to so the change is audited"
 					)
+				self._fsync_directory(self._root)
 				return record
 			else:
 				now = self._clock()
@@ -242,6 +234,83 @@ class OperationGraphStore:
 			self._atomic_write(self._root / "head.json", head)
 		return record
 
+	def create_immutable_revision(self, graph: Mapping[str, Any]) -> GraphRevision:
+		"""Persist a validated immutable revision without publishing a head.
+
+		Bootstrap uses this split boundary so a crash after revision bytes are
+		durable but before head publication is recoverable rather than complete.
+		"""
+		validated = validate_operation_graph(graph)
+		assert_connector_configurations_opaque(validated)
+		metadata = validated["metadata"]
+		if metadata["tenant_id"] != self.tenant_id or metadata["project_id"] != self.project_id:
+			raise ValueError("graph tenant_id/project_id does not match store scope")
+		revision_hash = hashlib.sha256(canonical_json_bytes(validated)).hexdigest()
+		with self._locked():
+			path = self._revisions / f"{revision_hash}.json"
+			if path.exists():
+				# A prior caller may have linked the immutable bytes and then
+				# failed the parent-directory durability barrier.  A retry must
+				# repair that barrier before accepting the existing revision.
+				self._fsync_directory(self._revisions)
+				return self.load_revision(revision_hash)
+			now = self._clock()
+			record = GraphRevision(
+				schema_version=RECORD_SCHEMA_VERSION, tenant_id=self.tenant_id,
+				project_id=self.project_id, revision=self._next_revision(),
+				revision_hash=revision_hash, created_at=now, updated_at=now, graph=validated,
+			)
+			self._write_immutable(path, asdict(record))
+			return record
+
+	def finalize_exact_revision_head(
+		self, *, tenant_id: str, project_id: str, revision_hash: str, canonical_graph_hash: str,
+	) -> GraphRevision:
+		"""Publish exactly one pre-existing revision as head, never replace a head."""
+		if tenant_id != self.tenant_id or project_id != self.project_id:
+			raise RevisionConflictError("Operation Graph scope does not match finalization")
+		if not _HASH_RE.fullmatch(revision_hash) or not _HASH_RE.fullmatch(canonical_graph_hash):
+			raise RevisionConflictError("invalid Operation Graph finalization")
+		with self._locked():
+			try:
+				self._fsync_directory(self._revisions)
+				revision = self.load_revision(revision_hash)
+			except (RevisionNotFoundError, TypeError, ValueError) as exc:
+				raise RevisionConflictError("Operation Graph finalization target is unavailable") from exc
+			actual = hashlib.sha256(canonical_json_bytes(revision.graph)).hexdigest()
+			if actual != canonical_graph_hash or actual != revision_hash:
+				raise RevisionConflictError("Operation Graph finalization hash mismatch")
+			try:
+				head = self._head()
+			except (KeyError, TypeError, ValueError) as exc:
+				raise RevisionConflictError("Operation Graph head is malformed") from exc
+			if head is not None:
+				if head.get("revision_hash") != revision_hash:
+					raise RevisionConflictError("Operation Graph head already names another revision")
+				expected_head = {
+					"schema_version": RECORD_SCHEMA_VERSION,
+					"tenant_id": self.tenant_id,
+					"project_id": self.project_id,
+					"revision": revision.revision,
+					"revision_hash": revision.revision_hash,
+					"created_at": revision.created_at,
+				}
+				if any(head.get(key) != value for key, value in expected_head.items()):
+					raise RevisionConflictError("Operation Graph head metadata does not match its revision")
+				if not isinstance(head.get("updated_at"), str) or not head["updated_at"]:
+					raise RevisionConflictError("Operation Graph head metadata is incomplete")
+				# Repair a possible prior replace-success/directory-fsync failure
+				# before an idempotent finalizer reports success.
+				self._fsync_directory(self._root)
+				return revision
+			self._atomic_write(self._root / "head.json", {
+				"schema_version": RECORD_SCHEMA_VERSION, "tenant_id": self.tenant_id,
+				"project_id": self.project_id, "revision": revision.revision,
+				"revision_hash": revision.revision_hash, "created_at": revision.created_at,
+				"updated_at": self._clock(),
+			})
+			return revision
+
 	def list_revisions(self) -> list[GraphRevision]:
 		records = [self.load_revision(path.stem) for path in self._revisions.glob("*.json")]
 		return sorted(records, key=lambda record: record.revision)
@@ -253,17 +322,62 @@ class OperationGraphStore:
 		if not path.is_file():
 			raise RevisionNotFoundError(f"Operation Graph revision not found: {revision_hash}")
 		record = GraphRevision(**self._read_json(path))
+		if (
+			record.schema_version != RECORD_SCHEMA_VERSION
+			or isinstance(record.revision, bool)
+			or not isinstance(record.revision, int)
+			or record.revision < 1
+			or not isinstance(record.created_at, str)
+			or not record.created_at
+			or not isinstance(record.updated_at, str)
+			or not record.updated_at
+		):
+			raise ValueError(f"Invalid immutable Operation Graph revision metadata: {revision_hash}")
 		actual_hash = hashlib.sha256(canonical_json_bytes(record.graph)).hexdigest()
 		if record.revision_hash != revision_hash or actual_hash != revision_hash:
 			raise ValueError(f"Immutable Operation Graph revision failed content hash verification: {revision_hash}")
 		# This check is deliberately on the central load path so legacy unsafe
 		# revisions cannot be listed, activated, approved, rolled back to, or built.
 		assert_connector_configurations_opaque(record.graph)
+		validate_operation_graph(record.graph)
 		return record
 
 	def current_revision(self) -> GraphRevision | None:
 		head = self._head()
 		return self.load_revision(head["revision_hash"]) if head else None
+
+	def require_exact_current_revision_head(self, revision_hash: str) -> GraphRevision:
+		"""Require an unrevised head that exactly publishes one immutable revision.
+
+		Bootstrap completion uses this stricter contract than ordinary current-head
+		reads because a rollback head is valid history but is not the exact initial
+		publication promised by a bootstrap journal.
+		"""
+		if not _HASH_RE.fullmatch(revision_hash):
+			raise RevisionConflictError("invalid Operation Graph exact head")
+		with self._locked():
+			try:
+				self._fsync_directory(self._revisions)
+				self._fsync_directory(self._root)
+				revision = self.load_revision(revision_hash)
+				head = self._head()
+			except (KeyError, TypeError, ValueError, RevisionNotFoundError) as exc:
+				raise RevisionConflictError("Operation Graph exact head is unavailable") from exc
+			if head is None:
+				raise RevisionConflictError("Operation Graph exact head is unavailable")
+			expected = {
+				"schema_version": RECORD_SCHEMA_VERSION,
+				"tenant_id": self.tenant_id,
+				"project_id": self.project_id,
+				"revision": revision.revision,
+				"revision_hash": revision.revision_hash,
+				"created_at": revision.created_at,
+			}
+			if any(head.get(key) != value for key, value in expected.items()):
+				raise RevisionConflictError("Operation Graph head metadata does not match its exact revision")
+			if not isinstance(head.get("updated_at"), str) or not head["updated_at"]:
+				raise RevisionConflictError("Operation Graph exact head metadata is incomplete")
+			return revision
 
 	@contextmanager
 	def locked_current_approved_revision(self) -> Iterator[GraphRevision | None]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Mapping
@@ -15,7 +16,7 @@ from simulacra.harnesses import (
 	TerminalStatus,
 	create_harness,
 )
-from simulacra.operation_graph import OperationGraphStore, deterministic_json, validate_operation_graph
+from simulacra.operation_graph import OperationGraphStore, canonical_json_bytes, deterministic_json, validate_operation_graph
 from simulacra.operation_graph.publication import atomic_write_project_file
 from simulacra.operation_graph.validation import AREAS, SCHEMA_ID
 
@@ -108,6 +109,45 @@ def _safe_scaffold(state: ProjectState, *, architect_error: str | None) -> dict[
 		}],
 		"schedules": [],
 	})
+
+
+def bootstrap_graph_candidate_hash(state: ProjectState) -> str:
+    """Hash the deterministic bootstrap graph before any revision is written."""
+    return hashlib.sha256(canonical_json_bytes(_safe_scaffold(state, architect_error=None))).hexdigest()
+
+
+def build_bootstrap_graph(
+    state: ProjectState,
+    *,
+    actor_id: str,
+    expected_tenant_id: str | None = None,
+    expected_project_id: str | None = None,
+    expected_graph_hash: str | None = None,
+) -> tuple[str, str]:
+	"""Create durable bootstrap graph bytes without using an ephemeral job.
+
+		The caller publishes the exact revision head only after recording durable
+		intent. This deliberately avoids ``init_plan``/``start_job``.
+	"""
+	if not actor_id.strip():
+		raise ValueError("bootstrap graph requires an owner")
+	if expected_tenant_id is not None and expected_tenant_id != state.tenant_id:
+		raise ValueError("bootstrap graph tenant does not match its reservation")
+	if expected_project_id is not None and expected_project_id != state.id:
+		raise ValueError("bootstrap graph project does not match its reservation")
+	graph = _safe_scaffold(state, architect_error=None)
+	candidate_hash = hashlib.sha256(canonical_json_bytes(graph)).hexdigest()
+	if expected_graph_hash is not None and expected_graph_hash != candidate_hash:
+		raise ValueError("bootstrap graph input no longer matches its reservation")
+	store = OperationGraphStore(project_dir(state.id), tenant_id=state.tenant_id, project_id=state.id)
+	revision = store.create_immutable_revision(graph)
+	if revision.revision_hash != candidate_hash:
+		raise ValueError("bootstrap graph revision does not match its reservation")
+	final = store.finalize_exact_revision_head(
+		tenant_id=state.tenant_id, project_id=state.id,
+		revision_hash=revision.revision_hash, canonical_graph_hash=revision.revision_hash,
+	)
+	return final.revision_hash, "ready_for_approval"
 
 
 def propose_operation_graph(state: ProjectState, *, actor_id: str) -> dict[str, Any]:

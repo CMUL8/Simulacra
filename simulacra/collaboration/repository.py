@@ -21,6 +21,7 @@ Record = TypeVar("Record", ProjectRoom, Task, Comment, Review)
 T = TypeVar("T", bound=object)
 _LOCKS_GUARD = threading.Lock()
 _ROOT_LOCKS: dict[str, threading.RLock] = {}
+_WRITE_LOCK_STATE = threading.local()
 
 
 class CollaborationRepository(Protocol):
@@ -81,7 +82,6 @@ class JsonCollaborationRepository:
 		self.root.mkdir(parents=True, exist_ok=True)
 		with _LOCKS_GUARD:
 			self._lock = _ROOT_LOCKS.setdefault(str(self.root), threading.RLock())
-		self._write_depth = threading.local()
 
 	def _project_dir(self, tenant_id: str, project_id: str, *, create: bool = False) -> Path:
 		validate_scope_id(tenant_id, "tenant_id")
@@ -120,11 +120,11 @@ class JsonCollaborationRepository:
 	@contextmanager
 	def _write_lock(self, tenant_id: str, project_id: str):
 		"""Serialize complete project writes across threads and POSIX processes."""
-		key = (tenant_id, project_id)
-		depths = getattr(self._write_depth, "depths", {})
+		key = (str(self.root), tenant_id, project_id)
+		depths = getattr(_WRITE_LOCK_STATE, "depths", {})
 		if depths.get(key, 0):
 			depths[key] += 1
-			self._write_depth.depths = depths
+			_WRITE_LOCK_STATE.depths = depths
 			try:
 				yield
 			finally:
@@ -142,7 +142,7 @@ class JsonCollaborationRepository:
 			try:
 				fcntl.flock(fd, fcntl.LOCK_EX)
 				depths[key] = 1
-				self._write_depth.depths = depths
+				_WRITE_LOCK_STATE.depths = depths
 				try:
 					yield
 				finally:

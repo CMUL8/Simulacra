@@ -8,6 +8,31 @@ import conversationStyles from "../conversation/conversation.css?raw";
 import workplaceStyles from "./workplace.css?raw";
 import legacyStyles from "../../../styles.css?raw";
 
+const bootstrapHarness = vi.hoisted(() => ({
+  onComplete: null as null | ((missionId: string) => void),
+}));
+
+vi.mock("../onboarding/useMissionBootstrap", () => ({
+  useMissionBootstrap: ({ onComplete }: { onComplete: (missionId: string) => void }) => {
+    bootstrapHarness.onComplete = onComplete;
+    return {
+      ready: true,
+      draft: { outcome: "", sources: [] },
+      working: false,
+      phase: "editing",
+      error: null,
+      blocked: false,
+      canRetry: false,
+      setOutcome: vi.fn(),
+      setFiles: vi.fn(),
+      removeFile: vi.fn(),
+      create: vi.fn(),
+      retry: vi.fn(),
+      discard: vi.fn(),
+    };
+  },
+}));
+
 const response = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
@@ -50,7 +75,35 @@ const attentionItem = (id: string, overrides: Partial<AttentionItem> = {}): Atte
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  bootstrapHarness.onComplete = null;
   window.history.replaceState({}, "", "/");
+});
+
+test("new_mission_route_is_resolved_before_mission_id_and_completion_replaces_into_conversation", async () => {
+  window.history.replaceState({ old: true }, "", "/missions/new");
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [], next_cursor: null }));
+  render(<WorkplaceShell attentionEnabled bootstrapEnabled workspaceId="workspace_a" currentHumanId="human_a" onSearch={() => undefined} onSettings={() => undefined} />);
+
+  expect(screen.getByRole("heading", { name: "Create a Mission" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Mission selected" })).not.toBeInTheDocument();
+  expect(fetcher).not.toHaveBeenCalled();
+  bootstrapHarness.onComplete?.("mission_ready");
+  await waitFor(() => expect(window.location.pathname).toBe("/missions/mission_ready/conversation"));
+});
+
+test("new_mission_cta_is_flagged_and_flag_off_new_route_returns_to_the_list", async () => {
+  window.history.replaceState({}, "", "/missions?state=active");
+  vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [], next_cursor: null }));
+  const enabled = render(<WorkplaceShell attentionEnabled bootstrapEnabled workspaceId="workspace_a" currentHumanId="human_a" onSearch={() => undefined} onSettings={() => undefined} />);
+  fireEvent.click(await screen.findByRole("button", { name: "New Mission" }));
+  expect(window.location.pathname).toBe("/missions/new");
+  enabled.unmount();
+
+  window.history.replaceState({}, "", "/missions/new");
+  render(<WorkplaceShell attentionEnabled bootstrapEnabled={false} workspaceId="workspace_a" currentHumanId="human_a" onSearch={() => undefined} onSettings={() => undefined} />);
+  await waitFor(() => expect(window.location.pathname + window.location.search).toBe("/missions?state=active"));
+  expect(screen.queryByRole("button", { name: "New Mission" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Mission selected" })).not.toBeInTheDocument();
 });
 
 test("opens_needs_you_from_url_and_retains_filter_on_reload", async () => {

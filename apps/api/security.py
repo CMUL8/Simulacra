@@ -9,6 +9,8 @@ from fastapi import Depends, Header, HTTPException, Query, Request
 
 from simulacra.demo.enterprise_audit import emit_audit
 from simulacra.demo.identity import AuthContext, ensure_bootstrap, resolve_auth
+from simulacra.demo.runs import load_state
+from simulacra.workplace.bootstrap_coordinator import WorkspaceBootstrapCoordinator
 
 
 class InvitationAcceptPrincipal:
@@ -34,7 +36,28 @@ def require_invitation_accept_authenticated_email(
 		return InvitationAcceptPrincipal(actor_id=user.id, verified_email=email, provider_subject=subject)
 	except Exception as exc:  # intentionally indistinguishable from every unavailable invitation
 		raise HTTPException(404, {"code": "invitation_unavailable", "message": "This invitation is unavailable."}) from exc
-from simulacra.demo.runs import load_state
+
+
+def is_normal_project_visible(state, *, coordinator_factory=None) -> bool:
+	"""Whether an existing project can enter normal Mission surfaces.
+
+	A bootstrap can durably create several children before the Mission is ready.
+	Those children stay behind the dedicated setup-status route until the exact
+	journal is complete.  Legacy projects have no marker and stay visible.
+	"""
+	prime = getattr(state, "prime", None)
+	marker = prime.get("bootstrap_request_hash") if isinstance(prime, dict) else None
+	if not isinstance(marker, str) or not marker:
+		return True
+	try:
+		factory = coordinator_factory or WorkspaceBootstrapCoordinator
+		return factory().project_is_public(
+			tenant_id=state.tenant_id,
+			project_id=state.id,
+		)
+	except Exception:
+		# A damaged or unavailable journal must never reveal a partial Mission.
+		return False
 
 
 def get_auth(
@@ -105,6 +128,8 @@ def require_project_access(permission: str = "project:read") -> Callable[..., Au
 			raise HTTPException(404, "Project not found") from exc
 		if auth.tenant_id != "*" and state.tenant_id != auth.tenant_id and not auth.user.is_platform_admin:
 			raise HTTPException(404, "Project not found")  # don't leak existence
+		if not is_normal_project_visible(state):
+			raise HTTPException(404, "Project not found")
 		return auth
 
 	_dep.__name__ = f"require_project_{permission.replace(':', '_')}"

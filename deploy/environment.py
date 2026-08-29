@@ -21,6 +21,10 @@ REQUIRED = (
 )
 SECRET_KEYS = {"CMUL8_POSTGRES_URL", "CMUL8_REDIS_URL"}
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
+_INTERNAL_TENANT_ALLOWLIST = re.compile(
+    r"^(?:[a-z][a-z0-9_-]{1,62})(?:,[a-z][a-z0-9_-]{1,62})*$"
+)
+WORKPLACE_INTERNAL_TENANTS_ENV = "SIMULACRA_WORKPLACE_INTERNAL_TENANTS"
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,17 @@ def validate_environment(environment: Mapping[str, str], *, resolve_hosts: bool 
         value = environment.get(key)
         if value and not _IDENTIFIER.fullmatch(value):
             errors.append(f"{key} must be a lowercase deployment identifier")
+    internal_tenants = environment.get(WORKPLACE_INTERNAL_TENANTS_ENV)
+    if internal_tenants not in (None, ""):
+        tenants = internal_tenants.split(",")
+        if (
+            not _INTERNAL_TENANT_ALLOWLIST.fullmatch(internal_tenants)
+            or len(set(tenants)) != len(tenants)
+        ):
+            errors.append(
+                f"{WORKPLACE_INTERNAL_TENANTS_ENV} must be a comma-separated list "
+                "of unique lowercase tenant identifiers without whitespace"
+            )
     schemes = {
         "CMUL8_POSTGRES_URL": {"postgres", "postgresql"},
         "CMUL8_REDIS_URL": {"redis", "rediss"},

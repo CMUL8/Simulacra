@@ -8,8 +8,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import shutil
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -151,6 +153,16 @@ def data_room_dir(project_id: str) -> Path:
 	path = project_dir(project_id) / "inputs" / "data-room"
 	path.mkdir(parents=True, exist_ok=True)
 	return path
+
+
+def sync_data_room(project_id: str) -> None:
+	"""Require the data-room directory entry barrier before accepting a file."""
+	root = data_room_dir(project_id)
+	descriptor = os.open(root, os.O_RDONLY)
+	try:
+		os.fsync(descriptor)
+	finally:
+		os.close(descriptor)
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -303,9 +315,17 @@ def add_upload(
 		raise SourceError(f"{name} already exists — remove it or enable overwrite")
 
 	dest.parent.mkdir(parents=True, exist_ok=True)
-	tmp = dest.with_suffix(dest.suffix + ".tmp")
-	tmp.write_bytes(data)
-	tmp.replace(dest)
+	fd, temporary = tempfile.mkstemp(prefix=f".{dest.name}.", dir=dest.parent)
+	try:
+		with os.fdopen(fd, "wb") as handle:
+			handle.write(data)
+			handle.flush()
+			os.fsync(handle.fileno())
+		os.replace(temporary, dest)
+		sync_data_room(project_id)
+	finally:
+		if os.path.exists(temporary):
+			os.unlink(temporary)
 
 	status, detail = _file_status(name, len(data))
 	return SourceFile(

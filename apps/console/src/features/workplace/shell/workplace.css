@@ -68,6 +68,8 @@
   padding: 0;
 }
 
+.workplace-main.is-new-mission { padding-block: 0; }
+
 .workplace-header {
   align-items: center;
   display: flex;
@@ -81,6 +83,8 @@
 .workplace-header > div { min-width: 0; }
 .workplace-header h1 { margin: 0; overflow-wrap: anywhere; }
 .workplace-eyebrow { color: var(--mission-color-muted); margin: 0 0 var(--mission-space-1); }
+.workplace-header-actions { align-items: center; display: flex; gap: var(--mission-space-2); }
+.workplace-header .workplace-new-mission { background: var(--mission-color-accent); color: #0b1020; font-weight: 700; }
 
 .workplace-filter {
   align-items: center;
