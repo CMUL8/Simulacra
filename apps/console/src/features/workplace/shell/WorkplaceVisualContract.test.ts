@@ -40,3 +40,12 @@ test("drawers and dialogs share calm surfaces and compact controls", () => {
   expect(workStyles).toMatch(/min-height:\s*var\(--mission-control-compact\)/s);
   expect(fileStyles).toMatch(/min-height:\s*var\(--mission-control-compact\)/s);
 });
+
+test("the Mission room uses disciplined proportions and content-fit messages", () => {
+  expect(conversationStyles).toMatch(/\.mission-conversation-workspace\s*\{[^}]*grid-template-rows:\s*auto\s+2\.5rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.mission-room-header\s*\{[^}]*min-height:\s*3\.75rem/s);
+  expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*12rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.conversation-message\s*\{[^}]*position:\s*relative/s);
+  expect(conversationStyles).toMatch(/\.conversation-message-actions\s*\{[^}]*position:\s*absolute/s);
+  expect(crewStyles).toMatch(/\.mission-conversation-workspace\s+\.crew-quick-actions\s+button\s*\{[^}]*min-height:\s*1\.875rem/s);
+});

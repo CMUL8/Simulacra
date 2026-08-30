@@ -839,11 +839,14 @@ test("workplace layout keeps one scroll owner and a compact mobile navigation wi
   expect(workplaceStyles).toMatch(/overflow-wrap:\s*anywhere/);
   expect(conversationStyles).not.toMatch(/gradient\s*\(/i);
   expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*overflow:\s*hidden/s);
-  expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*13\.5rem\s+minmax\(0,\s*1fr\)/s);
-  expect(conversationStyles).toMatch(/\.crew-member\s*\{[^}]*grid-template-columns:\s*1\.75rem\s+minmax\(0,\s*1fr\)\s+2rem[^}]*padding-block:\s*0\.375rem/s);
+  expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*12rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.crew-member\s*\{[^}]*grid-template-columns:\s*1\.5rem\s+minmax\(0,\s*1fr\)\s+1\.75rem[^}]*padding-block:\s*0\.25rem/s);
   expect(conversationStyles).toMatch(/\.conversation-message\.is-progress\s*\{[^}]*grid-template-columns:\s*1\.75rem\s+minmax\(0,\s*1fr\)/s);
   expect(conversationStyles).toMatch(/\.conversation-message\.is-progress\s*\{[^}]*border-inline-start:\s*2px\s+solid\s+var\(--mission-color-accent\)[^}]*max-width:\s*42rem/s);
   expect(conversationStyles).toMatch(/\.conversation-composer\s*\{[^}]*max-width:\s*54rem/s);
+  expect(conversationStyles).toMatch(/\.mission-room-header\s*\{[^}]*min-height:\s*3\.75rem/s);
+  expect(conversationStyles).toMatch(/\.mission-tabs\s*>\s*button\s*\{[^}]*min-height:\s*2\.5rem/s);
+  expect(conversationStyles).toMatch(/\.conversation-message-actions\s*\{[^}]*position:\s*absolute/s);
   expect(conversationStyles).toMatch(/\.conversation-timeline\s*\{[^}]*overflow-y:\s*auto/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*1fr/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*30rem\)[\s\S]*\.mission-crew-rail\s*\{[^}]*grid-template-columns:\s*1fr/s);
