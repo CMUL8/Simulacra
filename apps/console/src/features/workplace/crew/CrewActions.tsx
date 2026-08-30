@@ -103,7 +103,7 @@ export function CrewActions({ missionId, canAddAgent, canInviteHuman, onAgentAdd
       <form className="crew-dialog" role="dialog" aria-modal="true" aria-label={active === "agent" ? "Add an agent" : "Invite a human"} onSubmit={(event) => void (active === "agent" ? addAgent(event) : inviteHuman(event))}>
         <header>
           <div><p className="workplace-eyebrow">Mission crew</p><h2>{active === "agent" ? "Add an agent" : "Invite a human"}</h2><p>{active === "agent" ? "Define the specialist. Missions manages everything behind the scenes." : "Invite a human to guide, review, or approve work in this Mission."}</p></div>
-          <button type="button" aria-label="Close crew dialog" onClick={close}><X size={18} aria-hidden /></button>
+          <button type="button" aria-label="Close crew dialog" onClick={close}><X size={16} aria-hidden /></button>
         </header>
         {active === "agent" ? <div className="crew-dialog-fields">
           <fieldset className="crew-job-starters"><legend>Start with a job</legend>{starterJobs.map((starter) => <button key={starter.label} type="button" onClick={() => setAgent(starter.value)}>{starter.label}</button>)}</fieldset>

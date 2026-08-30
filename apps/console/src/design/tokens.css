@@ -31,6 +31,15 @@
   --mission-space-3: 0.75rem;
   --mission-space-4: 1rem;
   --mission-space-6: 1.5rem;
+  --mission-font-ui: "Instrument Sans Variable", "Aptos", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mission-font-mono: "Geist Mono Variable", "SFMono-Regular", Consolas, monospace;
+  --mission-font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --mission-font-weight-regular: 430;
+  --mission-font-weight-medium: 560;
+  --mission-font-weight-semibold: 650;
+  --mission-leading-body: 1.5;
+  --mission-tracking-heading: -0.025em;
+  --mission-icon-stroke: 1.65;
   --mission-type-title-size: 1.25rem;
   --mission-type-body-size: 0.875rem;
   --mission-type-label-size: 0.8125rem;

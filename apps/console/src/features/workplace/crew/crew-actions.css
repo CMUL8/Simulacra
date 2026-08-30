@@ -1,7 +1,7 @@
 @import url("../../../design/tokens.css");
 
 .crew-quick-actions { display: flex; gap: var(--mission-space-1); margin-block-start: var(--mission-space-2); position: relative; }
-.mission-conversation-workspace .crew-quick-actions button { align-items: center; background: transparent; border-color: transparent; color: var(--mission-color-muted); display: inline-flex; font-size: 0.6875rem; font-weight: 650; gap: var(--mission-space-1); justify-content: flex-start; min-height: 1.875rem; min-width: 0; padding-inline: 0.25rem; white-space: nowrap; }
+.mission-conversation-workspace .crew-quick-actions button { align-items: center; background: transparent; border-color: transparent; color: var(--mission-color-muted); display: inline-flex; font-size: var(--mission-type-meta-size); font-weight: var(--mission-font-weight-medium); gap: var(--mission-space-1); justify-content: flex-start; min-height: 1.875rem; min-width: 0; padding-inline: 0.25rem; white-space: nowrap; }
 .mission-conversation-workspace .crew-quick-actions button:first-child { color: var(--mission-color-accent); }
 .mission-conversation-workspace .crew-quick-actions button:hover { background: var(--mission-color-surface-hover); border-color: transparent; color: var(--mission-color-fg); }
 .crew-add-options { background: var(--mission-color-surface-raised); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-sm); box-shadow: var(--mission-shadow-raised); display: grid; inset: calc(100% + var(--mission-space-1)) auto auto 0; min-width: 9rem; padding: var(--mission-space-1); position: absolute; z-index: 6; }

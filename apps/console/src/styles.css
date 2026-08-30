@@ -22,8 +22,8 @@
   --fail: #e85d5d;
   --warn: #f0c040;
   --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
-  --font-ui: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-ui: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
   /* Rows 6 · controls 8 · composer 12 · chips pill */
   --radius-xs: 6px;
   --radius-sm: 8px;

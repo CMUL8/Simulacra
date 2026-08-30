@@ -56,7 +56,7 @@ export function NotificationPreferences({ preference, missions, actionableCount 
   return (
     <section className="notification-preferences" aria-labelledby="notification-preferences-title">
       <header>
-        <Bell size={18} aria-hidden />
+        <Bell size={16} aria-hidden />
         <div><h2 id="notification-preferences-title">Notifications</h2><p>Choose when Missions should bring you back.</p></div>
       </header>
       <div className="notification-preferences__grid">

@@ -7,6 +7,9 @@ import fileStyles from "../files/files.css?raw";
 import workStyles from "../work/work.css?raw";
 import workplaceStyles from "./workplace.css?raw";
 import tokens from "../../../design/tokens.css?raw";
+import typography from "../../../design/typography.css?raw";
+import workplaceShellSource from "./WorkplaceShell.tsx?raw";
+import missionRoomSource from "../conversation/MissionConversationWorkspace.tsx?raw";
 
 test("the workplace uses one premium interaction and surface contract", () => {
   for (const token of [
@@ -34,6 +37,27 @@ test("the workplace uses one premium interaction and surface contract", () => {
   expect(workplaceStyles).toMatch(/\.mission-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(24rem,\s*100%\),\s*1fr\)\)/s);
   expect(workplaceStyles).toMatch(/\.mission-summary-card\s*\{[^}]*transition:[^}]*box-shadow/s);
   expect(attentionStyles).toMatch(/\.attention-row:not\(\.is-read\)::before\s*\{[^}]*background:\s*var\(--mission-color-warning\)/s);
+});
+
+test("the workplace uses one deliberate type and icon system", () => {
+  for (const token of [
+    "--mission-font-ui",
+    "--mission-font-mono",
+    "--mission-font-display",
+    "--mission-font-weight-regular",
+    "--mission-font-weight-medium",
+    "--mission-font-weight-semibold",
+    "--mission-leading-body",
+    "--mission-tracking-heading",
+    "--mission-icon-stroke",
+  ]) expect(tokens).toContain(token);
+  expect(typography).toContain("font-family: var(--mission-font-ui)");
+  expect(typography).not.toContain("font-family: Inter");
+  expect(workplaceStyles).toMatch(/\.workplace-shell\s*\{[^}]*font-family:\s*var\(--mission-font-ui\)/s);
+  expect(workplaceStyles).toMatch(/\.workplace-shell\s+svg\s*\{[^}]*stroke-width:\s*var\(--mission-icon-stroke\)/s);
+  expect(workplaceStyles).toContain("font-variant-numeric: tabular-nums");
+  expect(workplaceShellSource).not.toContain('<p className="workplace-eyebrow">Workspace</p>');
+  expect(missionRoomSource).not.toContain('<p className="workplace-eyebrow">Mission</p>');
 });
 
 test("drawers and dialogs share calm surfaces and compact controls", () => {
@@ -72,5 +96,5 @@ test("Mission work reads as one connected progress sequence with a restrained co
   expect(conversationStyles).toMatch(/\.composer-actions\s+>\s+button\.is-icon-only\s*\{[^}]*border-radius:\s*50%/s);
   expect(workplaceStyles).toMatch(/\.workplace-shell\s*\{[^}]*letter-spacing:\s*0/s);
   expect(workplaceStyles).toMatch(/\.workplace-shell\s+svg\s*\{[^}]*display:\s*block[^}]*flex:\s*none/s);
-  expect(conversationStyles).toMatch(/\.conversation-message-body\s+time\s*\{[^}]*font-family:\s*var\(--font-mono\)[^}]*font-variant-numeric:\s*tabular-nums/s);
+  expect(conversationStyles).toMatch(/\.conversation-message-body\s+time\s*\{[^}]*font-family:\s*var\(--mission-font-mono\)[^}]*font-variant-numeric:\s*tabular-nums/s);
 });

@@ -1,6 +1,9 @@
 import { ClerkProvider, useAuth as useClerkAuth, useUser } from "@clerk/clerk-react";
 import { StrictMode, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import "@fontsource-variable/instrument-sans";
+import "@fontsource-variable/geist-mono";
+import "@fontsource/instrument-serif";
 import App from "./App";
 import { MissionLoader } from "./components/MissionLoader";
 import { acceptCmul8Invitation, clearAuth, fetchMe, setTenantId, setToken } from "./api";

@@ -203,11 +203,11 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
         aria-current={destination === item.id ? "page" : undefined}
         title={item.label}
         onClick={() => navigate(item.id)}
-      ><Icon size={18} aria-hidden="true" /><span>{item.label}</span></button>)}
+      ><Icon size={16} aria-hidden="true" /><span>{item.label}</span></button>)}
     </aside>
     <main className={`workplace-main${missionDetail && conversationEnabled ? " is-mission-detail" : ""}${newMission ? " is-new-mission" : ""}`} aria-label="Workplace">
       {missionDetail && conversationEnabled || newMission ? null : <header className="workplace-header">
-        <div><p className="workplace-eyebrow">Workspace</p><h1>{heading}</h1></div>
+        <div><h1>{heading}</h1></div>
         <div className="workplace-header-actions">
           {bootstrapEnabled ? <button className="workplace-new-mission" type="button" onClick={openNewMission}><Plus size={16} aria-hidden="true" /> New Mission</button> : null}
           <button type="button" disabled aria-label="Search Missions (coming soon)" title="Mission search is coming soon">Search</button>

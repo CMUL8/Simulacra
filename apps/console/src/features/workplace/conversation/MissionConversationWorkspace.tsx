@@ -311,7 +311,6 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
     <header className="mission-room-header">
       <button type="button" className="mission-back" aria-label="Back to Missions" onClick={onBack}><ArrowLeft size={16} aria-hidden="true" /><span>Missions</span></button>
       <div>
-        <p className="workplace-eyebrow">Mission</p>
         <h2>{missionTitle(overview, room)}</h2>
         <p>{missionOutcome(overview, room)}</p>
       </div>
@@ -337,7 +336,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
         aria-label="Mission crew"
         onKeyDown={(event) => { if (event.key === "Escape") setCrewOpen(false); }}
       >
-        <header><div><h3>Crew</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-label={crewOpen ? "Close Mission crew" : "Open Mission crew"} aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? <X size={18} aria-hidden="true" /> : <><UsersRound size={16} aria-hidden="true" /><span>Crew</span><ChevronDown size={14} aria-hidden="true" /></>}</button></header>
+        <header><div><h3>Crew</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-label={crewOpen ? "Close Mission crew" : "Open Mission crew"} aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? <X size={16} aria-hidden="true" /> : <><UsersRound size={16} aria-hidden="true" /><span>Crew</span><ChevronDown size={14} aria-hidden="true" /></>}</button></header>
         {crewLoading ? <p className="crew-state" role="status">Loading Mission crew…</p> : null}
         {crewError ? <div className="crew-state" role="alert"><span>Crew is unavailable. This Mission still works.</span><button type="button" onClick={() => void loadCrew()}>Retry</button></div> : null}
         {!crewLoading && !crewError ? <>
