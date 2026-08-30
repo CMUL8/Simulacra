@@ -390,12 +390,12 @@ test("renders human-facing hierarchy, selection semantics, and useful empty stat
   expect(screen.getByText("When a Mission needs a decision, review, or assignment, it will appear here.")).toBeInTheDocument();
 });
 
-test("search is a safe workplace affordance and navigation targets are accessible", async () => {
+test("unfinished search chrome stays hidden and navigation targets are accessible", async () => {
   window.history.replaceState({}, "", "/missions?state=active");
   vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [], next_cursor: null }));
   const onSearch = vi.fn();
   render(<WorkplaceShell attentionEnabled onSearch={onSearch} onSettings={() => undefined} />);
-  expect(screen.getByRole("button", { name: "Search Missions (coming soon)" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: /Search Missions/ })).not.toBeInTheDocument();
   expect(onSearch).not.toHaveBeenCalled();
   for (const label of ["Missions", "Needs you", "Work", "Settings"]) {
     expect(screen.getByRole("button", { name: label })).toHaveClass("workplace-nav-target");

@@ -57,6 +57,7 @@ test("the workplace uses one deliberate type and icon system", () => {
   expect(workplaceStyles).toMatch(/\.workplace-shell\s+svg\s*\{[^}]*stroke-width:\s*var\(--mission-icon-stroke\)/s);
   expect(workplaceStyles).toContain("font-variant-numeric: tabular-nums");
   expect(workplaceShellSource).not.toContain('<p className="workplace-eyebrow">Workspace</p>');
+  expect(workplaceShellSource).not.toContain("Search Missions (coming soon)");
   expect(missionRoomSource).not.toContain('<p className="workplace-eyebrow">Mission</p>');
 });
 
@@ -64,6 +65,9 @@ test("drawers and dialogs share calm surfaces and compact controls", () => {
   expect(conversationStyles).toMatch(/\.thread-drawer\s*\{[^}]*background:\s*var\(--mission-color-surface\)[^}]*box-shadow:\s*var\(--mission-shadow-drawer\)/s);
   expect(workStyles).toMatch(/\.work-detail\s*\{[^}]*background:\s*var\(--mission-color-surface\)[^}]*box-shadow:\s*var\(--mission-shadow-drawer\)[^}]*width:\s*min\(var\(--mission-drawer-width\),\s*100%\)/s);
   expect(fileStyles).toMatch(/\.file-detail,\s*\.file-preview\s*\{[^}]*background:\s*var\(--mission-color-surface\)[^}]*box-shadow:\s*var\(--mission-shadow-drawer\)/s);
+  expect(fileStyles).toMatch(/\.file-detail,\s*\.file-preview\s*\{[^}]*z-index:\s*51/s);
+  expect(fileStyles).toMatch(/\.file-preview\s*\{[^}]*z-index:\s*53/s);
+  expect(workStyles).toMatch(/\.work-detail\s*\{[^}]*z-index:\s*51/s);
   expect(crewStyles).toMatch(/\.crew-dialog\s*\{[^}]*box-shadow:\s*var\(--mission-shadow-dialog\)/s);
   expect(workStyles).toMatch(/min-height:\s*var\(--mission-control-compact\)/s);
   expect(fileStyles).toMatch(/min-height:\s*var\(--mission-control-compact\)/s);
@@ -76,6 +80,7 @@ test("the Mission room uses disciplined proportions and content-fit messages", (
   expect(conversationStyles).toMatch(/\.conversation-message\s*\{[^}]*position:\s*relative/s);
   expect(conversationStyles).toMatch(/\.conversation-message-actions\s*\{[^}]*position:\s*absolute/s);
   expect(crewStyles).toMatch(/\.mission-conversation-workspace\s+\.crew-quick-actions\s+button\s*\{[^}]*min-height:\s*1\.875rem/s);
+  expect(conversationStyles).toMatch(/\.crew-member\s+small\s*\{[^}]*-webkit-line-clamp:\s*2[^}]*white-space:\s*normal/s);
 });
 
 test("the Mission room groups sparse conversation beside one compact command surface", () => {

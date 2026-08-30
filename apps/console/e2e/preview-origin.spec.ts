@@ -26,16 +26,45 @@ test("preview_origin_exchange_preflight_cookie_nested_assets_and_external_form_s
       body: JSON.stringify({ exchange_id: issued.exchange_id, exchange_proof: issued.exchange_proof }),
     });
     if (consumed.status !== 204) throw new Error("Preview exchange failed");
+    const dialog = document.createElement("section");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-label", "Verified preview dialog");
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "Close preview";
     const frame = document.createElement("iframe");
     frame.title = "Verified output";
     frame.sandbox.add("allow-scripts", "allow-forms", "allow-same-origin");
     frame.src = `${issued.preview_origin}/projects/mission_preview/preview/`;
-    document.body.append(frame);
+    const endGuard = document.createElement("span");
+    endGuard.tabIndex = 0;
+    endGuard.dataset.previewFocusEnd = "true";
+    endGuard.addEventListener("focus", () => close.focus());
+    close.addEventListener("keydown", (event) => {
+      if (event.key === "Tab" && event.shiftKey) {
+        event.preventDefault();
+        frame.focus();
+      }
+    });
+    dialog.append(close, frame, endGuard);
+    document.body.append(dialog);
   });
 
   const frame = page.frameLocator('iframe[title="Verified output"]');
   await expect(frame.getByText("Verified Mission output")).toBeVisible();
   await expect(frame.getByText("Nested asset loaded")).toBeVisible();
+
+  const closePreview = page.getByRole("button", { name: "Close preview" });
+  const frameAction = frame.getByRole("button", { name: "Send externally" });
+  await frameAction.focus();
+  await page.keyboard.press("Tab");
+  await expect(closePreview).toBeFocused();
+  await frameAction.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(closePreview).toBeFocused();
+  await closePreview.focus();
+  await page.keyboard.press("Shift+Tab");
+  expect(await page.evaluate(() => (document.activeElement as HTMLIFrameElement | null)?.title)).toBe("Verified output");
 
   const cookies = await context.cookies();
   const previewCookie = cookies.find((cookie) => cookie.name === "mission_preview_w4");

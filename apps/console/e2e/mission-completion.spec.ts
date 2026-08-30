@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const artifactRoot = fileURLToPath(new URL("../../../artifacts/ui-acceptance/", import.meta.url));
 const missionId = "mission_completion";
 const outputFileId = `file_${"2".repeat(40)}`;
+const unsafeEvidenceFileId = "file_evidence_completion";
 const outputId = "deliverable_completion";
 const privateTerms = ["codex", "runtime", "provider", "model", "worker", "Traceback", "/app/"];
 
@@ -204,6 +205,14 @@ async function installMissionFixture(page: Page) {
         body: "# Invoice 42 exception report\n\nThe purchase order total does not match the invoice.\n\nEvidence: invoice-42.csv, row 42.\n",
       });
       return;
+    } else if (path === `/projects/${missionId}/files/${unsafeEvidenceFileId}/content` && method === "GET") {
+      expect(url.searchParams.get("disposition")).toBe("inline");
+      await route.fulfill({
+        status: 200,
+        contentType: "image/svg+xml",
+        body: "<svg xmlns='http://www.w3.org/2000/svg'><image href='https://external.invalid/evidence-beacon.png'/><text>Invoice reconciliation checks</text></svg>",
+      });
+      return;
     } else if (path === `/projects/${missionId}/files` && method === "GET") {
       const source = {
         id: "file_source_completion", mission_id: missionId, kind: "source", name: "invoice-42.csv",
@@ -223,8 +232,8 @@ async function installMissionFixture(page: Page) {
         action_targets: phase === "verified" ? {} : { verify_output: { kind: "output", id: outputId, revision: 1 } },
       };
       const evidence = {
-        id: "file_evidence_completion", mission_id: missionId, kind: "evidence", name: "Invoice reconciliation checks",
-        media_type: "application/json", size: 180, sha256: "c".repeat(64), state: "recorded", version: 1,
+        id: unsafeEvidenceFileId, mission_id: missionId, kind: "evidence", name: "Invoice reconciliation checks.svg",
+        media_type: "image/svg+xml", size: 180, sha256: "c".repeat(64), state: "recorded", version: 1,
         parent_output_id: outputFileId, producer_id: "agent_fin", producer: { id: "agent_fin", display_name: "Fin" },
         verifier: null, source_ids: [source.id], introduced_by_message_id: "message_completion", created_at: "2026-08-29T09:04:00Z", updated_at: "2026-08-29T09:04:00Z",
         previewable: true, downloadable: true, allowed_actions: [], action_targets: {},
@@ -321,6 +330,7 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
     ),
   ).toBeVisible();
   await page.screenshot({ path: `${artifactRoot}/mission-completion-work-detail.png`, fullPage: true });
+  await page.getByRole("dialog", { name: "Work details" }).getByRole("button", { name: "Close Work details" }).click();
 
   await page.getByTitle("Needs you").click();
   await expect(page.getByRole("button", { name: /Output ready to verify/ })).toBeVisible();
@@ -348,9 +358,10 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
   await details.getByRole("button", { name: "Preview" }).click();
   const preview = page.getByRole("dialog", { name: "invoice-42-report.md preview" });
   await expect(preview).toBeVisible();
-  const previewFrame = page.frameLocator('iframe[title="invoice-42-report.md preview"]');
-  await expect(previewFrame.locator("body")).toContainText("Invoice 42 exception report");
-  await expect(previewFrame.locator("body")).toContainText("invoice-42.csv, row 42");
+  const previewDocument = preview.getByRole("document", { name: "invoice-42-report.md document" });
+  await expect(previewDocument.getByRole("heading", { level: 1, name: "Invoice 42 exception report" })).toBeVisible();
+  await expect(previewDocument).toContainText("invoice-42.csv, row 42");
+  await expect(preview.locator("iframe")).toHaveCount(0);
   await page.mouse.move(700, 500);
   await page.screenshot({ path: `${artifactRoot}/mission-completion-output-preview.png`, fullPage: true });
   await preview.getByRole("button", { name: "Close file preview" }).click();
@@ -360,6 +371,7 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
   await details.getByRole("button", { name: "Verify this output" }).click();
   await expect(details.getByText("Verified by Ada.")).toBeVisible();
   expect(fixture.verificationCount()).toBe(1);
+  await details.getByRole("button", { name: "Close file details" }).click();
 
   await page.getByTitle("Needs you").click();
   await expect(page.getByText("You are all caught up.")).toBeVisible();
@@ -386,6 +398,7 @@ test("mission_progress_and_crew_stay_compact_on_mobile", async ({ page }) => {
   await expect(page.locator(".conversation-message.is-progress")).toContainText("Work started");
   await expect(page.getByRole("button", { name: "Review output" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-mobile.png`, fullPage: true });
   await page.getByRole("button", { name: "Open Mission crew" }).click();
   await expect(page.getByRole("complementary", { name: "Mission crew" })).toHaveClass(/is-open/);
   await expect(page.getByRole("button", { name: "Mention Fin" })).toBeVisible();
@@ -393,5 +406,42 @@ test("mission_progress_and_crew_stay_compact_on_mobile", async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expectNoPrivateTerms(page);
   await expectNoSeriousAccessibilityViolations(page);
-  await page.screenshot({ path: `${artifactRoot}/mission-completion-mobile.png`, fullPage: true });
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-mobile-crew.png`, fullPage: true });
+  await page.getByRole("button", { name: "Close Mission crew" }).first().click();
+  await page.getByRole("navigation", { name: "Mission views" }).getByRole("button", { name: "Files" }).click();
+  await page.getByRole("tab", { name: /Outputs/ }).click();
+  await page.getByRole("button", { name: "Open invoice-42-report.md details" }).click();
+  const details = page.getByRole("dialog", { name: "File details" });
+  await details.getByRole("button", { name: "Preview" }).click();
+  const preview = page.getByRole("dialog", { name: "invoice-42-report.md preview" });
+  await expect(preview.getByRole("document", { name: "invoice-42-report.md document" })).toContainText("Invoice 42 exception report");
+  await expect(preview.locator("iframe")).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-output-preview-mobile.png`, fullPage: true });
+});
+
+test("unsafe_markup_evidence_is_readable_without_loading_external_content", async ({ page }) => {
+  await installMissionFixture(page);
+  let beaconRequested = false;
+  page.on("request", (request) => {
+    if (request.url().startsWith("https://external.invalid")) beaconRequested = true;
+  });
+
+  await page.goto(`/missions/${missionId}/conversation`);
+  const composer = page.getByRole("textbox", { name: "Message the Mission" });
+  await composer.fill("@");
+  await page.getByRole("option", { name: /Fin/ }).click();
+  await composer.fill("@Fin inspect the evidence safely");
+  await page.getByRole("button", { name: "Assign work", exact: true }).click();
+  await page.getByRole("navigation", { name: "Mission views" }).getByRole("button", { name: "Files" }).click();
+  await page.getByRole("tab", { name: /Evidence/ }).click();
+  await page.getByRole("button", { name: "Open Invoice reconciliation checks.svg details" }).click();
+  await page.getByRole("dialog", { name: "File details" }).getByRole("button", { name: "Preview" }).click();
+
+  const preview = page.getByRole("dialog", { name: "Invoice reconciliation checks.svg preview" });
+  const source = preview.getByRole("document", { name: "Invoice reconciliation checks.svg source" });
+  await expect(source).toContainText("external.invalid/evidence-beacon.png");
+  await expect(preview.locator("iframe, img, object, embed")).toHaveCount(0);
+  await page.waitForTimeout(200);
+  expect(beaconRequested).toBe(false);
 });

@@ -210,7 +210,6 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
         <div><h1>{heading}</h1></div>
         <div className="workplace-header-actions">
           {bootstrapEnabled ? <button className="workplace-new-mission" type="button" onClick={openNewMission}><Plus size={16} aria-hidden="true" /> New Mission</button> : null}
-          <button type="button" disabled aria-label="Search Missions (coming soon)" title="Mission search is coming soon">Search</button>
         </div>
       </header>}
 

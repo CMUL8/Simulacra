@@ -45,8 +45,8 @@
 .work-state.is-error, .work-notice.is-error { border: 1px solid var(--mission-color-danger); border-radius: var(--mission-radius-sm); }
 .work-notice { background: var(--mission-color-surface); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-sm); }
 .work-load-more { border: 1px solid var(--mission-color-border); display: block; margin: var(--mission-space-4) auto; }
-.work-detail-scrim { background: var(--mission-color-overlay); border: 0; cursor: pointer; inset: 0; padding: 0; position: fixed; width: 100%; z-index: 19; }
-.work-detail { background: var(--mission-color-surface); border-inline-start: 1px solid var(--mission-color-border); box-shadow: var(--mission-shadow-drawer); display: grid; grid-template-rows: auto auto 1fr auto; inset: 0 0 0 auto; max-width: 100%; overflow-y: auto; padding: var(--mission-space-4); position: fixed; width: min(var(--mission-drawer-width), 100%); z-index: 20; }
+.work-detail-scrim { background: var(--mission-color-overlay); border: 0; cursor: pointer; inset: 0; padding: 0; position: fixed; width: 100%; z-index: 50; }
+.work-detail { background: var(--mission-color-surface); border-inline-start: 1px solid var(--mission-color-border); box-shadow: var(--mission-shadow-drawer); display: grid; grid-template-rows: auto auto 1fr auto; inset: 0 0 0 auto; max-width: 100%; overflow-y: auto; padding: var(--mission-space-4); position: fixed; width: min(var(--mission-drawer-width), 100%); z-index: 51; }
 .work-detail header { align-items: start; display: flex; gap: var(--mission-space-3); justify-content: space-between; }
 .work-detail h3 { margin: 0; }
 .work-detail > p { color: var(--mission-color-muted); line-height: 1.55; }

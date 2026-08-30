@@ -162,7 +162,13 @@
 .crew-member small,
 .crew-empty,
 .crew-state { color: var(--mission-color-muted); font-size: 0.75rem; line-height: 1.4; }
-.crew-member small { line-height: 1.3; }
+.crew-member small {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  line-height: 1.3;
+  white-space: normal;
+}
 .crew-avatar { align-items: center; background: var(--mission-color-surface); border: 1px solid var(--mission-color-border); border-radius: 0.5rem; display: inline-flex; font-size: 0.625rem; height: 1.5rem; justify-content: center; width: 1.5rem; }
 .crew-avatar.is-agent { background: var(--mission-color-accent); border-color: var(--mission-color-accent); color: var(--mission-color-accent-ink); }
 .crew-member button { border-color: transparent; color: var(--mission-color-accent); min-height: 2rem !important; min-width: 2rem !important; padding: 0; }
