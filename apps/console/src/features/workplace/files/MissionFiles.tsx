@@ -286,7 +286,9 @@ export function MissionFiles({ missionId, previewEnabled = true, onOpenMessage, 
     </div>}
     {downloadError ? <p className="files-download-error" role="alert">{downloadError}</p> : null}
 
-    {selected && !preview ? <aside className="file-detail" role="dialog" aria-modal="true" aria-label="File details" onKeyDown={(event) => trapDialogFocus(event, closeDetails)}>
+    {selected && !preview ? <>
+      <button className="file-detail-scrim" type="button" aria-label="Close file details backdrop" onClick={closeDetails} />
+      <aside className="file-detail" role="dialog" aria-modal="true" aria-label="File details" onKeyDown={(event) => trapDialogFocus(event, closeDetails)}>
       <header><div><p className="workplace-eyebrow">{publicState(selected.item)}</p><h3>{selected.item.name}</h3></div><button ref={detailClose} type="button" aria-label="Close file details" onClick={closeDetails}>Close</button></header>
       <dl><div><dt>Version</dt><dd>{selected.item.version}</dd></div><div><dt>Type</dt><dd>{selected.item.media_type}</dd></div><div><dt>Size</dt><dd>{humanSize(selected.item.size)}</dd></div>{selected.item.producer ? <div><dt>Produced by</dt><dd>{displayName(selected.item.producer)}</dd></div> : null}</dl>
       {selected.item.kind === "output" ? <>
@@ -303,7 +305,11 @@ export function MissionFiles({ missionId, previewEnabled = true, onOpenMessage, 
       </> : null}
       {selected.item.introduced_by_message_id && onOpenMessage ? <button className="file-original-message" type="button" onClick={() => onOpenMessage(selected.item.introduced_by_message_id!)}>Open original message</button> : null}
       <div className="file-detail-actions">{previewEnabled && selected.item.previewable ? <button type="button" onClick={() => openPreview(selected.item)}>Preview</button> : null}{selected.item.downloadable ? <button type="button" onClick={() => void download(selected.item)}>Download</button> : null}</div>
-    </aside> : null}
-    {preview && previewEnabled ? <FilePreview missionId={missionId} file={preview} dedicatedPreviewEnabled={previewEnabled} restoreFocusTo={previewRestoreFocus} onClose={closePreview} onAccessLost={handleAccessLost} /> : null}
+      </aside>
+    </> : null}
+    {preview && previewEnabled ? <>
+      <button className="file-detail-scrim is-preview" type="button" aria-label="Close file preview backdrop" onClick={closePreview} />
+      <FilePreview missionId={missionId} file={preview} dedicatedPreviewEnabled={previewEnabled} restoreFocusTo={previewRestoreFocus} onClose={closePreview} onAccessLost={handleAccessLost} />
+    </> : null}
   </section>;
 }

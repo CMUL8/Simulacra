@@ -194,11 +194,11 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
 
   return <div className="workplace-shell">
     <aside className="workplace-rail" aria-label="Global navigation">
-      <strong className="workplace-brand" aria-label="Missions"><span aria-hidden="true">M</span></strong>
+      <strong className="workplace-brand" role="img" aria-label="Missions"><span aria-hidden="true">M</span></strong>
       {navigation.map(({ Icon, ...item }) => <button
         key={item.id}
         ref={item.id === "settings" ? settingsButton : undefined}
-        className={`workplace-nav-target${destination === item.id ? " is-current" : ""}`}
+        className={`workplace-nav-target${destination === item.id ? " is-current" : ""}${item.id === "settings" ? " is-utility" : ""}`}
         type="button"
         aria-current={destination === item.id ? "page" : undefined}
         title={item.label}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, AtSign, ChevronDown, Files, ListChecks, MessageSquare, UsersRound, X } from "lucide-react";
 
 import {
   ApiError,
@@ -209,6 +210,10 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
     else setConversationLoading(false);
   }, [activeView, loadConversation, loadCrew]);
 
+  useEffect(() => {
+    setCrewOpen(false);
+  }, [activeView, missionId]);
+
   const agents = useMemo<ConversationAgent[]>(() => (overview?.agents || []).map((agent) => ({
     id: agent.id,
     name: agent.name || "Mission agent",
@@ -226,6 +231,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
   const requestMention = (choice: MentionChoice) => {
     mentionKey.current += 1;
     setMentionRequest({ key: mentionKey.current, choice });
+    setCrewOpen(false);
   };
 
   const loadOlder = async (retryBefore?: string | null) => {
@@ -303,7 +309,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
 
   return <section className="mission-conversation-workspace" aria-label="Selected Mission">
     <header className="mission-room-header">
-      <button type="button" className="mission-back" onClick={onBack}>Back to Missions</button>
+      <button type="button" className="mission-back" aria-label="Back to Missions" onClick={onBack}><ArrowLeft size={16} aria-hidden="true" /><span>Missions</span></button>
       <div>
         <p className="workplace-eyebrow">Mission</p>
         <h2>{missionTitle(overview, room)}</h2>
@@ -311,19 +317,27 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
       </div>
     </header>
     <nav className="mission-tabs" aria-label="Mission views">
-      {(["conversation", "work", ...(filesEnabled ? ["files"] as const : [])] as const).map((view) => <button
-        key={view}
-        type="button"
-        aria-current={activeView === view ? "page" : undefined}
-        onClick={() => onView?.(view)}
-      >{view.slice(0, 1).toUpperCase() + view.slice(1)}</button>)}
+      {(["conversation", "work", ...(filesEnabled ? ["files"] as const : [])] as const).map((view) => {
+        const Icon = view === "conversation" ? MessageSquare : view === "work" ? ListChecks : Files;
+        return <button
+          key={view}
+          type="button"
+          aria-current={activeView === view ? "page" : undefined}
+          onClick={() => onView?.(view)}
+        ><Icon size={15} aria-hidden="true" />{view.slice(0, 1).toUpperCase() + view.slice(1)}</button>;
+      })}
     </nav>
     {accessLost ? <div className="mission-access-lost" role="alert">
       <strong>You no longer have access to this Mission.</strong>
       <span>Return to Missions to continue with work you can access.</span>
     </div> : <div className="mission-room-layout">
-      <aside className={`mission-crew-rail${crewOpen ? " is-open" : ""}`} aria-label="Mission crew">
-        <header><div><p className="workplace-eyebrow">Crew</p><h3>Humans and agents</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? "Hide" : "Show"}</button></header>
+      {crewOpen ? <button className="crew-sheet-scrim" type="button" aria-label="Close Mission crew" onClick={() => setCrewOpen(false)} /> : null}
+      <aside
+        className={`mission-crew-rail${crewOpen ? " is-open" : ""}`}
+        aria-label="Mission crew"
+        onKeyDown={(event) => { if (event.key === "Escape") setCrewOpen(false); }}
+      >
+        <header><div><p className="workplace-eyebrow">Crew</p><h3>Humans and agents</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-label={crewOpen ? "Close Mission crew" : "Open Mission crew"} aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? <X size={17} aria-hidden="true" /> : <><UsersRound size={16} aria-hidden="true" /><span>Crew</span><ChevronDown size={15} aria-hidden="true" /></>}</button></header>
         {crewLoading ? <p className="crew-state" role="status">Loading Mission crew…</p> : null}
         {crewError ? <div className="crew-state" role="alert"><span>Crew is unavailable. This Mission still works.</span><button type="button" onClick={() => void loadCrew()}>Retry</button></div> : null}
         {!crewLoading && !crewError ? <>
@@ -333,7 +347,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
             {agents.length ? agents.map((agent) => <div className="crew-member" key={agent.id}>
               <span className="crew-avatar is-agent" aria-hidden="true">{agent.name.slice(0, 1).toUpperCase()}</span>
               <span><strong>{agent.name}</strong><small>{agent.role}</small></span>
-              <button type="button" aria-label={`Mention ${agent.name}`} onClick={() => requestMention({ id: agent.id, name: agent.name, detail: agent.role, kind: "agent" })}>@</button>
+              <button type="button" aria-label={`Mention ${agent.name}`} onClick={() => requestMention({ id: agent.id, name: agent.name, detail: agent.role, kind: "agent" })}><AtSign size={15} aria-hidden="true" /></button>
             </div>) : <p className="crew-empty">No agents added yet.</p>}
           </section>
           <section aria-label="Humans">
@@ -341,7 +355,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
             {humans.length ? humans.map((human) => <div className="crew-member" key={human.id}>
               <span className="crew-avatar" aria-hidden="true">{human.display_name.slice(0, 1).toUpperCase()}</span>
               <span><strong>{human.display_name}{human.id === currentHumanId ? " (you)" : ""}</strong><small>{human.role}</small></span>
-              <button type="button" aria-label={`Mention ${human.display_name}`} onClick={() => requestMention({ id: human.id, name: human.display_name, detail: `Human · ${human.role}`, kind: "human" })}>@</button>
+              <button type="button" aria-label={`Mention ${human.display_name}`} onClick={() => requestMention({ id: human.id, name: human.display_name, detail: `Human · ${human.role}`, kind: "human" })}><AtSign size={15} aria-hidden="true" /></button>
             </div>) : <p className="crew-empty">No humans are visible yet.</p>}
           </section>
         </> : null}

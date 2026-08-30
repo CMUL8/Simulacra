@@ -165,8 +165,7 @@ export function ConversationComposer({
         ref={inputRef}
         aria-label="Message the Mission"
         aria-autocomplete="list"
-        aria-controls="mission-mention-picker"
-        aria-expanded={pickerOpen && query.active}
+        aria-controls={pickerOpen && query.active ? "mission-mention-picker" : undefined}
         placeholder="Share an update, ask the crew, or use @ to assign work…"
         value={body}
         disabled={Boolean(attempt)}

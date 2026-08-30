@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -278,13 +279,23 @@ async function expectNoPrivateTerms(page: Page) {
   }
 }
 
+async function expectNoSeriousAccessibilityViolations(page: Page) {
+  const scan = await new AxeBuilder({ page }).analyze();
+  expect(scan.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([]);
+}
+
 test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", async ({ page }) => {
   test.setTimeout(60_000);
   await mkdir(artifactRoot, { recursive: true });
   const fixture = await installMissionFixture(page);
 
+  await page.goto("/missions?state=active");
+  await expect(page.getByRole("button", { name: /Reconcile invoice 42/ })).toBeVisible();
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-home.png`, fullPage: true });
+
   await page.goto(`/missions/${missionId}/conversation`);
   await expect(page.getByRole("heading", { name: "Reconcile invoice 42" })).toBeVisible();
+  await expectNoSeriousAccessibilityViolations(page);
   const composer = page.getByRole("textbox", { name: "Message the Mission" });
   await composer.fill("@");
   await page.getByRole("option", { name: /Fin/ }).click();
@@ -309,6 +320,7 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
       "Fin returned a report with evidence for human verification.",
     ),
   ).toBeVisible();
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-work-detail.png`, fullPage: true });
 
   await page.getByTitle("Needs you").click();
   await expect(page.getByRole("button", { name: /Output ready to verify/ })).toBeVisible();
@@ -318,6 +330,7 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
   await page.screenshot({ path: `${artifactRoot}/mission-completion-needs-you.png`, fullPage: true });
   await page.getByRole("button", { name: /Output ready to verify/ }).click();
   await expect(page).toHaveURL(new RegExp(`/missions/${missionId}/files\\?output=${outputFileId}&action=verify_output$`));
+  await page.getByRole("dialog", { name: "File details" }).getByRole("button", { name: "Close file details" }).click();
 
   const missionViews = page.getByRole("navigation", { name: "Mission views" });
   await missionViews.getByRole("button", { name: "Work" }).click();
@@ -373,10 +386,12 @@ test("mission_progress_and_crew_stay_compact_on_mobile", async ({ page }) => {
   await expect(page.locator(".conversation-message.is-progress")).toContainText("Work started");
   await expect(page.getByRole("button", { name: "Review output" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.getByRole("button", { name: "Show" }).click();
+  await page.getByRole("button", { name: "Open Mission crew" }).click();
   await expect(page.getByRole("complementary", { name: "Mission crew" })).toHaveClass(/is-open/);
   await expect(page.getByRole("button", { name: "Mention Fin" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close Mission crew" }).first()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expectNoPrivateTerms(page);
+  await expectNoSeriousAccessibilityViolations(page);
   await page.screenshot({ path: `${artifactRoot}/mission-completion-mobile.png`, fullPage: true });
 });

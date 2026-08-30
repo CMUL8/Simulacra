@@ -103,6 +103,10 @@ test("work_and_file_drawers_escape_trap_restore_focus_and_mobile_back_closes_pre
   fireEvent.keyDown(details, { key: "Escape" });
   await waitFor(() => expect(detailsOpener).toHaveFocus());
 
+  fireEvent.click(detailsOpener);
+  fireEvent.click(await screen.findByRole("button", { name: "Close file details backdrop" }));
+  await waitFor(() => expect(detailsOpener).toHaveFocus());
+
   fireEvent.click(screen.getByRole("button", { name: "Preview" }));
   expect(window.location.search).toContain("preview=source_readme");
   expect(await screen.findByRole("dialog", { name: "Read me.txt preview" })).toBeInTheDocument();

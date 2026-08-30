@@ -140,6 +140,10 @@ test("work_drawer_escape_traps_focus_and_restores_the_opener", async () => {
   expect(within(dialog).getByRole("button", { name: "Approve work" })).toHaveFocus();
   fireEvent.keyDown(dialog, { key: "Escape" });
   await waitFor(() => expect(opener).toHaveFocus());
+  fireEvent.click(opener);
+  const backdrop = await screen.findByRole("button", { name: "Close Work details backdrop" });
+  fireEvent.click(backdrop);
+  await waitFor(() => expect(opener).toHaveFocus());
 });
 
 test.each([

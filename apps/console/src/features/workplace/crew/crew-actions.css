@@ -5,8 +5,8 @@
 .mission-conversation-workspace .crew-quick-actions button:first-child { background: var(--mission-color-accent); border-color: var(--mission-color-accent); color: var(--mission-color-accent-ink); }
 .mission-conversation-workspace .crew-quick-actions button:hover { box-shadow: inset 0 0 0 1px var(--mission-color-border-strong); }
 
-.crew-dialog-scrim { align-items: center; background: rgb(32 35 30 / 32%); display: flex; inset: 0; justify-content: center; padding: var(--mission-space-4); position: fixed; z-index: 50; }
-.crew-dialog { background: var(--mission-color-surface); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-md); box-shadow: var(--mission-shadow-raised); color: var(--mission-color-fg); display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; max-height: min(48rem, calc(100dvh - 2rem)); max-width: 42rem; overflow: hidden; width: 100%; }
+.crew-dialog-scrim { align-items: center; background: var(--mission-color-overlay); display: flex; inset: 0; justify-content: center; padding: var(--mission-space-4); position: fixed; z-index: 50; }
+.crew-dialog { background: var(--mission-color-surface); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-md); box-shadow: var(--mission-shadow-dialog); color: var(--mission-color-fg); display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; max-height: min(48rem, calc(100dvh - 2rem)); max-width: 42rem; overflow: hidden; width: 100%; }
 .crew-dialog > header { align-items: flex-start; border-block-end: 1px solid var(--mission-color-border); display: flex; gap: var(--mission-space-4); justify-content: space-between; padding: var(--mission-space-6); }
 .crew-dialog > header h2 { font-size: 1.5rem; letter-spacing: -0.025em; margin: 0; }
 .crew-dialog > header p:last-child { color: var(--mission-color-muted); line-height: 1.5; margin: var(--mission-space-2) 0 0; }
@@ -19,7 +19,8 @@
 .crew-dialog-fields input::placeholder, .crew-dialog-fields textarea::placeholder { color: var(--mission-color-muted); font-style: italic; opacity: 0.62; }
 .crew-job-starters { border: 0; display: flex; flex-wrap: wrap; gap: var(--mission-space-2); margin: 0; padding: 0; }
 .crew-job-starters legend { color: var(--mission-color-muted); font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em; margin-block-end: var(--mission-space-2); text-transform: uppercase; width: 100%; }
-.crew-job-starters button { background: var(--mission-color-surface-raised); }
+.crew-job-starters button { background: var(--mission-color-surface-subtle); }
+.crew-job-starters button:hover { background: var(--mission-color-surface-hover); border-color: var(--mission-color-border-strong); }
 .crew-dialog > footer { align-items: center; border-block-start: 1px solid var(--mission-color-border); display: flex; gap: var(--mission-space-2); justify-content: flex-end; padding: var(--mission-space-4) var(--mission-space-6); }
 .mission-conversation-workspace .mission-crew-rail .crew-dialog > footer .is-primary { background: var(--mission-color-accent); border-color: var(--mission-color-accent); color: var(--mission-color-accent-ink); font-weight: 700; }
 .crew-dialog-error { color: var(--mission-color-danger); margin: 0; padding: 0 var(--mission-space-6) var(--mission-space-3); }

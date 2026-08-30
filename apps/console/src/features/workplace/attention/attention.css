@@ -20,11 +20,14 @@
   min-height: 4.25rem;
   min-width: 0;
   padding: var(--mission-space-3) var(--mission-space-4);
+  position: relative;
   text-align: start;
+  transition: background-color var(--mission-motion-fast) ease;
   width: 100%;
 }
 
-.attention-row:hover { background: var(--mission-color-surface); }
+.attention-row:not(.is-read)::before { background: var(--mission-color-warning); border-radius: 999px; content: ""; height: 0.45rem; inset-inline-start: 0.25rem; position: absolute; top: 1.15rem; width: 0.45rem; }
+.attention-row:hover { background: var(--mission-color-surface-hover); }
 .attention-row.is-read { color: var(--mission-color-muted); }
 .attention-row-copy { display: grid; flex: 1 1 auto; gap: var(--mission-space-1); min-width: 0; }
 .attention-row-copy strong,

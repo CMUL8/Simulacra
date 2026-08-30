@@ -531,22 +531,32 @@ test("mobile Crew disclosure is bounded and does not displace the Conversation",
   if (!toggle) throw new Error("Crew disclosure control is missing");
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(toggle);
-  expect(toggle).toHaveTextContent("Hide");
+  expect(toggle).toHaveAttribute("aria-label", "Close Mission crew");
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   expect(crew).toHaveClass("is-open");
+  const scrim = document.querySelector<HTMLButtonElement>(".crew-sheet-scrim");
+  expect(scrim).not.toBeNull();
+  if (!scrim) throw new Error("Crew sheet backdrop is missing");
+  expect(scrim).toHaveClass("crew-sheet-scrim");
+  expect(scrim).toHaveAttribute("aria-label", "Close Mission crew");
   expect(screen.getByRole("region", { name: "Mission conversation" })).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Message the Mission" })).toBeInTheDocument();
   expect(legacyStyles).toMatch(/@media\s*\(max-width:\s*620px\)[^{]*\{[\s\S]*?\.mission-crew-rail\s*\{[^}]*max-height:\s*112px[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*hidden[^}]*\}[\s\S]*?\.mission-crew-rail\s*>\s*header[^}]*\{\s*display:\s*none/s);
   expect(conversationStyles).toMatch(/\.mission-conversation-workspace\s+\.mission-crew-rail\s*\{[^}]*max-height:\s*none[^}]*overflow-x:\s*hidden[^}]*width:\s*auto/s);
   expect(conversationStyles).toMatch(/\.mission-conversation-workspace\s+\.mission-crew-rail\s*>\s*header\s*\{[^}]*display:\s*flex/s);
   expect(conversationStyles).toMatch(/\.mission-conversation-workspace\s+\.crew-mobile-toggle\s*\{[^}]*display:\s*none[^}]*height:\s*auto[^}]*width:\s*auto/s);
-  expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-room-layout\s*\{[^}]*grid-template-rows:\s*minmax\(44px,\s*auto\)\s+minmax\(0,\s*1fr\)/s);
-  expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-crew-rail\s*\{[^}]*min-block-size:\s*44px/s);
+  expect(conversationStyles).toMatch(/\.crew-sheet-scrim\s*\{[^}]*display:\s*none/s);
+  expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.crew-sheet-scrim\s*\{[^}]*display:\s*block[^}]*position:\s*fixed/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-conversation-workspace\s+\.crew-mobile-toggle\s*\{[^}]*block-size:\s*44px[^}]*height:\s*44px[^}]*min-block-size:\s*44px[^}]*min-height:\s*44px/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-conversation-workspace\s+\.crew-mobile-toggle\s*\{[^}]*background:\s*var\(--mission-color-surface\)[^}]*color:\s*var\(--mission-color-fg\)/s);
-  expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*30rem\)[\s\S]*\.mission-crew-rail\s*>\s*header\s*\{[^}]*min-height:\s*44px/s);
-  expect(conversationStyles).toMatch(/\.mission-crew-rail\.is-open\s*\{[^}]*position:\s*absolute[^}]*max-block-size:[^;}]+[^}]*overflow-y:\s*auto/s);
+  expect(conversationStyles).toMatch(/\.mission-crew-rail\.is-open\s*\{[^}]*position:\s*fixed[^}]*max-block-size:[^;}]+[^}]*overflow-y:\s*auto/s);
   expect(conversationStyles).toMatch(/\.mission-conversation-surface\s*\{[^}]*min-height:\s*0/s);
+
+  fireEvent.click(scrim);
+  expect(crew).not.toHaveClass("is-open");
+  fireEvent.click(toggle);
+  fireEvent.keyDown(crew, { key: "Escape" });
+  expect(crew).not.toHaveClass("is-open");
 });
 
 test("acknowledgement retries add and remove with exact payloads while save stays private", async () => {
@@ -832,6 +842,7 @@ test("workplace layout keeps one scroll owner and a compact mobile navigation wi
   expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*13\.5rem\s+minmax\(0,\s*1fr\)/s);
   expect(conversationStyles).toMatch(/\.crew-member\s*\{[^}]*grid-template-columns:\s*1\.75rem\s+minmax\(0,\s*1fr\)\s+2rem[^}]*padding-block:\s*0\.375rem/s);
   expect(conversationStyles).toMatch(/\.conversation-message\.is-progress\s*\{[^}]*grid-template-columns:\s*1\.75rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.conversation-message\.is-progress\s*\{[^}]*border-inline-start:\s*2px\s+solid\s+var\(--mission-color-accent\)[^}]*max-width:\s*42rem/s);
   expect(conversationStyles).toMatch(/\.conversation-composer\s*\{[^}]*max-width:\s*54rem/s);
   expect(conversationStyles).toMatch(/\.conversation-timeline\s*\{[^}]*overflow-y:\s*auto/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*1fr/s);

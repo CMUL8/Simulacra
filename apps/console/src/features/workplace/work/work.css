@@ -5,16 +5,16 @@
 .work-ledger-header h2 { font-size: 1.25rem; margin: 0; }
 .work-ledger-header p:last-child { color: var(--mission-color-muted); line-height: 1.45; margin: var(--mission-space-1) 0 0; }
 .work-view-switch { background: var(--mission-color-surface); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-sm); display: flex; padding: 0.2rem; }
-.work-view-switch button, .work-summary button, .work-filters button, .work-primary-action, .work-load-more, .work-detail button, .work-state button, .work-notice button { background: transparent; border: 0; border-radius: var(--mission-radius-sm); color: var(--mission-color-muted); cursor: pointer; font: inherit; min-height: 2.5rem; padding: 0 var(--mission-space-3); }
-.work-view-switch button[aria-pressed="true"] { background: var(--mission-color-surface-raised); color: var(--mission-color-fg); }
+.work-view-switch button, .work-summary button, .work-filters button, .work-primary-action, .work-load-more, .work-detail button, .work-state button, .work-notice button { background: transparent; border: 0; border-radius: var(--mission-radius-sm); color: var(--mission-color-muted); cursor: pointer; font: inherit; min-height: var(--mission-control-compact); padding: 0 var(--mission-space-3); }
+.work-view-switch button[aria-pressed="true"] { background: var(--mission-color-accent-soft); color: var(--mission-color-accent); }
 .work-summary { border-block: 1px solid var(--mission-color-border); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: auto; max-width: 76rem; }
 .work-summary button { align-items: baseline; border-radius: 0; display: flex; gap: var(--mission-space-2); justify-content: center; min-width: 0; padding-block: var(--mission-space-2); }
 .work-summary strong { color: var(--mission-color-fg); font-size: 1rem; }
 .work-summary span { font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-filters { align-items: center; display: flex; flex-wrap: wrap; gap: var(--mission-space-2); margin: var(--mission-space-3) auto; max-width: 76rem; position: relative; }
 .work-filters > button:first-child { border: 1px solid var(--mission-color-border); color: var(--mission-color-fg); }
-.work-filter-chip { background: rgb(141 166 255 / 10%) !important; color: var(--mission-color-accent) !important; }
-.work-filter-panel { background: var(--mission-color-surface-raised); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-md); box-shadow: var(--mission-shadow-raised); display: flex; flex-wrap: wrap; gap: var(--mission-space-3); inset: calc(100% + var(--mission-space-1)) auto auto 0; padding: var(--mission-space-3); position: absolute; z-index: 5; }
+.work-filter-chip { background: var(--mission-color-accent-soft) !important; color: var(--mission-color-accent) !important; }
+.work-filter-panel { background: var(--mission-color-surface); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-md); box-shadow: var(--mission-shadow-raised); display: flex; flex-wrap: wrap; gap: var(--mission-space-3); inset: calc(100% + var(--mission-space-1)) auto auto 0; padding: var(--mission-space-3); position: absolute; z-index: 5; }
 .work-filter-panel label { color: var(--mission-color-muted); display: grid; font-size: 0.75rem; gap: var(--mission-space-1); }
 .work-filter-panel select { background: var(--mission-color-canvas); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-sm); color: var(--mission-color-fg); font: inherit; min-height: 2.5rem; padding-inline: var(--mission-space-2); }
 .work-list, .work-board { margin: auto; max-width: 76rem; }
@@ -23,7 +23,7 @@
 .work-group h3 span, .work-board-column h3 span { background: var(--mission-color-surface-raised); border-radius: 999px; padding: 0.1rem 0.45rem; }
 .work-row { align-items: center; background: var(--mission-color-surface); border-block-start: 1px solid var(--mission-color-border); display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; }
 .work-row:last-child { border-block-end: 1px solid var(--mission-color-border); }
-.work-row:hover, .work-row:focus-within { background: var(--mission-color-surface-raised); }
+.work-row:hover, .work-row:focus-within { background: var(--mission-color-surface-hover); }
 .work-row-main { align-items: center; background: transparent; border: 0; color: var(--mission-color-fg); cursor: pointer; display: grid; font: inherit; gap: var(--mission-space-3); grid-template-columns: 0.3rem minmax(12rem, 1fr) minmax(15rem, auto); min-height: 4rem; min-width: 0; padding: var(--mission-space-2) var(--mission-space-3); text-align: start; }
 .work-row-copy, .work-row-context { display: grid; min-width: 0; }
 .work-row-copy strong, .work-row-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -45,7 +45,8 @@
 .work-state.is-error, .work-notice.is-error { border: 1px solid var(--mission-color-danger); border-radius: var(--mission-radius-sm); }
 .work-notice { background: var(--mission-color-surface); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-sm); }
 .work-load-more { border: 1px solid var(--mission-color-border); display: block; margin: var(--mission-space-4) auto; }
-.work-detail { background: var(--mission-color-surface-raised); border-inline-start: 1px solid var(--mission-color-border); box-shadow: var(--mission-shadow-raised); display: grid; grid-template-rows: auto auto 1fr auto; inset: 0 0 0 auto; max-width: 100%; overflow-y: auto; padding: var(--mission-space-4); position: fixed; width: min(24rem, 100%); z-index: 20; }
+.work-detail-scrim { background: var(--mission-color-overlay); border: 0; cursor: pointer; inset: 0; padding: 0; position: fixed; width: 100%; z-index: 19; }
+.work-detail { background: var(--mission-color-surface); border-inline-start: 1px solid var(--mission-color-border); box-shadow: var(--mission-shadow-drawer); display: grid; grid-template-rows: auto auto 1fr auto; inset: 0 0 0 auto; max-width: 100%; overflow-y: auto; padding: var(--mission-space-4); position: fixed; width: min(var(--mission-drawer-width), 100%); z-index: 20; }
 .work-detail header { align-items: start; display: flex; gap: var(--mission-space-3); justify-content: space-between; }
 .work-detail h3 { margin: 0; }
 .work-detail > p { color: var(--mission-color-muted); line-height: 1.55; }
@@ -53,7 +54,7 @@
 .work-detail dl div { border-block-start: 1px solid var(--mission-color-border); display: grid; gap: var(--mission-space-1); padding-block: var(--mission-space-3); }
 .work-detail dt { color: var(--mission-color-muted); font-size: 0.75rem; }
 .work-detail dd { margin: 0; }
-.work-detail-action { background: var(--mission-color-accent) !important; color: var(--mission-color-accent-ink) !important; }
+.work-detail-action { background: var(--mission-color-accent) !important; color: var(--mission-color-accent-ink) !important; font-weight: 650 !important; }
 .work-action-panel { align-self: end; border-block-start: 1px solid var(--mission-color-border); display: grid; gap: var(--mission-space-3); padding-block-start: var(--mission-space-3); }
 .work-action-panel h4 { font-size: 0.875rem; margin: 0; }
 .work-action-panel label { color: var(--mission-color-muted); display: grid; font-size: 0.75rem; gap: var(--mission-space-1); }
@@ -67,6 +68,7 @@
 .work-action-feedback.is-success { color: var(--mission-color-success); }
 .work-action-feedback.is-error { color: var(--mission-color-danger); }
 .work-ledger button:focus-visible, .work-ledger select:focus-visible { outline: 3px solid var(--mission-color-focus); outline-offset: 2px; }
+.work-detail-scrim:focus-visible { outline: 3px solid var(--mission-color-focus); outline-offset: -3px; }
 
 @media (max-width: 64rem) { .work-row-main { grid-template-columns: 0.3rem minmax(0, 1fr); } .work-row-context { grid-column: 2; grid-template-columns: repeat(3, minmax(0, 1fr)); text-align: start; } }
 @media (max-width: 48rem) { .work-ledger { padding: var(--mission-space-3); } .work-ledger-header { align-items: start; } .work-summary { grid-template-columns: repeat(5, minmax(7.5rem, 1fr)); overflow-x: auto; } .work-summary button { justify-content: start; } .work-board { grid-template-columns: repeat(5, minmax(15rem, 1fr)); } .work-row { grid-template-columns: minmax(0, 1fr); } .work-primary-action { margin: 0 var(--mission-space-3) var(--mission-space-2); } }

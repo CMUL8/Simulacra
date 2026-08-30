@@ -500,14 +500,17 @@ export function WorkList({ missionId, focusItemId = null, focusAction = null, on
     {error && items.length ? <div className="work-notice is-error" role="alert">{error}<button type="button" onClick={() => void loadWork(nextCursor)}>Retry</button></div> : null}
     {nextCursor ? <button className="work-load-more" type="button" disabled={loadingMore} onClick={() => void loadWork(nextCursor)}>{loadingMore ? "Loading…" : "Load more Work"}</button> : null}
 
-    {selected ? <WorkDetail
-      selected={selected}
-      missionName={missionId ? "This Mission" : missionNames.get(selected.item.mission_id) || "Mission"}
-      focusAction={routedAction}
-      onSubmit={(action, input) => performWorkAction(selected.item, action, input)}
-      onReviewPlan={() => openActionSurface(selected.item, "review_plan")}
-      onReviewOutput={() => openActionSurface(selected.item, "verify_output")}
-      onClose={closeDetail}
-    /> : null}
+    {selected ? <>
+      <button className="work-detail-scrim" type="button" aria-label="Close Work details backdrop" onClick={closeDetail} />
+      <WorkDetail
+        selected={selected}
+        missionName={missionId ? "This Mission" : missionNames.get(selected.item.mission_id) || "Mission"}
+        focusAction={routedAction}
+        onSubmit={(action, input) => performWorkAction(selected.item, action, input)}
+        onReviewPlan={() => openActionSurface(selected.item, "review_plan")}
+        onReviewOutput={() => openActionSurface(selected.item, "verify_output")}
+        onClose={closeDetail}
+      />
+    </> : null}
   </section>;
 }

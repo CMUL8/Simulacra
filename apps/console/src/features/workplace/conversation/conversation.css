@@ -10,14 +10,14 @@
 }
 
 .mission-room-header {
-  align-items: flex-start;
+  align-items: center;
+  background: var(--mission-color-surface);
   border-block-end: 1px solid var(--mission-color-border);
   display: grid;
   gap: var(--mission-space-4);
   grid-template-columns: auto minmax(0, 1fr);
-  min-height: 4.25rem;
+  min-height: 4.5rem;
   padding: var(--mission-space-3) clamp(var(--mission-space-4), 2.5vw, 2rem);
-  background: var(--mission-color-surface);
 }
 
 .mission-room-header > div { min-width: 0; }
@@ -36,11 +36,12 @@
   color: var(--mission-color-fg);
   cursor: pointer;
   font: inherit;
-  min-height: 2.5rem;
-  min-width: 2.5rem;
+  min-height: var(--mission-control-standard);
+  min-width: var(--mission-control-standard);
 }
 
-.mission-back { color: var(--mission-color-muted); padding-inline: var(--mission-space-3); }
+.mission-back { align-items: center; border-color: transparent; color: var(--mission-color-muted); display: inline-flex; gap: var(--mission-space-2); padding-inline: var(--mission-space-2); }
+.mission-back:hover { background: var(--mission-color-surface-hover); color: var(--mission-color-fg); }
 
 .conversation-history-notice {
   align-items: center;
@@ -79,8 +80,8 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.mission-tabs > button:hover { background: var(--mission-color-surface-raised); color: var(--mission-color-fg); }
-.mission-tabs > button[aria-current="page"] { background: var(--mission-color-surface-raised); border-block-end: 2px solid var(--mission-color-accent); color: var(--mission-color-fg); font-weight: 650; }
+.mission-tabs > button:hover { background: var(--mission-color-surface-hover); color: var(--mission-color-fg); }
+.mission-tabs > button[aria-current="page"] { background: var(--mission-color-surface-subtle); border-block-end: 2px solid var(--mission-color-accent); color: var(--mission-color-fg); font-weight: 650; }
 .mission-tabs small { color: var(--mission-color-muted); font-size: 0.6875rem; }
 
 .mission-room-layout {
@@ -91,6 +92,8 @@
   overflow: hidden;
   position: relative;
 }
+
+.crew-sheet-scrim { display: none; }
 
 .mission-access-lost {
   align-self: start;
@@ -110,7 +113,7 @@
 }
 
 .mission-conversation-workspace .mission-crew-rail {
-  background: var(--mission-color-surface-raised);
+  background: var(--mission-color-surface-subtle);
   border-inline-end: 1px solid var(--mission-color-border);
   box-sizing: border-box;
   color: var(--mission-color-fg);
@@ -143,7 +146,7 @@
   transition: background-color 120ms ease;
 }
 
-.crew-member:hover, .crew-member:focus-within { background: var(--mission-color-surface); }
+.crew-member:hover, .crew-member:focus-within { background: var(--mission-color-surface-hover); }
 .crew-member + .crew-member { border-block-start: 1px solid var(--mission-color-border); }
 
 .crew-member > span:nth-child(2) { display: grid; min-width: 0; }
@@ -231,14 +234,16 @@
 .conversation-message.kind-human_decision_required { border-inline-start-color: var(--mission-color-warning); }
 
 .conversation-message.is-progress {
-  background: var(--mission-color-surface-raised);
-  border: 1px solid var(--mission-color-border);
-  border-radius: var(--mission-radius-sm);
+  background: var(--mission-color-surface-subtle);
+  border: 0;
+  border-inline-start: 2px solid var(--mission-color-accent);
+  border-radius: 0 var(--mission-radius-sm) var(--mission-radius-sm) 0;
   grid-template-columns: 1.75rem minmax(0, 1fr);
+  max-width: 42rem;
   margin-block: var(--mission-space-1);
-  padding: 0.5rem 0.625rem;
+  padding: 0.375rem 0.625rem;
 }
-.conversation-message.is-progress .conversation-avatar { background: var(--mission-color-surface); color: var(--mission-color-accent); height: 1.75rem; width: 1.75rem; }
+.conversation-message.is-progress .conversation-avatar { background: var(--mission-color-accent-soft); color: var(--mission-color-accent); height: 1.75rem; width: 1.75rem; }
 .conversation-message.is-progress .conversation-message-body p { color: var(--mission-color-muted); font-size: 0.8125rem; line-height: 1.45; }
 .conversation-message.is-progress .conversation-kind { border: 0; color: var(--mission-color-accent); padding: 0; }
 .conversation-message.is-progress .conversation-work-link { display: none; }
@@ -306,7 +311,7 @@
 .thread-drawer {
   background: var(--mission-color-surface);
   border-inline-start: 1px solid var(--mission-color-border);
-  box-shadow: var(--mission-shadow-raised);
+  box-shadow: var(--mission-shadow-drawer);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   inset: 0 0 0 auto;
@@ -336,7 +341,7 @@
   padding-inline: var(--mission-space-3);
 }
 .thread-drawer-content { min-height: 0; overflow-y: auto; padding: var(--mission-space-4); }
-.thread-root { background: var(--mission-color-surface-raised); border-inline-start: 3px solid var(--mission-color-accent); border-radius: var(--mission-radius-sm); padding: var(--mission-space-3); }
+.thread-root { background: var(--mission-color-accent-soft); border-inline-start: 3px solid var(--mission-color-accent); border-radius: var(--mission-radius-sm); padding: var(--mission-space-3); }
 .thread-root p,
 .thread-reply p { line-height: 1.55; margin: var(--mission-space-1) 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .thread-load-older { display: block; margin: var(--mission-space-3) auto; }
@@ -356,7 +361,7 @@
   background: var(--mission-color-surface);
   border: 1px solid var(--mission-color-border);
   border-radius: var(--mission-radius-md) var(--mission-radius-md) 0 0;
-  box-shadow: 0 -0.5rem 2rem rgb(32 35 30 / 6%);
+  box-shadow: var(--mission-shadow-composer);
   display: grid;
   gap: var(--mission-space-2);
   margin: 0 auto;
@@ -367,8 +372,8 @@
 }
 
 .composer-mode { display: flex; gap: var(--mission-space-1); }
-.composer-mode button { border-color: transparent; color: var(--mission-color-muted); min-height: 2.5rem; padding-inline: var(--mission-space-3); }
-.composer-mode button[aria-pressed="true"] { background: var(--mission-color-surface-raised); color: var(--mission-color-fg); }
+.composer-mode button { border-color: transparent; color: var(--mission-color-muted); min-height: var(--mission-control-compact); padding-inline: var(--mission-space-3); }
+.composer-mode button[aria-pressed="true"] { background: var(--mission-color-accent-soft); color: var(--mission-color-accent); }
 .composer-input-wrap { min-width: 0; position: relative; }
 .composer-input-wrap textarea { background: var(--mission-color-canvas); border: 1px solid var(--mission-color-border-strong); border-radius: var(--mission-radius-sm); color: var(--mission-color-fg); font: inherit; line-height: 1.5; max-height: 10rem; min-height: 4.25rem; padding: var(--mission-space-3); resize: vertical; width: 100%; }
 .composer-input-wrap textarea::placeholder { color: var(--mission-color-muted); opacity: 0.72; }
@@ -445,30 +450,36 @@
 
 @media (max-width: 48rem) {
   .mission-conversation-workspace { grid-template-rows: auto auto minmax(0, 1fr); }
-  .mission-room-header { grid-template-columns: 1fr; }
+  .mission-room-header { gap: var(--mission-space-2); grid-template-columns: auto minmax(0, 1fr); min-height: 4rem; padding: var(--mission-space-2) var(--mission-space-3); }
   .mission-back { justify-self: start; }
   .mission-tabs { padding-inline: 0; }
   .mission-room-layout { grid-template-columns: 1fr; grid-template-rows: minmax(44px, auto) minmax(0, 1fr); position: relative; }
+  .crew-sheet-scrim { background: var(--mission-color-overlay); border: 0; cursor: pointer; display: block; inset: 0 0 4.25rem; padding: 0; position: fixed; width: 100%; z-index: 44; }
   .mission-conversation-workspace .mission-crew-rail { border-block-end: 1px solid var(--mission-color-border); border-inline-end: 0; display: flex; gap: var(--mission-space-4); min-block-size: 44px; overflow: hidden; padding: 0 var(--mission-space-3); }
   .mission-conversation-workspace .mission-crew-rail > header { display: flex; flex: 0 0 12rem; min-height: 44px; }
-  .mission-conversation-workspace .crew-mobile-toggle { background: var(--mission-color-surface); block-size: 44px; color: var(--mission-color-fg); display: inline-flex; height: 44px; min-block-size: 44px; min-height: 44px; padding-inline: var(--mission-space-2); }
+  .mission-conversation-workspace .crew-mobile-toggle { align-items: center; background: var(--mission-color-surface); block-size: 44px; color: var(--mission-color-fg); display: inline-flex; gap: var(--mission-space-1); height: 44px; justify-content: center; min-block-size: 44px; min-height: 44px; padding-inline: var(--mission-space-2); }
   .mission-conversation-workspace .mission-crew-rail .crew-mobile-toggle:hover { background: var(--mission-color-surface-raised); color: var(--mission-color-fg); }
   .mission-conversation-workspace .mission-crew-rail:not(.is-open) section { display: none; }
   .mission-conversation-workspace .mission-crew-rail.is-open {
-    position: absolute;
+    position: fixed;
     max-block-size: min(70dvh, 32rem);
     max-height: min(70dvh, 32rem);
     overflow-y: auto;
     background: var(--mission-color-surface);
-    box-shadow: var(--mission-shadow-raised);
+    border: 1px solid var(--mission-color-border);
+    border-block-end: 0;
+    border-radius: var(--mission-radius-md) var(--mission-radius-md) 0 0;
+    box-shadow: var(--mission-shadow-dialog);
     display: grid;
     grid-template-columns: 1fr;
-    inset: 0 0 auto;
+    inset: auto 0 4.25rem;
     max-inline-size: 100%;
     overflow-x: hidden;
+    padding: var(--mission-space-3) var(--mission-space-4) var(--mission-space-6);
     width: 100%;
-    z-index: 6;
+    z-index: 45;
   }
+  .mission-conversation-workspace .mission-crew-rail.is-open > header { flex-basis: auto; position: sticky; top: 0; z-index: 1; }
   .mission-conversation-workspace .mission-crew-rail section { flex: 1 1 12rem; margin-block-start: 0; min-width: 0; }
   .mission-conversation-workspace .mission-crew-rail.is-open section { margin-block-start: var(--mission-space-2); }
   .mission-conversation-surface { grid-row: 2; }
@@ -486,6 +497,9 @@
 }
 
 @media (max-width: 30rem) {
+  .mission-room-header { grid-template-columns: auto minmax(0, 1fr); }
+  .mission-room-header p:last-child { display: none; }
+  .mission-back span { display: none; }
   .mission-conversation-workspace .mission-crew-rail { display: grid; grid-template-columns: 1fr; }
   .mission-conversation-workspace .mission-crew-rail > header { display: flex; min-height: 44px; }
   .mission-tabs small { display: none; }
