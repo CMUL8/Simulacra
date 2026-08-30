@@ -2,7 +2,7 @@
   "format": "cmul8.oci-process-contract.v1",
   "image": {
     "entrypoint": ["/opt/cmul8/bin/cmul8-entrypoint"],
-    "processArgument": "exactly one of web, api, worker, preflight, migrations, smoke",
+    "processArgument": "exactly one of web, api, worker, preflight, doctor, migrations, smoke",
     "requiredLabels": [
       "org.opencontainers.image.revision",
       "org.opencontainers.image.source",
@@ -37,6 +37,12 @@
       "command": ["/opt/cmul8/bin/cmul8-preflight"],
       "checks": ["environment-contract", "postgres", "redis", "object-storage", "secret-provider"],
 	  "lifecycle": "compose one-shot dependency before migrations",
+      "restartPolicy": "Never"
+    },
+    "doctor": {
+      "command": ["/opt/cmul8/bin/cmul8-doctor", "--format", "human"],
+      "checks": ["environment", "single-tenant", "authentication", "postgres", "redis", "storage", "executor", "recovery"],
+      "lifecycle": "operator-run production approval check",
       "restartPolicy": "Never"
     },
     "migrations": {

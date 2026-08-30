@@ -60,12 +60,17 @@ def test_upgrade_assessment_rejects_tags_downgrades_and_same_bundle():
 def test_compose_runtime_is_small_durable_and_health_checked():
     document = yaml.safe_load(COMPOSE.read_text())
     services = document["services"]
-    assert set(services) == {"postgres", "redis", "migrate", "api", "worker"}
+    assert set(services) == {"postgres", "redis", "preflight", "migrate", "api", "worker"}
+    assert services["preflight"]["restart"] == "no"
+    assert services["preflight"]["command"] == ["preflight", "--format", "human"]
+    assert services["preflight"]["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert services["preflight"]["depends_on"]["redis"]["condition"] == "service_healthy"
+    assert services["migrate"]["depends_on"]["preflight"]["condition"] == "service_completed_successfully"
     assert services["api"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
     assert services["worker"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
     for service in ("postgres", "redis", "api", "worker"):
         assert "healthcheck" in services[service]
-    for service in ("migrate", "api", "worker"):
+    for service in ("preflight", "migrate", "api", "worker"):
         assert services[service]["read_only"] is True
         assert "ALL" in services[service]["cap_drop"]
         assert "no-new-privileges:true" in services[service]["security_opt"]

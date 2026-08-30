@@ -34,6 +34,8 @@ x-cmul8-environment: &cmul8-environment
   SIMULACRA_BOOTSTRAP_EMAIL: ${SIMULACRA_BOOTSTRAP_EMAIL:-admin@localhost}
   SIMULACRA_BOOTSTRAP_PASSWORD: ${SIMULACRA_BOOTSTRAP_PASSWORD:?set SIMULACRA_BOOTSTRAP_PASSWORD}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  CMUL8_BACKUP_REFERENCE: ${CMUL8_BACKUP_REFERENCE:-}
+  CMUL8_RESTORE_TEST_REFERENCE: ${CMUL8_RESTORE_TEST_REFERENCE:-}
 
 x-cmul8-service: &cmul8-service
   image: ${CMUL8_IMAGE:-cmul8:local}
@@ -83,15 +85,23 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  migrate:
+  preflight:
     <<: *cmul8-service
     restart: "no"
-    command: ["migrations"]
+    command: ["preflight", "--format", "human"]
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  migrate:
+    <<: *cmul8-service
+    restart: "no"
+    command: ["migrations"]
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
 
   api:
     <<: *cmul8-service

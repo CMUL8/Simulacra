@@ -12,6 +12,11 @@ policy, preflight, migration review, rollout health, the API/worker/queue/storag
 connector smoke suite, and recorded human approval for production. A failure
 creates a new candidate; no file is patched inside an existing archive.
 
+For a private single-tenant release, the recorded approval must include a
+`missions.private-readiness.v1` report whose `production_ready` value is true.
+That report confirms the startup boundary and references the tested backup and
+restore evidence without embedding either backup contents or credentials.
+
 The included `injected` signature envelope is an interface, not key management.
 Release engineering owns signer isolation, verifier distribution, trust roots,
 revocation, transparency/audit storage, and rotation.

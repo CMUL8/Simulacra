@@ -20,8 +20,11 @@ port binds to `127.0.0.1` by default.
    may omit it and build `cmul8:local` from the repository.
 3. Validate configuration with `docker compose config -q`.
 4. Start with `docker compose up -d --build`.
-5. Confirm PostgreSQL, Redis, API, and worker are healthy and migration exited zero.
-6. Run the full smoke suite before promotion.
+5. Confirm the one-shot preflight and migration services exited zero, then confirm
+   PostgreSQL, Redis, API, and worker are healthy.
+6. Record backup/restore-drill references and run `cmul8-doctor` before production
+   approval.
+7. Run the full smoke suite before promotion.
 
 The API and worker use a read-only root, drop Linux capabilities, set
 `no-new-privileges`, and write only to `/tmp`, `/app/data`, and `/app/runs`.
@@ -33,4 +36,5 @@ requires cluster-native installation.
 
 See [environment](environment.md), [installation hardening](installation-hardening.md),
 [upgrade and rollback](upgrade-rollback.md), [backup and restore](backup-restore.md),
-[air-gap readiness](air-gap-readiness.md), and [support bundles](support.md).
+[private deployment readiness](readiness.md), [air-gap readiness](air-gap-readiness.md),
+and [support bundles](support.md).

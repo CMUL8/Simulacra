@@ -11,6 +11,8 @@
 - Back up PostgreSQL plus the `cmul8-data` and `cmul8-runs` volumes, and test restore.
 - Run migrations as the one-shot `migrate` service before API and worker startup.
 - Promote only after API, worker, queue, storage, and connector smoke checks pass.
+- Retain the secret-safe `missions.private-readiness.v1` report with the human
+  production approval. Startup readiness alone is not production approval.
 
 The worker health probe must reflect a running queue consumer. Until the worker
 actually consumes jobs, container health is plumbing validation—not proof that

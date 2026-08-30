@@ -118,6 +118,17 @@ docker compose ps
 curl -fsS http://127.0.0.1:8000/readyz
 ```
 
+Compose automatically runs a fail-closed private-deployment preflight before
+migrations. Before opening a production installation to humans, record the
+latest backup and restore-drill evidence references and run:
+
+```bash
+docker compose run --rm api doctor --format human
+```
+
+See the [private deployment readiness contract](docs/private-runtime/readiness.md)
+for the machine-readable release report and approval workflow.
+
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The production API serves the built console from the same origin.
 
 Follow logs:
@@ -174,6 +185,8 @@ Named volumes preserve PostgreSQL, Redis, CMUL8 data, runs, approved graphs, run
 | `CMUL8_RUNTIME_ROOT` | runs directory | Durable runtime job and workflow state. |
 | `CMUL8_TELEMETRY_ROOT` | runs directory | Shared runtime/console telemetry. |
 | `CMUL8_REDIS_URL` | required in private deployment | Redis readiness and wake-up transport. |
+| `CMUL8_BACKUP_REFERENCE` | unset | Operator evidence reference for the coordinated production backup. |
+| `CMUL8_RESTORE_TEST_REFERENCE` | unset | Operator evidence reference for the latest successful restore drill. |
 | `SIMULACRA_SANDBOX` | `auto` locally, `worktree` in Compose | Builder execution isolation mode. |
 
 See [`.env.example`](.env.example) for optional Clerk, SIEM, Firecrawl, machine sandbox, and public URL settings.

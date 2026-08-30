@@ -18,6 +18,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
+from deploy.readiness import assess_private_deployment, render_readiness_report
+
 WORKER_SOCKET = Path(os.environ.get("CMUL8_WORKER_SOCKET", "/tmp/cmul8-worker.sock"))
 _MAX_DISCOVERY_STATE_BYTES = 8 * 1024 * 1024
 _DEFAULT_MISSION_CRON_INTERVAL_SECONDS = 15.0
@@ -223,30 +225,63 @@ def _read_discovery_json(root: Path, parts: tuple[str, ...]) -> Mapping[str, obj
 			os.close(descriptor)
 
 
-def preflight() -> int:
-	required = ("CMUL8_TENANT_ID", "CMUL8_ENVIRONMENT", "CMUL8_POSTGRES_URL", "CMUL8_REDIS_URL")
-	missing = [key for key in required if not os.environ.get(key, "").strip()]
-	if missing:
-		print(f"missing required environment: {', '.join(missing)}", file=sys.stderr)
-		return 78
-	if os.environ.get("CMUL8_TLS_REQUIRED", "true").lower() != "true":
-		print("private runtime requires CMUL8_TLS_REQUIRED=true", file=sys.stderr)
-		return 78
-	if not _mission_execution_configuration_ready():
-		print("configured Mission execution backend is unavailable", file=sys.stderr)
-		return 78
-	return 0
-
-
-def _queue_reachable() -> bool:
-	parsed = urlparse(os.environ.get("CMUL8_REDIS_URL", ""))
+def _service_reachable(url: str, *, default_port: int) -> bool:
+	parsed = urlparse(url)
 	if not parsed.hostname:
 		return False
 	try:
-		with socket.create_connection((parsed.hostname, parsed.port or 6379), timeout=1):
+		with socket.create_connection((parsed.hostname, parsed.port or default_port), timeout=1):
 			return True
 	except OSError:
 		return False
+
+
+def _storage_roots_ready() -> bool:
+	runs_root = Path(os.environ.get("SIMULACRA_RUNS_DIR", "/app/runs"))
+	data_root = Path(os.environ.get("SIMULACRA_DATA_DIR", "/app/data"))
+	mission_root = Path(os.environ.get("CMUL8_MISSION_RUNTIME_ROOT", str(data_root / "mission-runtime")))
+	try:
+		for root in (data_root, runs_root, mission_root):
+			root.mkdir(parents=True, exist_ok=True)
+			if root.is_symlink() or not root.is_dir() or not os.access(root, os.R_OK | os.W_OK):
+				return False
+		return True
+	except OSError:
+		return False
+
+
+def private_readiness_report():
+	return assess_private_deployment(
+		dict(os.environ),
+		probes={
+			"database": lambda: _service_reachable(os.environ.get("CMUL8_POSTGRES_URL", ""), default_port=5432),
+			"queue": _queue_reachable,
+			"storage": _storage_roots_ready,
+			"executor": _mission_execution_configuration_ready,
+		},
+	)
+
+
+def preflight(report_format: str = "human") -> int:
+	report = private_readiness_report()
+	if report_format == "json":
+		print(json.dumps(report.to_dict(), sort_keys=True))
+	else:
+		print(render_readiness_report(report))
+	return 0 if report.startup_ready else 78
+
+
+def doctor(report_format: str = "human") -> int:
+	report = private_readiness_report()
+	if report_format == "json":
+		print(json.dumps(report.to_dict(), sort_keys=True))
+	else:
+		print(render_readiness_report(report))
+	return 0 if report.production_ready else 2
+
+
+def _queue_reachable() -> bool:
+	return _service_reachable(os.environ.get("CMUL8_REDIS_URL", ""), default_port=6379)
 
 
 def _configured_runtime_worker():
@@ -651,8 +686,12 @@ def serve_with_worker(port: int = 8080) -> int:
 
 def main(argv: list[str] | None = None) -> int:
 	parser = argparse.ArgumentParser(prog="cmul8-entrypoint")
-	parser.add_argument("process", choices=("web", "web-worker", "api", "worker", "worker-health", "preflight", "migrations", "smoke"))
+	parser.add_argument("process", choices=("web", "web-worker", "api", "worker", "worker-health", "preflight", "doctor", "migrations", "smoke"))
 	parser.add_argument("process_args", nargs="*")
+	parser.add_argument("--format", dest="report_format", choices=("human", "json"), default="human")
+	health_mode = parser.add_mutually_exclusive_group()
+	health_mode.add_argument("--ready", action="store_true")
+	health_mode.add_argument("--live", action="store_true")
 	args = parser.parse_args(argv)
 	if args.process in {"web", "api"}:
 		return serve(8080 if args.process == "web" else 8000)
@@ -661,9 +700,12 @@ def main(argv: list[str] | None = None) -> int:
 	if args.process == "worker":
 		return worker()
 	if args.process == "worker-health":
-		return worker_health(args.process_args[0] if args.process_args else "--live")
+		mode = "--ready" if args.ready else "--live"
+		return worker_health(mode)
 	if args.process == "preflight":
-		return preflight()
+		return preflight(args.report_format)
+	if args.process == "doctor":
+		return doctor(args.report_format)
 	if args.process == "migrations":
 		return migrations()
 	return smoke()

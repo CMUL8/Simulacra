@@ -29,14 +29,20 @@ def test_preflight_rejects_missing_contract(monkeypatch):
 	assert deploy_process.preflight() == 78
 
 
-def test_preflight_accepts_explicit_external_services(monkeypatch):
+def test_preflight_accepts_explicit_external_services(monkeypatch, tmp_path):
 	values = {
+		"CMUL8_DEPLOYMENT_MODE": "private_cloud",
 		"CMUL8_TENANT_ID": "tenant", "CMUL8_ENVIRONMENT": "production",
 		"CMUL8_POSTGRES_URL": "postgres://db/app", "CMUL8_REDIS_URL": "redis://queue/0",
 		"CMUL8_TLS_REQUIRED": "true",
+		"SIMULACRA_AUTH_REQUIRED": "1", "SIMULACRA_BOOTSTRAP_EMAIL": "owner@example.test",
+		"SIMULACRA_BOOTSTRAP_PASSWORD": "test-only-password",
+		"SIMULACRA_DATA_DIR": str(tmp_path / "data"), "SIMULACRA_RUNS_DIR": str(tmp_path / "runs"),
+		"CMUL8_MISSION_RUNTIME_ROOT": str(tmp_path / "mission-runtime"),
 	}
 	for key, value in values.items():
 		monkeypatch.setenv(key, value)
+	monkeypatch.setattr(deploy_process, "_service_reachable", lambda *_args, **_kwargs: True)
 	assert deploy_process.preflight() == 0
 
 
@@ -411,6 +417,24 @@ def test_image_defines_the_process_entrypoint():
 	assert "gosu" in dockerfile
 	assert "lost+found" in entrypoint
 	assert 'exec gosu 65532:65532 "$0" "$@"' in entrypoint
+	assert "doctor" in dockerfile
+
+
+def test_doctor_process_renders_the_private_readiness_decision(monkeypatch, capsys):
+	report = type("Report", (), {"production_ready": True})()
+	monkeypatch.setattr(deploy_process, "private_readiness_report", lambda: report)
+	monkeypatch.setattr(deploy_process, "render_readiness_report", lambda _report: "ready for humans")
+
+	assert deploy_process.main(["doctor", "--format", "human"]) == 0
+	assert capsys.readouterr().out.strip() == "ready for humans"
+
+
+def test_worker_health_process_accepts_the_compose_ready_flag(monkeypatch):
+	observed: list[str] = []
+	monkeypatch.setattr(deploy_process, "worker_health", lambda mode: observed.append(mode) or 0)
+
+	assert deploy_process.main(["worker-health", "--ready"]) == 0
+	assert observed == ["--ready"]
 
 
 def test_railway_uses_the_public_web_process_port():

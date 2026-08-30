@@ -36,7 +36,9 @@
     "CONTROL_ORIGIN": {"type": "string"},
     "PREVIEW_ORIGIN": {"type": "string"},
     "PREVIEW_REGISTRABLE_DOMAIN": {"type": "string"},
-    "CMUL8_PREVIEW_EXCHANGE_SECRET": {"type": "string"}
+    "CMUL8_PREVIEW_EXCHANGE_SECRET": {"type": "string"},
+    "CMUL8_BACKUP_REFERENCE": {"type": "string", "description": "Operator evidence reference for the latest coordinated backup."},
+    "CMUL8_RESTORE_TEST_REFERENCE": {"type": "string", "description": "Operator evidence reference for the latest successful restore drill."}
   },
   "allOf": [
     {
