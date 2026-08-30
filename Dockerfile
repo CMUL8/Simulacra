@@ -31,10 +31,12 @@ COPY schemas ./schemas
 COPY scripts ./scripts
 COPY deploy/bin/cmul8-entrypoint /opt/cmul8/bin/cmul8-entrypoint
 COPY deploy/bin/cmul8-mission-sandbox /opt/cmul8/bin/cmul8-mission-sandbox
+COPY deploy/executor-registry.json /opt/cmul8/executors/registry.json
 COPY --from=console-build /src/apps/console/dist ./apps/console/dist
 RUN pip install --no-cache-dir -e ".[demo]" \
 	&& chmod 0555 /opt/cmul8/bin/cmul8-entrypoint \
 		/opt/cmul8/bin/cmul8-mission-sandbox \
+	&& chmod 0444 /opt/cmul8/executors/registry.json \
 	&& for process in api web web-worker worker worker-health preflight doctor migrate smoke; do \
 		ln -s /opt/cmul8/bin/cmul8-entrypoint "/opt/cmul8/bin/cmul8-${process}"; \
 	done \

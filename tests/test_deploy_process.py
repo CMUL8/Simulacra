@@ -79,6 +79,28 @@ def test_execution_backend_registry_is_image_baked_and_name_bound(monkeypatch):
 		deploy_process._configured_mission_execution_backend()
 
 
+def test_execution_backend_can_come_from_the_fixed_image_registry(monkeypatch, tmp_path):
+	registry = tmp_path / "registry.json"
+	registry.write_text(json.dumps({
+		"format": "missions.executor-registry.v1",
+		"executors": [{
+			"id": "prime", "adapter": "json-process",
+			"protocol": "mission-executor-json-v1", "network_policy": "enforced",
+		}],
+	}), encoding="utf-8")
+	registry.chmod(0o444)
+	executable = tmp_path / "prime" / "bin" / "mission-executor"
+	executable.parent.mkdir(parents=True)
+	executable.write_text("#!/bin/sh\n", encoding="utf-8")
+	executable.chmod(0o555)
+	monkeypatch.setattr(deploy_process, "_EXECUTION_REGISTRY_PATH", registry)
+	monkeypatch.setenv("CMUL8_EXECUTION_BACKEND", "prime")
+
+	configured = deploy_process._configured_mission_execution_backend()
+	assert configured.name == "prime"
+	assert configured.executable_path() == executable
+
+
 def test_preflight_and_readiness_fail_when_selected_executor_is_not_baked(monkeypatch):
 	values = {
 		"CMUL8_TENANT_ID": "tenant", "CMUL8_ENVIRONMENT": "production",

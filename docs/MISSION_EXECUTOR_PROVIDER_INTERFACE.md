@@ -355,36 +355,74 @@ Bake the runtime before the image switches to the unprivileged `cmul8` user:
 
 ```dockerfile
 USER root
-COPY provider-runtime/ /opt/cmul8/executors/enterprise/
-RUN chown -R 0:0 /opt/cmul8/executors/enterprise \
-    && find /opt/cmul8/executors/enterprise -type d -exec chmod 0555 {} \; \
-    && find /opt/cmul8/executors/enterprise -type f -exec chmod 0444 {} \; \
-    && chmod 0555 /opt/cmul8/executors/enterprise/bin/mission-executor
+COPY provider-runtime/ /opt/cmul8/executors/prime/
+COPY executor-registry.json /opt/cmul8/executors/registry.json
+RUN chown -R 0:0 /opt/cmul8/executors/prime \
+        /opt/cmul8/executors/registry.json \
+    && find /opt/cmul8/executors/prime -type d -exec chmod 0555 {} \; \
+    && find /opt/cmul8/executors/prime -type f -exec chmod 0444 {} \; \
+    && chmod 0555 /opt/cmul8/executors/prime/bin/mission-executor \
+    && chmod 0444 /opt/cmul8/executors/registry.json \
+    && cmul8-executor-registry /opt/cmul8/executors/registry.json \
+         --verify-runtimes --require-root-owned --format human
 USER 65532:65532
 ```
 
-Add a source-controlled factory to `_CERTIFIED_EXECUTION_BACKENDS` in
-`simulacra/deploy_process.py`:
+Copy the source-controlled `deploy/executor-registry.json` and add one entry for
+the baked runtime. Third-party providers do not add a Python import or factory:
 
-```python
-from simulacra.missions import JsonProcessMissionAgentExecutor
-
-_CERTIFIED_EXECUTION_BACKENDS = {
-    "codex": lambda: None,
-    "enterprise": lambda: JsonProcessMissionAgentExecutor("enterprise"),
+```json
+{
+  "format": "missions.executor-registry.v1",
+  "executors": [
+    {
+      "id": "prime",
+      "adapter": "json-process",
+      "protocol": "mission-executor-json-v1",
+      "network_policy": "enforced"
+    }
+  ]
 }
 ```
 
-Then select the baked entry at deployment time:
+The registry intentionally accepts no module, factory, executable, argument, or
+path fields. The ID always resolves to the fixed
+`/opt/cmul8/executors/<backend>/bin/mission-executor` convention. This keeps
+deployment configuration from importing application-process code.
+
+Validate the registry and every referenced runtime while building the derived
+image:
+
+```bash
+cmul8-executor-registry /opt/cmul8/executors/registry.json \
+  --verify-runtimes --require-root-owned --format human
+```
+
+Then select the baked Prime entry at deployment time:
 
 ```text
-CMUL8_EXECUTION_BACKEND=enterprise
+CMUL8_EXECUTION_BACKEND=prime
 CMUL8_MODEL_PROVIDER=custom
 CMUL8_MODEL=open-enterprise-70b
 CMUL8_MODEL_BASE_URL=https://models.internal.example/v1
 CMUL8_MODEL_API_KEY_ENV=CMUL8_MODEL_API_KEY
 CMUL8_MODEL_API_KEY=<injected by the deployment secret manager>
 ```
+
+Hermes uses the same adapter contract with a separately reviewed runtime and
+registry ID:
+
+```text
+CMUL8_EXECUTION_BACKEND=hermes
+```
+
+These are integration examples, not bundled harnesses. The base Missions image
+contains only its built-in executor. A customer or provider image must bake the
+Prime, Hermes, or custom executable, replace the registry with the reviewed
+entry, run the validator, and pass the provider verification suite.
+
+`_CERTIFIED_EXECUTION_BACKENDS` remains reserved for built-ins and test
+injection. Process-based providers should never edit it.
 
 Environment configuration can select a certified entry but cannot import an
 arbitrary module or executable. A missing, mismatched, or uncertified backend

@@ -1,0 +1,11 @@
+{
+  "format": "missions.executor-registry.v1",
+  "executors": [
+    {
+      "id": "codex",
+      "adapter": "builtin",
+      "protocol": "codex-app-server-v1",
+      "network_policy": "enforced"
+    }
+  ]
+}

@@ -18,7 +18,10 @@ def test_executor_provider_interface_covers_the_frozen_runtime_contract() -> Non
         "2 MiB",
         "enforces_network_policy = True",
         "_CERTIFIED_EXECUTION_BACKENDS",
-        "CMUL8_EXECUTION_BACKEND=enterprise",
+        "deploy/executor-registry.json",
+        "cmul8-executor-registry",
+        "CMUL8_EXECUTION_BACKEND=prime",
+        "CMUL8_EXECUTION_BACKEND=hermes",
         "test_generic_executor_reaches_the_real_launcher_sandbox_edge",
     )
     for contract in required_contracts:

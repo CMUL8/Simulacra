@@ -261,6 +261,13 @@ The endpoint must implement the Responses contract over HTTPS. The route and mod
 
 Enterprise deployments can bake another reviewed `MissionAgentExecutor` adapter into their image and add it to the source-controlled certified registry. Environment configuration may select a baked adapter, but it cannot import arbitrary application-process code. `JsonProcessMissionAgentExecutor` is the provider-neutral adapter: it launches `/opt/cmul8/executors/<backend>/bin/mission-executor mission-executor --stdio` behind the same one-turn filesystem sandbox, sends one versioned JSON request, requires a request/ack admission before every action, and accepts one bounded normalized result. Certification requires the baked adapter to keep model traffic inside its trusted runtime and enforce the admitted network policy for every model-invoked tool; deployment rejects adapters that do not declare that boundary. Every adapter receives only the admitted request, managed isolation, and its execution-session store; Mission permissions, approvals, artifacts, and verification remain outside the adapter.
 
+Process-based providers register through
+[`deploy/executor-registry.json`](deploy/executor-registry.json), not a Python
+factory. A derived image adds one reviewed `json-process` entry, bakes the fixed
+runtime path, and validates it with `cmul8-executor-registry`. Prime, Hermes, and
+custom harnesses use this same boundary;
+none is bundled or silently selected by the base image.
+
 Harness providers should start with the complete [Missions executor provider interface](docs/MISSION_EXECUTOR_PROVIDER_INTERFACE.md). It defines the JSON protocol, action-admission handshake, result schema, model/credential boundary, image layout, certified registry integration, and required release tests.
 
 ## Repository map

@@ -28,6 +28,7 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [project.scripts]
 simulacra = "simulacra.cli:main"
+cmul8-executor-registry = "simulacra.missions.executor_registry:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["simulacra"]

@@ -24,6 +24,7 @@ WORKER_SOCKET = Path(os.environ.get("CMUL8_WORKER_SOCKET", "/tmp/cmul8-worker.so
 _MAX_DISCOVERY_STATE_BYTES = 8 * 1024 * 1024
 _DEFAULT_MISSION_CRON_INTERVAL_SECONDS = 15.0
 _CERTIFIED_EXECUTION_BACKENDS: dict[str, object] = {"codex": lambda: None}
+_EXECUTION_REGISTRY_PATH = Path("/opt/cmul8/executors/registry.json")
 
 
 def bootstrap_recovery_tick(*, limit: int = 100) -> int:
@@ -48,9 +49,17 @@ def _configured_mission_execution_backend() -> object | None:
 	"""
 	from simulacra.harnesses import HarnessConfig
 	from simulacra.missions.executor import MissionAgentExecutor
+	from simulacra.missions.executor_registry import build_executor_factories, load_executor_registry
 
 	backend_name = HarnessConfig.from_env().harness
 	factory = _CERTIFIED_EXECUTION_BACKENDS.get(backend_name)
+	if factory is None and _EXECUTION_REGISTRY_PATH.is_file():
+		registry = load_executor_registry(
+			_EXECUTION_REGISTRY_PATH,
+			verify_runtimes=True,
+			require_root_owned=_EXECUTION_REGISTRY_PATH.is_relative_to(Path("/opt")),
+		)
+		factory = build_executor_factories(registry).get(backend_name)
 	if not callable(factory):
 		raise ValueError("execution backend is not certified in this deployment image")
 	backend = factory()
