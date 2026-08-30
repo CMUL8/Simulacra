@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Check } from "lucide-react";
 
 import type { ConversationMessage } from "../../../api";
 
@@ -200,7 +201,8 @@ export function ConversationTimeline({
       const actionBusy = actionAttempt?.messageId === message.id;
       const substantive = Boolean(message.body?.trim());
       const progress = message.kind === "agent_started" || message.kind === "agent_progress";
-      return <div key={message.id} className="conversation-message-wrap">
+      const workEvent = Boolean(message.links.work_item_id) || progress || message.kind === "agent_completed" || message.kind === "output_ready";
+      return <div key={message.id} className={`conversation-message-wrap${workEvent ? " is-work-event" : ""}${separator ? " has-day-separator" : ""}`}>
       {separator ? <div className="conversation-day"><span>{day}</span></div> : null}
       <article
         className={`conversation-message kind-${message.kind}${progress ? " is-progress" : ""}`}
@@ -217,7 +219,7 @@ export function ConversationTimeline({
           </header>
           <p>{message.body || "This message was removed."}</p>
           {message.links.work_item_id && message.links.output_id && onOpenWork
-            ? <button className="conversation-work-link is-action" type="button" onClick={() => onOpenWork(message.links.work_item_id!, "verify_output")}>Review output</button>
+            ? <button className="conversation-work-link is-action is-primary-action" type="button" onClick={() => onOpenWork(message.links.work_item_id!, "verify_output")}>Review output</button>
             : message.links.work_item_id ? <span className="conversation-work-link">Work is tracked in this Mission</span> : null}
           {substantive && !progress ? <div className="conversation-message-actions" aria-label={`Actions for ${message.author.display_name || "Mission teammate"}`}>
             <button
@@ -232,7 +234,7 @@ export function ConversationTimeline({
               aria-label={`${acknowledgement?.reacted ? "Remove acknowledgement" : "Acknowledge"}${acknowledgement?.count ? ` · ${acknowledgement.count}` : ""}`}
               disabled={actionBusy}
               onClick={() => onToggleReaction?.(message, "check", !acknowledgement?.reacted)}
-            >✓{acknowledgement?.count ? ` ${acknowledgement.count}` : ""}</button>
+            ><Check size={14} aria-hidden="true" />{acknowledgement?.count ? <span>{acknowledgement.count}</span> : null}</button>
             <button
               type="button"
               aria-pressed={message.saved}

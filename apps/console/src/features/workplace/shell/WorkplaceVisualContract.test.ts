@@ -19,6 +19,10 @@ test("the workplace uses one premium interaction and surface contract", () => {
     "--mission-control-compact",
     "--mission-drawer-width",
     "--mission-shadow-drawer",
+    "--mission-type-title-size",
+    "--mission-type-body-size",
+    "--mission-type-label-size",
+    "--mission-type-meta-size",
   ]) expect(tokens).toContain(token);
 
   const productStyles = [workplaceStyles, conversationStyles, crewStyles, workStyles, fileStyles, attentionStyles];
@@ -59,4 +63,14 @@ test("the Mission room groups sparse conversation beside one compact command sur
   expect(conversationStyles).toMatch(/\.composer-command\s*\{[^}]*border:\s*1px\s+solid\s+var\(--mission-color-border-strong\)/s);
   expect(conversationStyles).toMatch(/\.composer-input-wrap\s+textarea\s*\{[^}]*min-height:\s*2\.75rem[^}]*resize:\s*none/s);
   expect(crewStyles).toMatch(/\.crew-quick-actions\s*\{[^}]*display:\s*flex/s);
+});
+
+test("Mission work reads as one connected progress sequence with a restrained command edge", () => {
+  expect(conversationStyles).toMatch(/\.conversation-message-wrap\.is-work-event:not\(:last-child\)::after\s*\{[^}]*background:\s*var\(--mission-color-border-strong\)/s);
+  expect(conversationStyles).toMatch(/\.conversation-message\.kind-agent_completed\s*\{[^}]*background:\s*var\(--mission-color-surface-raised\)/s);
+  expect(conversationStyles).toMatch(/\.conversation-work-link\.is-primary-action\s*\{[^}]*background:\s*var\(--mission-color-accent\)/s);
+  expect(conversationStyles).toMatch(/\.composer-actions\s+>\s+button\.is-icon-only\s*\{[^}]*border-radius:\s*50%/s);
+  expect(workplaceStyles).toMatch(/\.workplace-shell\s*\{[^}]*letter-spacing:\s*0/s);
+  expect(workplaceStyles).toMatch(/\.workplace-shell\s+svg\s*\{[^}]*display:\s*block[^}]*flex:\s*none/s);
+  expect(conversationStyles).toMatch(/\.conversation-message-body\s+time\s*\{[^}]*font-family:\s*var\(--font-mono\)[^}]*font-variant-numeric:\s*tabular-nums/s);
 });

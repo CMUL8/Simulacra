@@ -181,6 +181,7 @@ test("substantive messages expose concise keyboard actions without exposing iden
   expect(onReply).toHaveBeenCalledWith(acknowledged, reply);
   expect(onToggleReaction).toHaveBeenCalledWith(acknowledged, "check", false);
   expect(onToggleSaved).toHaveBeenCalledWith(acknowledged, false);
+  expect(document.body).not.toHaveTextContent("✓");
   expect(document.body).not.toHaveTextContent("author_message_actions");
 });
 
@@ -202,7 +203,11 @@ test("an agent completion opens its exact reviewable Work item without exposing 
     onOpenWork={onOpenWork}
   />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Review output" }));
+  const completionRow = screen.getByRole("article").closest(".conversation-message-wrap");
+  expect(completionRow).toHaveClass("is-work-event");
+  const review = screen.getByRole("button", { name: "Review output" });
+  expect(review).toHaveClass("is-primary-action");
+  fireEvent.click(review);
 
   expect(onOpenWork).toHaveBeenCalledWith("task_completion", "verify_output");
   expect(document.body).not.toHaveTextContent("task_completion");
@@ -228,6 +233,7 @@ test("agent progress is a compact durable status instead of exposed reasoning", 
 
   const row = screen.getByRole("article");
   expect(row).toHaveClass("is-progress");
+  expect(row.closest(".conversation-message-wrap")).toHaveClass("is-work-event");
   expect(row).toHaveTextContent("Work started");
   expect(row).toHaveTextContent("Working on the assignment");
   expect(row).not.toHaveTextContent("task_progress");

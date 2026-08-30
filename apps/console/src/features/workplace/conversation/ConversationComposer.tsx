@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp } from "lucide-react";
 
 import {
   ApiError,
@@ -174,7 +175,7 @@ export function ConversationComposer({
           aria-label="Message the Mission"
           aria-autocomplete="list"
           aria-controls={pickerOpen && query.active ? "mission-mention-picker" : undefined}
-          placeholder="Share an update, ask the crew, or use @ to assign work…"
+          placeholder="Message the Mission or use @ to assign work…"
           value={body}
           disabled={Boolean(attempt)}
           onChange={(event) => {
@@ -197,8 +198,16 @@ export function ConversationComposer({
         </div> : null}
         {(assignmentMode || showPlanRecovery) && !assignmentEnabled ? <a className="composer-plan-link" href={`/missions/${encodeURIComponent(missionId)}?tab=conversation&focus=plan-approval`}>Approve how the crew will work before assigning</a> : null}
         <div className="composer-actions">
-          <button type="button" onClick={submit} disabled={!body.trim() || Boolean(attempt) || (assignmentMode && !assignmentEnabled)}>
-            {submitting ? assignmentMode ? "Assigning…" : "Sending…" : assignmentMode ? "Assign work" : "Send message"}
+          <button
+            type="button"
+            className={!agentIds.length && !humanIds.length ? "is-icon-only" : undefined}
+            aria-label={submitting ? assignmentMode ? "Assigning…" : "Sending…" : assignmentMode ? "Assign work" : "Send message"}
+            onClick={submit}
+            disabled={!body.trim() || Boolean(attempt) || (assignmentMode && !assignmentEnabled)}
+          >
+            {!agentIds.length && !humanIds.length
+              ? <ArrowUp size={16} aria-hidden="true" />
+              : submitting ? assignmentMode ? "Assigning…" : "Sending…" : assignmentMode ? "Assign work" : "Send message"}
           </button>
         </div>
       </div>

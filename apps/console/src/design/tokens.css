@@ -6,7 +6,7 @@
   --mission-color-surface-subtle: #f6f4ee;
   --mission-color-surface-hover: #efede5;
   --mission-color-fg: #20231e;
-  --mission-color-muted: #686d65;
+  --mission-color-muted: #62675f;
   --mission-color-border: #cfccc1;
   --mission-color-border-strong: #aaa79d;
   --mission-color-accent: #465bb8;
@@ -31,6 +31,11 @@
   --mission-space-3: 0.75rem;
   --mission-space-4: 1rem;
   --mission-space-6: 1.5rem;
+  --mission-type-title-size: 1.25rem;
+  --mission-type-body-size: 0.875rem;
+  --mission-type-label-size: 0.8125rem;
+  --mission-type-meta-size: 0.75rem;
+  --mission-type-micro-size: 0.6875rem;
   --mission-radius-sm: 0.5rem;
   --mission-radius-md: 0.875rem;
   --mission-shadow-raised: 0 1rem 3rem rgb(32 35 30 / 16%);

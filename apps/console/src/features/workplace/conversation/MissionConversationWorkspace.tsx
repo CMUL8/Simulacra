@@ -323,7 +323,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
             type="button"
             aria-current={activeView === view ? "page" : undefined}
             onClick={() => onView?.(view)}
-          ><Icon size={15} aria-hidden="true" />{view.slice(0, 1).toUpperCase() + view.slice(1)}</button>;
+          ><Icon size={16} aria-hidden="true" />{view.slice(0, 1).toUpperCase() + view.slice(1)}</button>;
         })}
       </nav>
     </header>
@@ -337,7 +337,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
         aria-label="Mission crew"
         onKeyDown={(event) => { if (event.key === "Escape") setCrewOpen(false); }}
       >
-        <header><div><h3>Crew</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-label={crewOpen ? "Close Mission crew" : "Open Mission crew"} aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? <X size={17} aria-hidden="true" /> : <><UsersRound size={16} aria-hidden="true" /><span>Crew</span><ChevronDown size={15} aria-hidden="true" /></>}</button></header>
+        <header><div><h3>Crew</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-label={crewOpen ? "Close Mission crew" : "Open Mission crew"} aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? <X size={18} aria-hidden="true" /> : <><UsersRound size={16} aria-hidden="true" /><span>Crew</span><ChevronDown size={14} aria-hidden="true" /></>}</button></header>
         {crewLoading ? <p className="crew-state" role="status">Loading Mission crew…</p> : null}
         {crewError ? <div className="crew-state" role="alert"><span>Crew is unavailable. This Mission still works.</span><button type="button" onClick={() => void loadCrew()}>Retry</button></div> : null}
         {!crewLoading && !crewError ? <>
@@ -347,7 +347,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
             {agents.length ? agents.map((agent) => <div className="crew-member" key={agent.id}>
               <span className="crew-avatar is-agent" aria-hidden="true">{agent.name.slice(0, 1).toUpperCase()}</span>
               <span><strong>{agent.name}</strong><small>{agent.role}</small></span>
-              <button type="button" aria-label={`Mention ${agent.name}`} onClick={() => requestMention({ id: agent.id, name: agent.name, detail: agent.role, kind: "agent" })}><AtSign size={15} aria-hidden="true" /></button>
+              <button type="button" aria-label={`Mention ${agent.name}`} onClick={() => requestMention({ id: agent.id, name: agent.name, detail: agent.role, kind: "agent" })}><AtSign size={14} aria-hidden="true" /></button>
             </div>) : <p className="crew-empty">No agents added yet.</p>}
           </section>
           <section aria-label="Humans">
@@ -355,7 +355,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
             {humans.length ? humans.map((human) => <div className="crew-member" key={human.id}>
               <span className="crew-avatar" aria-hidden="true">{human.display_name.slice(0, 1).toUpperCase()}</span>
               <span><strong>{human.display_name}{human.id === currentHumanId ? " (you)" : ""}</strong><small>{human.role}</small></span>
-              <button type="button" aria-label={`Mention ${human.display_name}`} onClick={() => requestMention({ id: human.id, name: human.display_name, detail: `Human · ${human.role}`, kind: "human" })}><AtSign size={15} aria-hidden="true" /></button>
+              <button type="button" aria-label={`Mention ${human.display_name}`} onClick={() => requestMention({ id: human.id, name: human.display_name, detail: `Human · ${human.role}`, kind: "human" })}><AtSign size={14} aria-hidden="true" /></button>
             </div>) : <p className="crew-empty">No humans are visible yet.</p>}
           </section>
         </> : null}

@@ -184,6 +184,7 @@ test("message mode never infers assignment from arbitrary at text", async () => 
   expect(screen.queryByText("Everyone in this Mission can follow the conversation.")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Message mode" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Assign work mode" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveClass("is-icon-only");
   fireEvent.change(screen.getByRole("textbox", { name: "Message the Mission" }), {
     target: { value: "@Analyst is plain text without a durable selection" },
   });

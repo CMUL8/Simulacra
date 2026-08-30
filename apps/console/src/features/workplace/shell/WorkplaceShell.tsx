@@ -203,7 +203,7 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
         aria-current={destination === item.id ? "page" : undefined}
         title={item.label}
         onClick={() => navigate(item.id)}
-      ><Icon size={19} aria-hidden="true" /><span>{item.label}</span></button>)}
+      ><Icon size={18} aria-hidden="true" /><span>{item.label}</span></button>)}
     </aside>
     <main className={`workplace-main${missionDetail && conversationEnabled ? " is-mission-detail" : ""}${newMission ? " is-new-mission" : ""}`} aria-label="Workplace">
       {missionDetail && conversationEnabled || newMission ? null : <header className="workplace-header">

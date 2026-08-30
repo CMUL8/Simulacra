@@ -16,7 +16,9 @@ test("Mission crew actions add a specialist without infrastructure choices", asy
 
   expect(screen.queryByRole("button", { name: "Add agent" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Invite human" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Add to crew" }));
+  const addToCrew = screen.getByRole("button", { name: "Add to crew" });
+  expect(addToCrew.querySelectorAll("svg")).toHaveLength(1);
+  fireEvent.click(addToCrew);
   fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
   const dialog = screen.getByRole("dialog", { name: "Add an agent" });
   expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue("");

@@ -91,7 +91,7 @@ export function CrewActions({ missionId, canAddAgent, canInviteHuman, onAgentAdd
       actionsTrigger.current?.focus();
     }}>
       <button ref={actionsTrigger} className="crew-add-trigger" type="button" aria-expanded={actionsOpen} onClick={() => setActionsOpen((open) => !open)}>
-        <Plus size={14} aria-hidden /> Add to crew <ChevronDown size={13} aria-hidden />
+        Add to crew <ChevronDown size={14} aria-hidden />
       </button>
       {actionsOpen ? <div className="crew-add-options" aria-label="Add to Mission crew">
         {canAddAgent ? <button type="button" onClick={() => { setActionsOpen(false); setActive("agent"); }}><Plus size={14} aria-hidden /> Add agent</button> : null}
