@@ -412,6 +412,7 @@ def test_image_defines_the_process_entrypoint():
 	entrypoint = (repository / "deploy/bin/cmul8-entrypoint").read_text()
 	assert 'ENTRYPOINT ["/opt/cmul8/bin/cmul8-entrypoint"]' in dockerfile
 	assert 'CMD ["api"]' in dockerfile
+	assert "COPY deploy ./deploy" in dockerfile
 	assert "worker-health" in dockerfile
 	assert "@openai/codex@0.148.0" in dockerfile
 	assert "gosu" in dockerfile

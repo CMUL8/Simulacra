@@ -24,6 +24,7 @@ RUN mkdir -p /opt/codex \
 COPY pyproject.toml README.md ./
 COPY simulacra ./simulacra
 COPY apps ./apps
+COPY deploy ./deploy
 COPY fixtures ./fixtures
 COPY templates ./templates
 COPY schemas ./schemas
