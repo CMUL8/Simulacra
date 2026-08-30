@@ -179,6 +179,11 @@ test("message mode never infers assignment from arbitrary at text", async () => 
     onSent={() => undefined}
     onAccessLost={() => undefined}
   />);
+  expect(document.querySelector(".composer-command")).not.toBeNull();
+  expect(document.querySelector(".composer-command.is-message-only")).not.toBeNull();
+  expect(screen.queryByText("Everyone in this Mission can follow the conversation.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Message mode" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Assign work mode" })).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole("textbox", { name: "Message the Mission" }), {
     target: { value: "@Analyst is plain text without a durable selection" },
   });

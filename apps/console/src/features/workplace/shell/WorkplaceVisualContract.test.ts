@@ -42,10 +42,21 @@ test("drawers and dialogs share calm surfaces and compact controls", () => {
 });
 
 test("the Mission room uses disciplined proportions and content-fit messages", () => {
-  expect(conversationStyles).toMatch(/\.mission-conversation-workspace\s*\{[^}]*grid-template-rows:\s*auto\s+2\.5rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.mission-conversation-workspace\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/s);
   expect(conversationStyles).toMatch(/\.mission-room-header\s*\{[^}]*min-height:\s*3\.75rem/s);
   expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*12rem\s+minmax\(0,\s*1fr\)/s);
   expect(conversationStyles).toMatch(/\.conversation-message\s*\{[^}]*position:\s*relative/s);
   expect(conversationStyles).toMatch(/\.conversation-message-actions\s*\{[^}]*position:\s*absolute/s);
   expect(crewStyles).toMatch(/\.mission-conversation-workspace\s+\.crew-quick-actions\s+button\s*\{[^}]*min-height:\s*1\.875rem/s);
+});
+
+test("the Mission room groups sparse conversation beside one compact command surface", () => {
+  expect(conversationStyles).toMatch(/\.mission-conversation-workspace\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.mission-room-header\s*\{[^}]*grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/s);
+  expect(conversationStyles).toMatch(/\.conversation-timeline\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/s);
+  expect(conversationStyles).toMatch(/\.conversation-timeline-content\s*\{[^}]*margin-block-start:\s*auto/s);
+  expect(conversationStyles).toMatch(/\.conversation-composer\s*\{[^}]*max-width:\s*48rem[^}]*padding:\s*0/s);
+  expect(conversationStyles).toMatch(/\.composer-command\s*\{[^}]*border:\s*1px\s+solid\s+var\(--mission-color-border-strong\)/s);
+  expect(conversationStyles).toMatch(/\.composer-input-wrap\s+textarea\s*\{[^}]*min-height:\s*2\.75rem[^}]*resize:\s*none/s);
+  expect(crewStyles).toMatch(/\.crew-quick-actions\s*\{[^}]*display:\s*flex/s);
 });

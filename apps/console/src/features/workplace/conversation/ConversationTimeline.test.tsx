@@ -58,6 +58,7 @@ test("durable conversation renders oldest to newest with stable day separators",
     expect.stringContaining("Third update"),
   ]);
   expect(document.querySelectorAll(".conversation-day")).toHaveLength(2);
+  expect(document.querySelector(".conversation-timeline-content")).not.toBeNull();
   expect(document.body).not.toHaveTextContent("author_message_1");
 });
 

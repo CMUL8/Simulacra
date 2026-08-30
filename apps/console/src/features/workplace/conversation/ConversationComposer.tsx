@@ -151,37 +151,6 @@ export function ConversationComposer({
   };
 
   return <section className="conversation-composer" aria-label="Mission composer">
-    {assignmentMode || selectedHumans.length ? <div className="composer-routing-preview" aria-live="polite">
-      <strong>{assignmentMode ? "Assign work" : "Message"}</strong>
-      {assignmentMode ? <span>{selectedAgents.map((agent) => agent.name).join(" → ")}</span> : null}
-      {assignmentMode && selectedHumans.length ? <small>{selectedHumans.map((human) => human.display_name).join(", ")} will review</small> : null}
-    </div> : null}
-    <div className="composer-mode" aria-label="Message mode">
-      <button type="button" aria-pressed={!assignmentMode} aria-label="Message mode" onClick={() => setManualMessageMode(true)} disabled={Boolean(attempt)}>Message</button>
-      <button type="button" aria-pressed={assignmentMode} aria-label="Assign work mode" onClick={() => setManualMessageMode(false)} disabled={!agentIds.length || Boolean(attempt)}>Assign work</button>
-    </div>
-    <div className="composer-input-wrap">
-      <textarea
-        ref={inputRef}
-        aria-label="Message the Mission"
-        aria-autocomplete="list"
-        aria-controls={pickerOpen && query.active ? "mission-mention-picker" : undefined}
-        placeholder="Share an update, ask the crew, or use @ to assign work…"
-        value={body}
-        disabled={Boolean(attempt)}
-        onChange={(event) => {
-          setBody(event.currentTarget.value);
-          setPickerOpen(mentionQuery(event.currentTarget.value).active);
-        }}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            submit();
-          }
-        }}
-      />
-      <MentionPicker choices={choices} query={query.query} active={pickerOpen && query.active} onChoose={choose} onClose={() => setPickerOpen(false)} />
-    </div>
     {failed ? <div className="composer-error" role="alert">
       <span>Your work is safe to try again. We will retry safely so it cannot start twice.</span>
       <div className="composer-error-actions">
@@ -193,12 +162,46 @@ export function ConversationComposer({
         <button type="button" onClick={() => attempt && void submitAttempt(attempt)} disabled={submitting}>Try again</button>
       </div>
     </div> : null}
-    <div className="composer-actions">
-      <span>{assignmentMode ? "Agents will carry this forward; selected humans will review." : "Everyone in this Mission can follow the conversation."}</span>
-      {(assignmentMode || showPlanRecovery) && !assignmentEnabled ? <a className="composer-plan-link" href={`/missions/${encodeURIComponent(missionId)}?tab=conversation&focus=plan-approval`}>Approve how the crew will work before assigning</a> : null}
-      <button type="button" onClick={submit} disabled={!body.trim() || Boolean(attempt) || (assignmentMode && !assignmentEnabled)}>
-        {submitting ? assignmentMode ? "Assigning…" : "Sending…" : assignmentMode ? "Assign work" : "Send message"}
-      </button>
+    <div className={`composer-command${!agentIds.length && !humanIds.length ? " is-message-only" : ""}`}>
+      {assignmentMode || selectedHumans.length ? <div className="composer-routing-preview" aria-live="polite">
+        <strong>{assignmentMode ? "Assign work" : "Message"}</strong>
+        {assignmentMode ? <span>{selectedAgents.map((agent) => agent.name).join(" → ")}</span> : null}
+        {assignmentMode && selectedHumans.length ? <small>{selectedHumans.map((human) => human.display_name).join(", ")} will review</small> : null}
+      </div> : null}
+      <div className="composer-input-wrap">
+        <textarea
+          ref={inputRef}
+          aria-label="Message the Mission"
+          aria-autocomplete="list"
+          aria-controls={pickerOpen && query.active ? "mission-mention-picker" : undefined}
+          placeholder="Share an update, ask the crew, or use @ to assign work…"
+          value={body}
+          disabled={Boolean(attempt)}
+          onChange={(event) => {
+            setBody(event.currentTarget.value);
+            setPickerOpen(mentionQuery(event.currentTarget.value).active);
+          }}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <MentionPicker choices={choices} query={query.query} active={pickerOpen && query.active} onChoose={choose} onClose={() => setPickerOpen(false)} />
+      </div>
+      <div className="composer-footer">
+        {agentIds.length ? <div className="composer-mode" aria-label="Message mode">
+          <button type="button" aria-pressed={!assignmentMode} aria-label="Message mode" onClick={() => setManualMessageMode(true)} disabled={Boolean(attempt)}>Message</button>
+          <button type="button" aria-pressed={assignmentMode} aria-label="Assign work mode" onClick={() => setManualMessageMode(false)} disabled={Boolean(attempt)}>Assign work</button>
+        </div> : null}
+        {(assignmentMode || showPlanRecovery) && !assignmentEnabled ? <a className="composer-plan-link" href={`/missions/${encodeURIComponent(missionId)}?tab=conversation&focus=plan-approval`}>Approve how the crew will work before assigning</a> : null}
+        <div className="composer-actions">
+          <button type="button" onClick={submit} disabled={!body.trim() || Boolean(attempt) || (assignmentMode && !assignmentEnabled)}>
+            {submitting ? assignmentMode ? "Assigning…" : "Sending…" : assignmentMode ? "Assign work" : "Send message"}
+          </button>
+        </div>
+      </div>
     </div>
   </section>;
 }

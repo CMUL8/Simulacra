@@ -14,6 +14,9 @@ test("Mission crew actions add a specialist without infrastructure choices", asy
   const onAgentAdded = vi.fn();
   render(<CrewActions missionId="mission_close" canAddAgent canInviteHuman onAgentAdded={onAgentAdded} />);
 
+  expect(screen.queryByRole("button", { name: "Add agent" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Invite human" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Add to crew" }));
   fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
   const dialog = screen.getByRole("dialog", { name: "Add an agent" });
   expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue("");
@@ -36,6 +39,7 @@ test("Mission crew action creates a scoped human invitation", async () => {
   });
   render(<CrewActions missionId="mission_close" canAddAgent canInviteHuman onAgentAdded={vi.fn()} />);
 
+  fireEvent.click(screen.getByRole("button", { name: "Add to crew" }));
   fireEvent.click(screen.getByRole("button", { name: "Invite human" }));
   const dialog = screen.getByRole("dialog", { name: "Invite a human" });
   fireEvent.change(within(dialog).getByRole("textbox", { name: "Email" }), { target: { value: "priya@example.test" } });

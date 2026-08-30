@@ -182,6 +182,7 @@ export function ConversationTimeline({
         if (nearBottom.current) setNewMessageCount(0);
       }}
     >
+    <div className="conversation-timeline-content">
     {olderError ? <div className="conversation-history-error" role="alert">
       <span>{olderError}</span>
       <button type="button" onClick={onRetryOlder}>Retry earlier messages</button>
@@ -256,6 +257,7 @@ export function ConversationTimeline({
       </article>
     </div>;
     })}
+    </div>
     </div>
     {newMessageCount ? <button
       className="conversation-new-messages"

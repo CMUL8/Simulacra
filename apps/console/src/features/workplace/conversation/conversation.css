@@ -3,7 +3,7 @@
 .mission-conversation-workspace {
   background: var(--mission-color-canvas);
   display: grid;
-  grid-template-rows: auto 2.5rem minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -15,7 +15,7 @@
   border-block-end: 1px solid var(--mission-color-border);
   display: grid;
   gap: var(--mission-space-3);
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 3.75rem;
   padding: var(--mission-space-2) var(--mission-space-4);
 }
@@ -58,12 +58,13 @@
 
 .mission-tabs {
   align-items: stretch;
-  border-block-end: 1px solid var(--mission-color-border);
+  align-self: stretch;
+  border-block-end: 0;
   display: flex;
   min-width: 0;
   overflow-x: auto;
-  padding-inline: calc(12rem + var(--mission-space-3));
-  background: var(--mission-color-surface);
+  padding-inline: 0;
+  background: transparent;
 }
 
 .mission-tabs > button {
@@ -181,14 +182,21 @@
 }
 
 .conversation-timeline {
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--mission-space-6) max(var(--mission-space-4), calc((100% - 52rem) / 2));
+  padding: var(--mission-space-4) max(var(--mission-space-4), calc((100% - 48rem) / 2));
   scroll-behavior: smooth;
+}
+
+.conversation-timeline-content {
+  margin-block-start: auto;
+  width: 100%;
 }
 
 .conversation-load-older { display: block; margin: 0 auto var(--mission-space-4); padding-inline: var(--mission-space-4); }
@@ -212,7 +220,7 @@
 .conversation-state.is-error { color: var(--mission-color-danger); }
 .conversation-retry { justify-self: center; margin-block-end: var(--mission-space-2); padding-inline: var(--mission-space-4); }
 
-.conversation-day { align-items: center; color: var(--mission-color-muted); display: flex; font-size: 0.6875rem; gap: var(--mission-space-3); margin-block: var(--mission-space-6) var(--mission-space-3); text-transform: uppercase; }
+.conversation-day { align-items: center; color: var(--mission-color-muted); display: flex; font-size: 0.6875rem; gap: var(--mission-space-3); margin-block: var(--mission-space-3) var(--mission-space-2); text-transform: uppercase; }
 .conversation-day::before,
 .conversation-day::after { background: var(--mission-color-border); content: ""; flex: 1; height: 1px; }
 
@@ -231,16 +239,15 @@
 
 .conversation-message.kind-assignment_created,
 .conversation-message.kind-human_decision_required,
-.conversation-message.kind-output_ready { background: var(--mission-color-surface); border-inline-start: 3px solid var(--mission-color-accent); border-radius: var(--mission-radius-sm); }
+.conversation-message.kind-output_ready { background: var(--mission-color-surface); border-inline-start: 1px solid var(--mission-color-accent); border-radius: var(--mission-radius-sm); }
 .conversation-message.kind-human_decision_required { border-inline-start-color: var(--mission-color-warning); }
 
 .conversation-message.is-progress {
-  background: var(--mission-color-surface-subtle);
+  background: transparent;
   border: 0;
-  border-inline-start: 2px solid var(--mission-color-accent);
-  border-radius: 0 var(--mission-radius-sm) var(--mission-radius-sm) 0;
+  border-radius: var(--mission-radius-sm);
   grid-template-columns: 1.75rem minmax(0, 1fr);
-  max-width: 42rem;
+  max-width: 34rem;
   margin-block: var(--mission-space-1);
   padding: 0.375rem 0.625rem;
 }
@@ -257,7 +264,7 @@
 .conversation-kind { color: var(--mission-color-muted); font-size: 0.6875rem; }
 .conversation-kind { border: 1px solid var(--mission-color-border); border-radius: 999px; padding: 0.125rem var(--mission-space-2); }
 .conversation-message-body p { line-height: 1.6; margin: var(--mission-space-1) 0 0; max-width: 52rem; overflow-wrap: anywhere; white-space: pre-wrap; }
-.conversation-work-link { color: var(--mission-color-accent); display: inline-block; font-size: 0.75rem; margin-block-start: var(--mission-space-2); }
+.conversation-work-link { color: var(--mission-color-accent); display: inline-block; font-size: 0.75rem; font-weight: 650; margin-block-start: var(--mission-space-2); }
 .conversation-work-link.is-action { background: none; border: 0; cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0; text-decoration: underline; text-underline-offset: 0.15em; }
 .conversation-message-actions {
   align-items: center;
@@ -369,24 +376,39 @@
 .thread-submit:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .conversation-composer {
-  background: var(--mission-color-surface);
-  border: 1px solid var(--mission-color-border);
-  border-radius: var(--mission-radius-md) var(--mission-radius-md) 0 0;
-  box-shadow: var(--mission-shadow-composer);
+  background: transparent;
   display: grid;
   gap: var(--mission-space-2);
-  margin: 0 auto;
-  max-width: 54rem;
+  margin: 0 auto var(--mission-space-3);
+  max-width: 48rem;
   min-width: 0;
-  padding: var(--mission-space-3) var(--mission-space-4) var(--mission-space-4);
-  width: 100%;
+  padding: 0;
+  width: calc(100% - (2 * var(--mission-space-4)));
 }
 
+.composer-command {
+  background: var(--mission-color-surface-raised);
+  border: 1px solid var(--mission-color-border-strong);
+  border-radius: var(--mission-radius-md);
+  box-shadow: var(--mission-shadow-composer);
+  min-width: 0;
+}
+
+.composer-command.is-message-only {
+  align-items: end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.composer-command.is-message-only .composer-input-wrap { grid-column: 1; }
+.composer-command.is-message-only .composer-input-wrap textarea { border-radius: var(--mission-radius-md); min-height: 3.25rem; padding-block: 0.875rem; }
+.composer-command.is-message-only .composer-footer { border-block-start: 0; grid-column: 2; min-height: 0; padding: 0.375rem; }
+
 .composer-mode { display: flex; gap: var(--mission-space-1); }
-.composer-mode button { border-color: transparent; color: var(--mission-color-muted); min-height: var(--mission-control-compact); padding-inline: var(--mission-space-3); }
+.composer-mode button { border-color: transparent; color: var(--mission-color-muted); font-size: 0.75rem; min-height: 1.875rem; padding-inline: var(--mission-space-2); }
 .composer-mode button[aria-pressed="true"] { background: var(--mission-color-accent-soft); color: var(--mission-color-accent); }
 .composer-input-wrap { min-width: 0; position: relative; }
-.composer-input-wrap textarea { background: var(--mission-color-canvas); border: 1px solid var(--mission-color-border-strong); border-radius: var(--mission-radius-sm); color: var(--mission-color-fg); font: inherit; line-height: 1.5; max-height: 10rem; min-height: 4.25rem; padding: var(--mission-space-3); resize: vertical; width: 100%; }
+.composer-input-wrap textarea { background: transparent; border: 0; border-radius: var(--mission-radius-md) var(--mission-radius-md) 0 0; color: var(--mission-color-fg); font: inherit; line-height: 1.5; max-height: 8rem; min-height: 2.75rem; padding: 0.75rem 0.875rem 0.5rem; resize: none; width: 100%; }
 .composer-input-wrap textarea::placeholder { color: var(--mission-color-muted); opacity: 0.72; }
 .composer-input-wrap textarea:disabled { cursor: wait; opacity: 0.72; }
 
@@ -416,7 +438,7 @@
 .mention-picker button > span { grid-row: 1 / span 2; }
 .mention-picker p { color: var(--mission-color-muted); margin: 0; padding: var(--mission-space-3); }
 
-.composer-routing-preview { align-items: center; display: flex; flex-wrap: wrap; gap: var(--mission-space-2); min-width: 0; }
+.composer-routing-preview { align-items: center; border-block-end: 1px solid var(--mission-color-border); display: flex; flex-wrap: wrap; gap: var(--mission-space-2); min-width: 0; padding: var(--mission-space-2) 0.875rem; }
 .composer-routing-preview strong { color: var(--mission-color-accent); font-size: 0.75rem; }
 .composer-routing-preview span,
 .composer-routing-preview small { overflow-wrap: anywhere; }
@@ -425,10 +447,10 @@
 .composer-error button { padding-inline: var(--mission-space-3); }
 .composer-error-actions { display: flex; flex-wrap: wrap; gap: var(--mission-space-2); }
 .composer-error-actions .is-secondary { border-color: transparent; color: var(--mission-color-muted); }
-.composer-actions { align-items: center; display: flex; gap: var(--mission-space-3); justify-content: space-between; }
-.composer-actions > span { color: var(--mission-color-muted); font-size: 0.75rem; line-height: 1.4; overflow-wrap: anywhere; }
-.composer-plan-link { color: var(--mission-color-warning); font-size: 0.75rem; overflow-wrap: anywhere; }
-.composer-actions > button { background: var(--mission-color-accent); border-color: var(--mission-color-accent); color: var(--mission-color-accent-ink); flex: 0 0 auto; font-weight: 700; padding-inline: var(--mission-space-4); }
+.composer-footer { align-items: center; border-block-start: 1px solid var(--mission-color-border); display: flex; gap: var(--mission-space-2); min-height: 2.5rem; padding: 0.25rem 0.375rem 0.375rem; }
+.composer-actions { align-items: center; display: flex; margin-inline-start: auto; }
+.composer-plan-link { color: var(--mission-color-warning); font-size: 0.75rem; margin-inline-start: auto; overflow-wrap: anywhere; }
+.composer-actions > button { background: var(--mission-color-accent); border-color: var(--mission-color-accent); color: var(--mission-color-accent-ink); flex: 0 0 auto; font-size: 0.75rem; font-weight: 700; min-height: 2rem; padding-inline: var(--mission-space-3); }
 .conversation-composer button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .mission-back:focus-visible,
@@ -460,10 +482,10 @@
 }
 
 @media (max-width: 48rem) {
-  .mission-conversation-workspace { grid-template-rows: auto auto minmax(0, 1fr); }
+  .mission-conversation-workspace { grid-template-rows: auto minmax(0, 1fr); }
   .mission-room-header { gap: var(--mission-space-2); grid-template-columns: auto minmax(0, 1fr); min-height: 4rem; padding: var(--mission-space-2) var(--mission-space-3); }
   .mission-back { justify-self: start; }
-  .mission-tabs { padding-inline: 0; }
+  .mission-tabs { border-block-start: 1px solid var(--mission-color-border); grid-column: 1 / -1; margin: 0 calc(-1 * var(--mission-space-3)) calc(-1 * var(--mission-space-2)); padding-inline: var(--mission-space-2); }
   .mission-room-layout { grid-template-columns: 1fr; grid-template-rows: minmax(44px, auto) minmax(0, 1fr); position: relative; }
   .crew-sheet-scrim { background: var(--mission-color-overlay); border: 0; cursor: pointer; display: block; inset: 0 0 4.25rem; padding: 0; position: fixed; width: 100%; z-index: 44; }
   .mission-conversation-workspace .mission-crew-rail { border-block-end: 1px solid var(--mission-color-border); border-inline-end: 0; display: flex; gap: var(--mission-space-4); min-block-size: 44px; overflow: hidden; padding: 0 var(--mission-space-3); }
@@ -496,15 +518,22 @@
   .mission-conversation-surface { grid-row: 2; }
   .crew-member { padding-block: var(--mission-space-1); }
   .conversation-timeline { padding: var(--mission-space-3); }
-  .conversation-composer { padding: var(--mission-space-2) var(--mission-space-3); }
-  .composer-actions > span { display: none; }
-  .composer-actions > button { width: 100%; }
+  .conversation-composer { margin-block-end: var(--mission-space-2); padding: 0; width: calc(100% - (2 * var(--mission-space-3))); }
+  .composer-mode button { min-height: 2.25rem; }
+  .composer-actions > button { min-height: 2.25rem; }
   .thread-drawer { border-inline-start: 0; max-width: none; min-width: 0; width: 100%; }
   .conversation-message-actions { background: transparent; border: 0; box-shadow: none; inset: auto; margin-block-start: var(--mission-space-2); opacity: 1; padding: 0; pointer-events: auto; position: static; transform: none; }
 }
 
 @media (hover: none), (pointer: coarse) {
   .conversation-message-actions { background: transparent; border: 0; box-shadow: none; inset: auto; margin-block-start: var(--mission-space-2); opacity: 1; padding: 0; pointer-events: auto; position: static; transform: none; }
+  .crew-member button { min-height: 2.75rem !important; min-width: 2.75rem !important; opacity: 1; pointer-events: auto; }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .crew-member button { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+  .crew-member:hover button,
+  .crew-member:focus-within button { opacity: 1; pointer-events: auto; }
 }
 
 @media (max-width: 30rem) {

@@ -315,18 +315,18 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
         <h2>{missionTitle(overview, room)}</h2>
         <p>{missionOutcome(overview, room)}</p>
       </div>
+      <nav className="mission-tabs" aria-label="Mission views">
+        {(["conversation", "work", ...(filesEnabled ? ["files"] as const : [])] as const).map((view) => {
+          const Icon = view === "conversation" ? MessageSquare : view === "work" ? ListChecks : Files;
+          return <button
+            key={view}
+            type="button"
+            aria-current={activeView === view ? "page" : undefined}
+            onClick={() => onView?.(view)}
+          ><Icon size={15} aria-hidden="true" />{view.slice(0, 1).toUpperCase() + view.slice(1)}</button>;
+        })}
+      </nav>
     </header>
-    <nav className="mission-tabs" aria-label="Mission views">
-      {(["conversation", "work", ...(filesEnabled ? ["files"] as const : [])] as const).map((view) => {
-        const Icon = view === "conversation" ? MessageSquare : view === "work" ? ListChecks : Files;
-        return <button
-          key={view}
-          type="button"
-          aria-current={activeView === view ? "page" : undefined}
-          onClick={() => onView?.(view)}
-        ><Icon size={15} aria-hidden="true" />{view.slice(0, 1).toUpperCase() + view.slice(1)}</button>;
-      })}
-    </nav>
     {accessLost ? <div className="mission-access-lost" role="alert">
       <strong>You no longer have access to this Mission.</strong>
       <span>Return to Missions to continue with work you can access.</span>
@@ -337,7 +337,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
         aria-label="Mission crew"
         onKeyDown={(event) => { if (event.key === "Escape") setCrewOpen(false); }}
       >
-        <header><div><p className="workplace-eyebrow">Crew</p><h3>Humans and agents</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-label={crewOpen ? "Close Mission crew" : "Open Mission crew"} aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? <X size={17} aria-hidden="true" /> : <><UsersRound size={16} aria-hidden="true" /><span>Crew</span><ChevronDown size={15} aria-hidden="true" /></>}</button></header>
+        <header><div><h3>Crew</h3></div><span>{agents.length + humans.length}</span><button className="crew-mobile-toggle" type="button" aria-label={crewOpen ? "Close Mission crew" : "Open Mission crew"} aria-expanded={crewOpen} onClick={() => setCrewOpen((open) => !open)}>{crewOpen ? <X size={17} aria-hidden="true" /> : <><UsersRound size={16} aria-hidden="true" /><span>Crew</span><ChevronDown size={15} aria-hidden="true" /></>}</button></header>
         {crewLoading ? <p className="crew-state" role="status">Loading Mission crew…</p> : null}
         {crewError ? <div className="crew-state" role="alert"><span>Crew is unavailable. This Mission still works.</span><button type="button" onClick={() => void loadCrew()}>Retry</button></div> : null}
         {!crewLoading && !crewError ? <>

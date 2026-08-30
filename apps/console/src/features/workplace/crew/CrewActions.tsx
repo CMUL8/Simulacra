@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from "react";
-import { Plus, UserPlus, X } from "lucide-react";
+import { useRef, useState, type FormEvent } from "react";
+import { ChevronDown, Plus, UserPlus, X } from "lucide-react";
 
 import { createCmul8Invitation, createMissionAgent, type MissionAgentInput } from "../../../api";
 import "./crew-actions.css";
@@ -33,6 +33,8 @@ export function CrewActions({ missionId, canAddAgent, canInviteHuman, onAgentAdd
   onAgentAdded: () => void;
 }) {
   const [active, setActive] = useState<"agent" | "human" | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [agent, setAgent] = useState<AgentDraft>(emptyAgent);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<MissionRole>("member");
@@ -83,10 +85,19 @@ export function CrewActions({ missionId, canAddAgent, canInviteHuman, onAgentAdd
   };
 
   return <>
-    <div className="crew-quick-actions">
-      {canAddAgent ? <button type="button" onClick={() => setActive("agent")}><Plus size={14} aria-hidden /> Add agent</button> : null}
-      {canInviteHuman ? <button type="button" onClick={() => setActive("human")}><UserPlus size={14} aria-hidden /> Invite human</button> : null}
-    </div>
+    {canAddAgent || canInviteHuman ? <div className="crew-quick-actions" onKeyDown={(event) => {
+      if (event.key !== "Escape") return;
+      setActionsOpen(false);
+      actionsTrigger.current?.focus();
+    }}>
+      <button ref={actionsTrigger} className="crew-add-trigger" type="button" aria-expanded={actionsOpen} onClick={() => setActionsOpen((open) => !open)}>
+        <Plus size={14} aria-hidden /> Add to crew <ChevronDown size={13} aria-hidden />
+      </button>
+      {actionsOpen ? <div className="crew-add-options" aria-label="Add to Mission crew">
+        {canAddAgent ? <button type="button" onClick={() => { setActionsOpen(false); setActive("agent"); }}><Plus size={14} aria-hidden /> Add agent</button> : null}
+        {canInviteHuman ? <button type="button" onClick={() => { setActionsOpen(false); setActive("human"); }}><UserPlus size={14} aria-hidden /> Invite human</button> : null}
+      </div> : null}
+    </div> : null}
 
     {active ? <div className="crew-dialog-scrim">
       <form className="crew-dialog" role="dialog" aria-modal="true" aria-label={active === "agent" ? "Add an agent" : "Invite a human"} onSubmit={(event) => void (active === "agent" ? addAgent(event) : inviteHuman(event))}>
