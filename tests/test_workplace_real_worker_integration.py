@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+from apps.api import file_routes
 from simulacra.collaboration import CollaborationService, JsonCollaborationRepository
+from simulacra.demo.identity import AuthContext, User
 from simulacra.harnesses import CodexHarness, NetworkPolicy, TerminalStatus
 from simulacra.missions import JsonMissionRepository, MissionService, MissionWorker
+from simulacra.missions.projections import project_attention_items, project_work_items
 from simulacra.operation_graph import OperationGraphStore, load_operation_graph
 from simulacra.workplace import AssignmentCoordinator
 
@@ -50,7 +53,7 @@ def _approved_revision(workspace: Path) -> str:
     return revision.revision_hash
 
 
-def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: Path):
+def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: Path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     collaboration_repository = JsonCollaborationRepository(tmp_path / "collaboration")
@@ -94,6 +97,70 @@ def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: 
     assert len(transport.requests) == 1
     outputs = mission.deliverables("tenant_1", "project_1")
     assert len(outputs) == 1 and outputs[0].state == "awaiting_verification"
+    output_file_id = file_routes.output_file_id(
+        outputs[0].id, tenant_id="tenant_1", project_id="project_1",
+    )
+
+    def visible_assignment(project_id: str, transaction_id: str, run_id: str):
+        visible = coordinator.visible_result(
+            tenant_id="tenant_1", project_id=project_id, transaction_id=transaction_id,
+        )
+        return visible if visible is not None and (not run_id or visible.run_id == run_id) else None
+
+    awaiting_work = project_work_items(
+        mission.repository,
+        collaboration_repository,
+        tenant_id="tenant_1",
+        human_id="owner",
+        assignment_visible=visible_assignment,
+        output_file_identity=lambda _project_id, _output_id: output_file_id,
+    )
+    awaiting_item = next(item for item in awaiting_work if item["source_id"] == assignment.task_id)
+    assert awaiting_item["state"] == "ready_for_review"
+    assert awaiting_item["allowed_actions"] == ["open", "verify_output"]
+    assert awaiting_item["action_targets"]["verify_output"] == {
+        "kind": "output",
+        "id": outputs[0].id,
+        "revision": outputs[0].version,
+        "file_id": output_file_id,
+    }
+
+    awaiting_attention = project_attention_items(
+        mission.repository, collaboration_repository,
+        tenant_id="tenant_1", human_id="owner",
+    )
+    output_attention = next(
+        item for item in awaiting_attention
+        if item["type"] == "output_verification" and item["subject_id"] == outputs[0].id
+    )
+    assert output_attention["actionable"] is True
+    assert output_attention["allowed_actions"] == ["open", "verify_output"]
+
+    monkeypatch.setattr(file_routes, "_mission_root", tmp_path / "missions")
+    monkeypatch.setattr(file_routes, "_collaboration_root", tmp_path / "collaboration")
+    monkeypatch.setattr(file_routes, "project_dir", lambda _project_id: workspace)
+    file_payload = file_routes.authorized_file_inventory(
+        "project_1", kind="all",
+        ctx=AuthContext(
+            User("owner", "owner@example.test", "Ada", "unused"),
+            "tenant_1", "owner", "test",
+        ),
+    )
+    output_file = next(item for item in file_payload["items"] if item["id"] == output_file_id)
+    assert output_file["state"] == "awaiting_verification"
+    assert output_file["version"] == outputs[0].version
+    assert output_file["allowed_actions"] == ["verify_output"]
+    assert output_file["action_targets"]["verify_output"] == {
+        "kind": "output", "id": outputs[0].id, "revision": outputs[0].version,
+    }
+
+    public_projection_text = str({
+        "work": awaiting_item,
+        "attention": output_attention,
+        "files": file_payload,
+    }).lower()
+    for private_term in ("codex", "runtime", "provider", "traceback", "/app/"):
+        assert private_term not in public_projection_text
 
     messages = collaboration.conversation_roots("tenant_1", "project_1")
     agent_messages = [message for message in messages if message.kind == "agent_completed"]
@@ -107,6 +174,37 @@ def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: 
         "run_id": assignment.run_id,
         "output_id": outputs[0].id,
     }
+
+    verified = mission.verify_deliverable(
+        "tenant_1", "project_1", outputs[0].id, "owner",
+        outputs[0].content_hash, outputs[0].revision,
+    )
+    assert verified.state == "verified"
+    assert verified.verified_by == "owner"
+    assert verified.verified_hash == outputs[0].content_hash
+
+    verified_work = project_work_items(
+        mission.repository,
+        collaboration_repository,
+        tenant_id="tenant_1",
+        human_id="owner",
+        assignment_visible=visible_assignment,
+        output_file_identity=lambda _project_id, _output_id: output_file_id,
+    )
+    verified_item = next(item for item in verified_work if item["source_id"] == assignment.task_id)
+    assert verified_item["state"] == "done"
+    assert "verify_output" not in verified_item["allowed_actions"]
+
+    verified_attention = project_attention_items(
+        mission.repository, collaboration_repository,
+        tenant_id="tenant_1", human_id="owner",
+    )
+    closed_output_attention = next(
+        item for item in verified_attention
+        if item["type"] == "output_verification" and item["subject_id"] == outputs[0].id
+    )
+    assert closed_output_attention["actionable"] is False
+    assert closed_output_attention["allowed_actions"] == ["open"]
 
     coordinator.project_agent_results("tenant_1", "project_1")
     coordinator.project_agent_results("tenant_1", "project_1")

@@ -229,6 +229,7 @@
 .conversation-kind { border: 1px solid var(--mission-color-border); border-radius: 999px; padding: 0.125rem var(--mission-space-2); }
 .conversation-message-body p { line-height: 1.6; margin: var(--mission-space-1) 0 0; max-width: 52rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .conversation-work-link { color: var(--mission-color-accent); display: inline-block; font-size: 0.75rem; margin-block-start: var(--mission-space-2); }
+.conversation-work-link.is-action { background: none; border: 0; cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0; text-decoration: underline; text-underline-offset: 0.15em; }
 .conversation-message-actions {
   align-items: center;
   display: flex;

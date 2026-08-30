@@ -40,6 +40,7 @@ export function ConversationTimeline({
   onReply,
   onToggleReaction,
   onToggleSaved,
+  onOpenWork,
   actionAttempt = null,
   onRetryAction,
   onDismissAction,
@@ -56,6 +57,7 @@ export function ConversationTimeline({
   onReply?: (message: ConversationMessage, opener: HTMLButtonElement) => void;
   onToggleReaction?: (message: ConversationMessage, reaction: "check", next: boolean) => void;
   onToggleSaved?: (message: ConversationMessage, next: boolean) => void;
+  onOpenWork?: (workItemId: string, action?: string) => void;
   actionAttempt?: { messageId: string; label: string; pending: boolean; failed: boolean } | null;
   onRetryAction?: () => void;
   onDismissAction?: () => void;
@@ -212,7 +214,9 @@ export function ConversationTimeline({
             <time dateTime={message.created_at}>{timeLabel(message.created_at)}</time>
           </header>
           <p>{message.body || "This message was removed."}</p>
-          {message.links.work_item_id ? <span className="conversation-work-link">Work is tracked in this Mission</span> : null}
+          {message.links.work_item_id && message.links.output_id && onOpenWork
+            ? <button className="conversation-work-link is-action" type="button" onClick={() => onOpenWork(message.links.work_item_id!, "verify_output")}>Review output</button>
+            : message.links.work_item_id ? <span className="conversation-work-link">Work is tracked in this Mission</span> : null}
           {substantive ? <div className="conversation-message-actions" aria-label={`Actions for ${message.author.display_name || "Mission teammate"}`}>
             <button
               type="button"

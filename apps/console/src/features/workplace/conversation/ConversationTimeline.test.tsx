@@ -183,6 +183,32 @@ test("substantive messages expose concise keyboard actions without exposing iden
   expect(document.body).not.toHaveTextContent("author_message_actions");
 });
 
+test("an agent completion opens its exact reviewable Work item without exposing durable ids", () => {
+  const onOpenWork = vi.fn();
+  const completion = {
+    ...message("message_completion", "The report is ready for review.", "2026-01-02T10:00:00Z", "Fin"),
+    kind: "agent_completed",
+    author: { id: "agent_fin", kind: "agent" as const, display_name: "Fin", avatar_url: null },
+    links: { work_item_id: "task_completion", run_id: "run_completion", output_id: "output_completion" },
+  };
+  render(<ConversationTimeline
+    messages={[completion]}
+    loading={false}
+    error={null}
+    hasOlder={false}
+    loadingOlder={false}
+    onLoadOlder={() => undefined}
+    onOpenWork={onOpenWork}
+  />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Review output" }));
+
+  expect(onOpenWork).toHaveBeenCalledWith("task_completion", "verify_output");
+  expect(document.body).not.toHaveTextContent("task_completion");
+  expect(document.body).not.toHaveTextContent("run_completion");
+  expect(document.body).not.toHaveTextContent("output_completion");
+});
+
 test("message overflow copies content and a stable Mission link", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

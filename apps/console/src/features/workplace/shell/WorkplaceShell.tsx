@@ -242,9 +242,12 @@ export function WorkplaceShell({ attentionEnabled, conversationEnabled = false, 
         focusAction={missionFocusAction}
         filesEnabled={filesEnabled}
         previewEnabled={previewEnabled}
-        onView={(view, focus) => {
-          const query = focus ? `?focus=${encodeURIComponent(focus)}` : "";
-          window.history.pushState(window.history.state, "", `/missions/${encodeURIComponent(missionId)}/${view}${query}`);
+        onView={(view, focus, action) => {
+          const query = new URLSearchParams();
+          if (focus) query.set(view === "work" ? "item" : "focus", focus);
+          if (action) query.set("action", action);
+          const suffix = query.toString();
+          window.history.pushState(window.history.state, "", `/missions/${encodeURIComponent(missionId)}/${view}${suffix ? `?${suffix}` : ""}`);
           updateLocation();
         }}
         onBack={() => {

@@ -70,7 +70,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
   missionId: string;
   currentHumanId: string;
   onBack: () => void;
-  onView?: (view: "conversation" | "work" | "files", focusTarget?: string | null) => void;
+  onView?: (view: "conversation" | "work" | "files", focusTarget?: string | null, focusAction?: string | null) => void;
   activeView?: "conversation" | "work" | "files";
   focusTarget?: string | null;
   focusAction?: string | null;
@@ -370,6 +370,7 @@ export function MissionConversationWorkspace({ missionId, currentHumanId, onBack
             if (actionAttempt) return;
             void runAction({ kind: "saved", messageId: message.id, reaction: null, next, requestId: newRequestId(), label: next ? "Save" : "Unsave", pending: false, failed: false });
           }}
+          onOpenWork={(workItemId, action) => onView?.("work", workItemId, action)}
           actionAttempt={actionAttempt}
           onRetryAction={() => actionAttempt && void runAction(actionAttempt)}
           onDismissAction={() => setActionAttempt(null)}
