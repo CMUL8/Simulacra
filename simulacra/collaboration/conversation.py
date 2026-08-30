@@ -264,6 +264,43 @@ class ConversationService:
         and wake-up identity make a worker retry or restart converge on the
         same visible contribution instead of creating duplicate chat rows.
         """
+        return self._project_agent_event(
+            tenant_id=tenant_id, project_id=project_id, source_event_id=source_event_id,
+            agent_id=agent_id, kind="agent_completed", body=body, created_at=created_at,
+            work_item_id=work_item_id, run_id=run_id, output_id=output_id,
+        )
+
+    def project_agent_progress(
+        self, *, tenant_id: str, project_id: str, source_event_id: str,
+        agent_id: str, body: str, created_at: str,
+        work_item_id: str, run_id: str,
+    ) -> ConversationMessage:
+        """Project a durable, product-safe agent progress milestone."""
+        return self._project_agent_event(
+            tenant_id=tenant_id, project_id=project_id, source_event_id=source_event_id,
+            agent_id=agent_id, kind="agent_started", body=body, created_at=created_at,
+            work_item_id=work_item_id, run_id=run_id, output_id=None,
+        )
+
+    def project_agent_failure(
+        self, *, tenant_id: str, project_id: str, source_event_id: str,
+        agent_id: str, body: str, created_at: str,
+        work_item_id: str, run_id: str,
+    ) -> ConversationMessage:
+        """Project a durable, product-safe stopped-work milestone."""
+        return self._project_agent_event(
+            tenant_id=tenant_id, project_id=project_id, source_event_id=source_event_id,
+            agent_id=agent_id, kind="agent_progress", body=body, created_at=created_at,
+            work_item_id=work_item_id, run_id=run_id, output_id=None,
+        )
+
+    def _project_agent_event(
+        self, *, tenant_id: str, project_id: str, source_event_id: str,
+        agent_id: str, kind: str, body: str, created_at: str,
+        work_item_id: str, run_id: str, output_id: str | None,
+    ) -> ConversationMessage:
+        if kind not in {"agent_started", "agent_progress", "agent_completed"}:
+            raise ConversationConflictError("agent_result_projection_conflict")
         for value, label in (
             (tenant_id, "tenant_id"), (project_id, "project_id"),
             (source_event_id, "source_event_id"), (agent_id, "agent_id"),
@@ -278,7 +315,7 @@ class ConversationService:
         ).hexdigest()[:32]
         message = ConversationMessage(
             id=f"message_agent_{digest}", tenant_id=tenant_id, project_id=project_id,
-            author={"id": agent_id, "kind": "agent"}, kind="agent_completed",
+            author={"id": agent_id, "kind": "agent"}, kind=kind,
             body=safe_body, created_at=created_at,
             links={"work_item_id": work_item_id, "run_id": run_id, "output_id": output_id},
         )

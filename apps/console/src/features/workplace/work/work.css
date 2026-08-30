@@ -23,7 +23,8 @@
 .work-group h3 span, .work-board-column h3 span { background: var(--mission-color-surface-raised); border-radius: 999px; padding: 0.1rem 0.45rem; }
 .work-row { align-items: center; background: var(--mission-color-surface); border-block-start: 1px solid var(--mission-color-border); display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; }
 .work-row:last-child { border-block-end: 1px solid var(--mission-color-border); }
-.work-row-main { align-items: center; background: transparent; border: 0; color: var(--mission-color-fg); cursor: pointer; display: grid; font: inherit; gap: var(--mission-space-3); grid-template-columns: 0.3rem minmax(12rem, 1fr) minmax(15rem, auto); min-height: 4.25rem; min-width: 0; padding: var(--mission-space-2) var(--mission-space-3); text-align: start; }
+.work-row:hover, .work-row:focus-within { background: var(--mission-color-surface-raised); }
+.work-row-main { align-items: center; background: transparent; border: 0; color: var(--mission-color-fg); cursor: pointer; display: grid; font: inherit; gap: var(--mission-space-3); grid-template-columns: 0.3rem minmax(12rem, 1fr) minmax(15rem, auto); min-height: 4rem; min-width: 0; padding: var(--mission-space-2) var(--mission-space-3); text-align: start; }
 .work-row-copy, .work-row-context { display: grid; min-width: 0; }
 .work-row-copy strong, .work-row-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-row-copy strong { font-size: 0.8125rem; }

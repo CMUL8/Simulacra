@@ -51,6 +51,16 @@ async function installMissionFixture(page: Page) {
     "Work completed. An output is ready for human verification.",
     { work_item_id: "task_completion", run_id: "run_completion", output_id: outputId },
   );
+  const started = {
+    ...message(
+      "message_started",
+      "agent_started",
+      { id: "agent_fin", kind: "agent", display_name: "Fin" },
+      "Working on the assignment. Progress and questions will return here.",
+      { work_item_id: "task_completion", run_id: "run_completion", output_id: null },
+    ),
+    created_at: "2026-08-29T09:01:00Z",
+  };
 
   await page.addInitScript(() => {
     localStorage.setItem("simulacra_token", "mission-completion-session");
@@ -143,7 +153,7 @@ async function installMissionFixture(page: Page) {
         presence: [],
       };
     } else if (path === `/projects/${missionId}/conversation` && method === "GET") {
-      payload = { items: phase === "ready" ? [] : [assignment, completion], next_before: null };
+      payload = { items: phase === "ready" ? [] : [assignment, started, completion], next_before: null };
     } else if (path === `/projects/${missionId}/conversation/messages` && method === "POST") {
       const body = JSON.parse(request.postData() || "{}") as Record<string, unknown>;
       expect(body).toMatchObject({
@@ -286,12 +296,19 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
   // Leaving and returning must rebuild the room from durable product state.
   await page.goto("/missions?state=active");
   await page.goto(`/missions/${missionId}/conversation`);
+  const progress = page.locator(".conversation-message.is-progress");
+  await expect(progress).toContainText("Work started");
+  await expect(progress).toContainText("Working on the assignment");
   await expect(page.getByText("Work completed. An output is ready for human verification.")).toBeVisible();
   await expectNoPrivateTerms(page);
   await page.screenshot({ path: `${artifactRoot}/mission-completion-conversation.png`, fullPage: true });
   await page.getByRole("button", { name: "Review output" }).click();
   await expect(page).toHaveURL(new RegExp(`/missions/${missionId}/work\\?item=task_completion&action=verify_output$`));
-  await expect(page.getByText("Fin returned a report with evidence for human verification.")).toBeVisible();
+  await expect(
+    page.getByLabel("Work details", { exact: true }).getByText(
+      "Fin returned a report with evidence for human verification.",
+    ),
+  ).toBeVisible();
 
   await page.getByTitle("Needs you").click();
   await expect(page.getByRole("button", { name: /Output ready to verify/ })).toBeVisible();
@@ -337,4 +354,29 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
   await page.screenshot({ path: `${artifactRoot}/mission-completion-verified.png`, fullPage: true });
 
   await expectNoPrivateTerms(page);
+});
+
+test("mission_progress_and_crew_stay_compact_on_mobile", async ({ page }) => {
+  test.setTimeout(45_000);
+  await mkdir(artifactRoot, { recursive: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installMissionFixture(page);
+
+  await page.goto(`/missions/${missionId}/conversation`);
+  const composer = page.getByRole("textbox", { name: "Message the Mission" });
+  await composer.fill("@");
+  await page.getByRole("option", { name: /Fin/ }).click();
+  await composer.fill("@Fin reconcile invoice 42 and prepare a reviewable report");
+  await page.getByRole("button", { name: "Assign work", exact: true }).click();
+  await page.goto(`/missions/${missionId}/conversation`);
+
+  await expect(page.locator(".conversation-message.is-progress")).toContainText("Work started");
+  await expect(page.getByRole("button", { name: "Review output" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "Show" }).click();
+  await expect(page.getByRole("complementary", { name: "Mission crew" })).toHaveClass(/is-open/);
+  await expect(page.getByRole("button", { name: "Mention Fin" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expectNoPrivateTerms(page);
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-mobile.png`, fullPage: true });
 });

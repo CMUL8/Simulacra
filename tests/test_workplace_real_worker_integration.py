@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Mapping
 
 from apps.api import file_routes
@@ -16,8 +17,9 @@ from simulacra.workplace import AssignmentCoordinator
 class _DeterministicLocalCodexTransport:
     """Provider-free Codex boundary used only to prove the product integration."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, on_run: Callable[[], None] | None = None) -> None:
         self.requests: list[Any] = []
+        self.on_run = on_run
 
     async def create_thread(self, *, request: Any, thread_id: str | None = None) -> str:
         return thread_id or "thread_local_integration"
@@ -25,6 +27,8 @@ class _DeterministicLocalCodexTransport:
     async def run(self, *, request: Any, thread_id: str) -> Mapping[str, Any]:
         assert thread_id == "thread_local_integration"
         assert request.network_policy is NetworkPolicy.DENY
+        if self.on_run is not None:
+            self.on_run()
         self.requests.append(request)
         output = request.write_paths[0] / "codex-runtime-provider-Traceback.md"
         output.write_text("# Close report\n\nInvoice 42 requires human review.\n", encoding="utf-8")
@@ -82,7 +86,20 @@ def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: 
         acceptance_criteria=["The report cites the exception and is ready for human verification"],
         assigned_agent_ids=[agent.id], graph_revision=revision,
     )
-    transport = _DeterministicLocalCodexTransport()
+    def assert_started_progress_is_already_visible() -> None:
+        in_flight = collaboration.conversation_roots("tenant_1", "project_1")
+        started_messages = [message for message in in_flight if message.kind == "agent_started"]
+        assert len(started_messages) == 1
+        assert started_messages[0].author == {"id": agent.id, "kind": "agent"}
+        assert started_messages[0].body == "Working on the assignment. Progress and questions will return here."
+        assert started_messages[0].links == {
+            "work_item_id": assignment.task_id,
+            "run_id": assignment.run_id,
+            "output_id": None,
+        }
+        assert not any(message.kind == "agent_completed" for message in in_flight)
+
+    transport = _DeterministicLocalCodexTransport(on_run=assert_started_progress_is_already_visible)
 
     def harness_factory(_config: Any, **adapters: Any) -> CodexHarness:
         return CodexHarness(
@@ -163,13 +180,13 @@ def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: 
         assert private_term not in public_projection_text
 
     messages = collaboration.conversation_roots("tenant_1", "project_1")
-    agent_messages = [message for message in messages if message.kind == "agent_completed"]
-    assert len(agent_messages) == 1
-    assert agent_messages[0].author == {"id": agent.id, "kind": "agent"}
-    assert agent_messages[0].body == "Work completed. An output is ready for human verification."
+    agent_messages = [message for message in messages if message.kind in {"agent_started", "agent_completed"}]
+    assert [message.kind for message in agent_messages] == ["agent_started", "agent_completed"]
+    assert agent_messages[1].author == {"id": agent.id, "kind": "agent"}
+    assert agent_messages[1].body == "Work completed. An output is ready for human verification."
     for private_detail in ("provider", "model", "runtime", "codex", "/app/", "Traceback"):
-        assert private_detail not in agent_messages[0].body
-    assert agent_messages[0].links == {
+        assert private_detail not in " ".join(message.body or "" for message in agent_messages)
+    assert agent_messages[1].links == {
         "work_item_id": assignment.task_id,
         "run_id": assignment.run_id,
         "output_id": outputs[0].id,
@@ -210,3 +227,66 @@ def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: 
     coordinator.project_agent_results("tenant_1", "project_1")
     replayed = collaboration.conversation_roots("tenant_1", "project_1")
     assert [message.id for message in replayed] == [message.id for message in messages]
+
+
+def test_agent_execution_waits_until_start_progress_is_visible(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    collaboration_repository = JsonCollaborationRepository(tmp_path / "collaboration")
+    collaboration = CollaborationService(collaboration_repository)
+    collaboration.create_room(
+        tenant_id="tenant_1", project_id="project_1", creator_id="owner", creator_role="owner",
+    )
+    mission = MissionService(JsonMissionRepository(tmp_path / "missions"))
+    mission.bootstrap(
+        "tenant_1", "project_1", "owner",
+        {"title": "Reconcile invoices", "objective": "Find invoice exceptions"},
+    )
+    agent = mission.add_agent("tenant_1", "project_1", {
+        "name": "Fin", "role": "Reconciliation analyst", "mandate": "Prepare reviewable evidence",
+        "autonomy": "execute_safely", "tools": ["artifact.write"],
+    })
+    revision = _approved_revision(workspace)
+    coordinator = AssignmentCoordinator(
+        collaboration_repository, mission, workspace,
+        runs_root=tmp_path / "runs", clock=lambda: "2026-01-02T09:00:00Z",
+    )
+    assignment = coordinator.assign(
+        tenant_id="tenant_1", project_id="project_1", authenticated_human_actor_id="owner",
+        client_request_id="assign_visible_start", body="@Fin reconcile invoice 42",
+        title="Reconcile invoice 42", objective="Return a reviewable report",
+        acceptance_criteria=["The report is ready for human verification"],
+        assigned_agent_ids=[agent.id], graph_revision=revision,
+    )
+    original_project = coordinator.project_agent_results
+
+    def unavailable_after_start(tenant_id: str, project_id: str) -> list[str]:
+        if any(event["type"] == "agent_started" for event in mission.events(tenant_id, project_id)):
+            raise OSError("temporary collaboration outage")
+        return original_project(tenant_id, project_id)
+
+    monkeypatch.setattr(coordinator, "project_agent_results", unavailable_after_start)
+    transport = _DeterministicLocalCodexTransport()
+    result = MissionWorker(
+        mission, workspace, "worker_integration",
+        lambda _config, **adapters: CodexHarness(
+            transport=transport, session_repository=adapters.get("session_repository"),
+        ),
+        coordinator=coordinator,
+    ).run_once("tenant_1", "project_1")
+
+    assert result is not None and result.id == assignment.run_id and result.status == "failed"
+    assert transport.requests == []
+    assert not any(message.kind == "agent_started" for message in collaboration.conversation_roots("tenant_1", "project_1"))
+
+    monkeypatch.setattr(coordinator, "project_agent_results", original_project)
+    original_project("tenant_1", "project_1")
+    repaired = collaboration.conversation_roots("tenant_1", "project_1")
+    repaired_agent = [message for message in repaired if message.author == {"id": agent.id, "kind": "agent"}]
+    assert [message.kind for message in repaired_agent] == ["agent_started", "agent_progress"]
+    assert repaired_agent[1].body == "Work stopped before completion. Review it in Work before continuing."
+    assert repaired_agent[1].links == {
+        "work_item_id": assignment.task_id,
+        "run_id": assignment.run_id,
+        "output_id": None,
+    }

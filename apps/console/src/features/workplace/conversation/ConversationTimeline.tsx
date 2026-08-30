@@ -198,10 +198,11 @@ export function ConversationTimeline({
       const acknowledgement = message.reactions.find((reaction) => reaction.reaction === "check");
       const actionBusy = actionAttempt?.messageId === message.id;
       const substantive = Boolean(message.body?.trim());
+      const progress = message.kind === "agent_started" || message.kind === "agent_progress";
       return <div key={message.id} className="conversation-message-wrap">
       {separator ? <div className="conversation-day"><span>{day}</span></div> : null}
       <article
-        className={`conversation-message kind-${message.kind}`}
+        className={`conversation-message kind-${message.kind}${progress ? " is-progress" : ""}`}
         data-message-id={message.id}
         tabIndex={focusedNewestId === message.id ? -1 : undefined}
         aria-label={focusedNewestId === message.id ? `Newest message from ${message.author.display_name || "Mission teammate"}` : undefined}
@@ -217,7 +218,7 @@ export function ConversationTimeline({
           {message.links.work_item_id && message.links.output_id && onOpenWork
             ? <button className="conversation-work-link is-action" type="button" onClick={() => onOpenWork(message.links.work_item_id!, "verify_output")}>Review output</button>
             : message.links.work_item_id ? <span className="conversation-work-link">Work is tracked in this Mission</span> : null}
-          {substantive ? <div className="conversation-message-actions" aria-label={`Actions for ${message.author.display_name || "Mission teammate"}`}>
+          {substantive && !progress ? <div className="conversation-message-actions" aria-label={`Actions for ${message.author.display_name || "Mission teammate"}`}>
             <button
               type="button"
               aria-label={`Reply to ${message.author.display_name || "Mission teammate"}`}

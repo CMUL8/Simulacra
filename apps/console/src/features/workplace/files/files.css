@@ -12,7 +12,8 @@
 .file-list { margin: auto; max-width: 76rem; }
 .mission-files .file-row { align-items: center; border-block-start: 1px solid var(--mission-color-border); border-radius: 0; color: var(--mission-color-fg); display: flex; font-size: inherit; gap: 0; min-width: 0; padding: 0; }
 .mission-files .file-row:last-child { border-block-end: 1px solid var(--mission-color-border); }
-.file-row-main { align-items: center; background: transparent; border: 0; color: var(--mission-color-fg); cursor: pointer; display: grid; flex: 1 1 0; font: inherit; gap: var(--mission-space-2) var(--mission-space-3); grid-template-columns: 3rem minmax(0, 1fr) minmax(7rem, auto); min-height: 4.5rem; min-width: 0; padding: var(--mission-space-2) var(--mission-space-3); text-align: start; }
+.mission-files .file-row:hover, .mission-files .file-row:focus-within { background: var(--mission-color-surface-raised); }
+.file-row-main { align-items: center; background: transparent; border: 0; color: var(--mission-color-fg); cursor: pointer; display: grid; flex: 1 1 0; font: inherit; gap: var(--mission-space-2) var(--mission-space-3); grid-template-columns: 3rem minmax(0, 1fr) minmax(7rem, auto); min-height: 4.125rem; min-width: 0; padding: var(--mission-space-2) var(--mission-space-3); text-align: start; }
 .file-type { background: var(--mission-color-surface-raised); border: 1px solid var(--mission-color-border); border-radius: var(--mission-radius-sm); color: var(--mission-color-muted); font-size: 0.65rem; padding: var(--mission-space-2) var(--mission-space-1); text-align: center; }
 .file-row-copy { display: grid; min-width: 0; }
 .file-row-copy strong, .file-row-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

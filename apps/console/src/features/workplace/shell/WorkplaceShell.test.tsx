@@ -543,6 +543,7 @@ test("mobile Crew disclosure is bounded and does not displace the Conversation",
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-room-layout\s*\{[^}]*grid-template-rows:\s*minmax\(44px,\s*auto\)\s+minmax\(0,\s*1fr\)/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-crew-rail\s*\{[^}]*min-block-size:\s*44px/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-conversation-workspace\s+\.crew-mobile-toggle\s*\{[^}]*block-size:\s*44px[^}]*height:\s*44px[^}]*min-block-size:\s*44px[^}]*min-height:\s*44px/s);
+  expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-conversation-workspace\s+\.crew-mobile-toggle\s*\{[^}]*background:\s*var\(--mission-color-surface\)[^}]*color:\s*var\(--mission-color-fg\)/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*30rem\)[\s\S]*\.mission-crew-rail\s*>\s*header\s*\{[^}]*min-height:\s*44px/s);
   expect(conversationStyles).toMatch(/\.mission-crew-rail\.is-open\s*\{[^}]*position:\s*absolute[^}]*max-block-size:[^;}]+[^}]*overflow-y:\s*auto/s);
   expect(conversationStyles).toMatch(/\.mission-conversation-surface\s*\{[^}]*min-height:\s*0/s);
@@ -828,7 +829,9 @@ test("workplace layout keeps one scroll owner and a compact mobile navigation wi
   expect(workplaceStyles).toMatch(/overflow-wrap:\s*anywhere/);
   expect(conversationStyles).not.toMatch(/gradient\s*\(/i);
   expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*overflow:\s*hidden/s);
-  expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*14\.5rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*13\.5rem\s+minmax\(0,\s*1fr\)/s);
+  expect(conversationStyles).toMatch(/\.crew-member\s*\{[^}]*grid-template-columns:\s*1\.75rem\s+minmax\(0,\s*1fr\)\s+2rem[^}]*padding-block:\s*0\.375rem/s);
+  expect(conversationStyles).toMatch(/\.conversation-message\.is-progress\s*\{[^}]*grid-template-columns:\s*1\.75rem\s+minmax\(0,\s*1fr\)/s);
   expect(conversationStyles).toMatch(/\.conversation-composer\s*\{[^}]*max-width:\s*54rem/s);
   expect(conversationStyles).toMatch(/\.conversation-timeline\s*\{[^}]*overflow-y:\s*auto/s);
   expect(conversationStyles).toMatch(/@media\s*\(max-width:\s*48rem\)[\s\S]*\.mission-room-layout\s*\{[^}]*grid-template-columns:\s*1fr/s);

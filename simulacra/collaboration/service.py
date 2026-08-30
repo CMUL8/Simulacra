@@ -94,6 +94,12 @@ class CollaborationService:
 	def project_agent_completion(self, **kwargs):
 		return self._conversation.project_agent_completion(**kwargs)
 
+	def project_agent_progress(self, **kwargs):
+		return self._conversation.project_agent_progress(**kwargs)
+
+	def project_agent_failure(self, **kwargs):
+		return self._conversation.project_agent_failure(**kwargs)
+
 	def conversation_audits(self, tenant_id: str, project_id: str):
 		return self._conversation.audits(tenant_id, project_id)
 

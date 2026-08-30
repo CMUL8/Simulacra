@@ -912,7 +912,7 @@ class AssignmentCoordinator:
                 os.close(transactions)
 
     def project_agent_results(self, tenant_id: str, project_id: str) -> list[str]:
-        """Repair the shared Conversation from durable completed-agent events."""
+        """Repair the shared Conversation from durable agent milestones."""
         self._check_scope(tenant_id, project_id, "projector", "projector")
         from simulacra.collaboration import CollaborationService
 
@@ -922,7 +922,8 @@ class AssignmentCoordinator:
         conversation = CollaborationService(self.collaboration_repository)
         projected: list[str] = []
         for event in self.mission_service.events(tenant_id, project_id):
-            if event.get("type") != "agent_completed":
+            event_type = event.get("type")
+            if event_type not in {"agent_started", "agent_completed", "agent_failed"}:
                 continue
             event_id, run_id = event.get("id"), event.get("run_id")
             payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
@@ -933,6 +934,28 @@ class AssignmentCoordinator:
             if run is None or agent_id not in agents or (
                 run.assigned_agent_ids and agent_id not in run.assigned_agent_ids
             ):
+                continue
+            trigger = run.trigger_snapshot if isinstance(run.trigger_snapshot, Mapping) else {}
+            task_id = trigger.get("task_id")
+            work_item_id = task_id if isinstance(task_id, str) and task_id else run.id
+            created_at = str(event.get("timestamp") or run.updated_at)
+            if event_type == "agent_started":
+                message = conversation.project_agent_progress(
+                    tenant_id=tenant_id, project_id=project_id, source_event_id=event_id,
+                    agent_id=agent_id,
+                    body="Working on the assignment. Progress and questions will return here.",
+                    created_at=created_at, work_item_id=work_item_id, run_id=run.id,
+                )
+                projected.append(message.id)
+                continue
+            if event_type == "agent_failed":
+                message = conversation.project_agent_failure(
+                    tenant_id=tenant_id, project_id=project_id, source_event_id=event_id,
+                    agent_id=agent_id,
+                    body="Work stopped before completion. Review it in Work before continuing.",
+                    created_at=created_at, work_item_id=work_item_id, run_id=run.id,
+                )
+                projected.append(message.id)
                 continue
             linked_outputs = sorted(
                 (
@@ -945,9 +968,6 @@ class AssignmentCoordinator:
                 key=lambda item: (item.created_at, item.id),
             )
             output_id = linked_outputs[0].id if linked_outputs else None
-            trigger = run.trigger_snapshot if isinstance(run.trigger_snapshot, Mapping) else {}
-            task_id = trigger.get("task_id")
-            work_item_id = task_id if isinstance(task_id, str) and task_id else run.id
             # Provider prose is execution evidence, not public product copy.
             # Task titles and artifact filenames may also contain agent-chosen
             # text, so the shared room gets fixed product copy plus opaque links.
@@ -957,7 +977,7 @@ class AssignmentCoordinator:
             )
             message = conversation.project_agent_completion(
                 tenant_id=tenant_id, project_id=project_id, source_event_id=event_id,
-                agent_id=agent_id, body=response, created_at=str(event.get("timestamp") or run.updated_at),
+                agent_id=agent_id, body=response, created_at=created_at,
                 work_item_id=work_item_id, run_id=run.id, output_id=output_id,
             )
             projected.append(message.id)

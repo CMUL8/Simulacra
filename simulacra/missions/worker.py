@@ -494,6 +494,17 @@ class MissionWorker:
                 "effective_budget": budget,
             }
             started = self.service.mark_agent_started(tenant_id, project_id, run.id, agent.id, self.worker_id, prompt, binding)
+            if self.coordinator is not None:
+                try:
+                    self.coordinator.project_agent_results(tenant_id, project_id)
+                except Exception:
+                    # Do not begin invisible work. The durable start event and
+                    # a stopped run are repaired into public product state on
+                    # the next worker tick; the executor is never called.
+                    return self.service.record_result(
+                        tenant_id, project_id, started.id, self.worker_id, agent.id,
+                        {"status": "failed"}, [],
+                    )
             role_key = f"mission:{started.mission_id}:agent:{agent.id}"
             # The graph's head and immutable bytes are checked once more at the
             # launch edge. A changed graph is a durable failed turn, never a

@@ -516,7 +516,9 @@ class MissionService:
             if status != "succeeded":
                 persist_artifacts(failed_run=True)
                 run.status = "failed"; run.completed_at = now(); run.error = {"code": "provider_failed", "message": "Agent execution failed."}
-                run.lease_owner = run.lease_until = None; self._touch(run); self._event(records, run, "agent_failed", {**run.error, "artifact_candidates": len(artifacts)})
+                run.lease_owner = run.lease_until = None; self._touch(run); self._event(records, run, "agent_failed", {
+                    **run.error, "agent_id": agent_id, "artifact_candidates": len(artifacts),
+                })
                 records["runs"][run.id] = run.to_dict(); return run
             run.usage = _safe_value(result.get("usage", {})); run.completed_agent_ids.append(agent_id)
             run.next_agent_position += 1; run.current_agent_id = None; run.invocation_started_at = None; run.invocation_id = None; run.execution_binding = None

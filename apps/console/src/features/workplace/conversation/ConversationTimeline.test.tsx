@@ -209,6 +209,31 @@ test("an agent completion opens its exact reviewable Work item without exposing 
   expect(document.body).not.toHaveTextContent("output_completion");
 });
 
+test("agent progress is a compact durable status instead of exposed reasoning", () => {
+  const progress = {
+    ...message("message_progress", "Working on the assignment. Progress and questions will return here.", "2026-01-02T09:30:00Z", "Fin"),
+    kind: "agent_started",
+    author: { id: "agent_fin", kind: "agent" as const, display_name: "Fin", avatar_url: null },
+    links: { work_item_id: "task_progress", run_id: "run_progress", output_id: null },
+  };
+  render(<ConversationTimeline
+    messages={[progress]}
+    loading={false}
+    error={null}
+    hasOlder={false}
+    loadingOlder={false}
+    onLoadOlder={() => undefined}
+  />);
+
+  const row = screen.getByRole("article");
+  expect(row).toHaveClass("is-progress");
+  expect(row).toHaveTextContent("Work started");
+  expect(row).toHaveTextContent("Working on the assignment");
+  expect(row).not.toHaveTextContent("task_progress");
+  expect(row).not.toHaveTextContent("run_progress");
+  expect(screen.queryByRole("button", { name: "Reply to Fin" })).not.toBeInTheDocument();
+});
+
 test("message overflow copies content and a stable Mission link", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
