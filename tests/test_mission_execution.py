@@ -51,6 +51,24 @@ class _HandoffHarness:
             changed_files=(), events=(), duration_seconds=0, usage={"steps": 1})
 
 
+class _RetryingHandoffHarness:
+    def __init__(self, calls: list[str], prompts: list[str]):
+        self.calls = calls
+        self.prompts = prompts
+
+    async def run(self, request):
+        self.calls.append(request.role)
+        self.prompts.append(request.prompt)
+        second_agent_attempt = len(self.calls) == 2
+        return AgentRunResult(
+            harness="codex", provider="openai", model_id="default", session_id=f"session-{len(self.calls)}",
+            status=TerminalStatus.FAILED if second_agent_attempt else TerminalStatus.SUCCEEDED,
+            response=("Agent work stopped." if second_agent_attempt else "Durable handoff completed."),
+            structured_output={"attempt": len(self.calls)}, changed_files=(), events=(), duration_seconds=0,
+            usage={"steps": 1},
+        )
+
+
 def _approved_workspace(path: Path) -> str:
     store = OperationGraphStore(path, tenant_id="tenant_1", project_id="project_1")
     graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
@@ -258,6 +276,87 @@ def test_manual_assignment_rejects_foreign_duplicate_or_missing_agent(tmp_path: 
         service.create_run("tenant_1", "project_1", {"type": "manual"}, assigned_agent_ids=[agent.id, agent.id])
     with pytest.raises(MissionConflictError, match="does not belong"):
         service.create_run("tenant_1", "project_1", {"type": "manual"}, assigned_agent_ids=["agent_missing"])
+
+
+def test_three_agent_scheduled_mission_hands_off_and_finishes_in_order(tmp_path: Path):
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "Weekly operating report"})
+    agents = [
+        service.add_agent("tenant_1", "project_1", {"name": name, "role": role, "mandate": mandate})
+        for name, role, mandate in (
+            ("Rhea", "research", "collect the evidence"),
+            ("Fin", "analysis", "resolve the exceptions"),
+            ("Vera", "review", "prepare the reviewable output"),
+        )
+    ]
+    trigger = service.add_trigger("tenant_1", "project_1", {"type": "cron", "cron": "*/5 * * * *"})
+    _force_trigger_due(service, trigger.id, "2020-01-01T00:00:00+00:00")
+    prompts: list[str] = []
+    worker = MissionWorker(service, tmp_path, "scheduled-crew", lambda _config, **_kw: _HandoffHarness(prompts))
+
+    scheduled = worker.schedule_due_cron("tenant_1", "project_1")
+    assert len(scheduled) == 1 and scheduled[0].contract_revision == revision
+    assert worker.run_once("tenant_1", "project_1").status == "queued"
+    assert worker.run_once("tenant_1", "project_1").status == "queued"
+    completed = worker.run_once("tenant_1", "project_1")
+
+    assert completed.status == "succeeded"
+    assert completed.completed_agent_ids == [agent.id for agent in agents]
+    assert completed.progress == {"completed": 3, "total": 3}
+    assert "No previous crew output" in prompts[0]
+    assert agents[0].id in prompts[1]
+    assert agents[0].id in prompts[2] and agents[1].id in prompts[2]
+
+
+def test_failed_second_agent_retry_preserves_first_handoff_and_resumes_second(tmp_path: Path):
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "Resolve exceptions"})
+    first = service.add_agent("tenant_1", "project_1", {"name": "Rhea", "role": "research", "mandate": "find"})
+    second = service.add_agent("tenant_1", "project_1", {"name": "Fin", "role": "review", "mandate": "finish"})
+    service.create_run(
+        "tenant_1", "project_1", {"type": "manual"}, verified_contract_revision=revision,
+        assigned_agent_ids=[first.id, second.id],
+    )
+    calls: list[str] = []
+    prompts: list[str] = []
+    worker = MissionWorker(service, tmp_path, "retrying-crew", lambda _config, **_kw: _RetryingHandoffHarness(calls, prompts))
+
+    assert worker.run_once("tenant_1", "project_1").status == "queued"
+    failed = worker.run_once("tenant_1", "project_1")
+    assert failed.status == "failed" and failed.completed_agent_ids == [first.id]
+    retried = service.retry_run("tenant_1", "project_1", failed.id, failed.revision, revision)
+    completed = worker.run_once("tenant_1", "project_1")
+
+    assert retried.completed_agent_ids == [first.id]
+    assert completed.status == "succeeded"
+    assert completed.completed_agent_ids == [first.id, second.id]
+    assert calls.count(f"mission:{completed.mission_id}:agent:{first.id}") == 1
+    assert calls.count(f"mission:{completed.mission_id}:agent:{second.id}") == 2
+    assert first.id in prompts[1] and first.id in prompts[2]
+
+
+def test_handoff_can_be_cancelled_before_the_next_agent_starts(tmp_path: Path):
+    revision = _approved_workspace(tmp_path)
+    service = MissionService(JsonMissionRepository(tmp_path / "control"))
+    service.bootstrap("tenant_1", "project_1", "owner", {"title": "Prepare a report"})
+    first = service.add_agent("tenant_1", "project_1", {"name": "Rhea", "role": "research", "mandate": "find"})
+    second = service.add_agent("tenant_1", "project_1", {"name": "Fin", "role": "review", "mandate": "finish"})
+    service.create_run(
+        "tenant_1", "project_1", {"type": "manual"}, verified_contract_revision=revision,
+        assigned_agent_ids=[first.id, second.id],
+    )
+    seen: list[str] = []
+    worker = MissionWorker(service, tmp_path, "cancelled-crew", lambda _config, **_kw: _Harness(seen))
+
+    queued = worker.run_once("tenant_1", "project_1")
+    cancelled = service.cancel_run("tenant_1", "project_1", queued.id, queued.revision)
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.completed_agent_ids == [first.id]
+    assert seen == [f"mission:{cancelled.mission_id}:agent:{first.id}"]
+    assert worker.run_once("tenant_1", "project_1") is None
 
 
 def test_relative_artifact_is_evidenced_and_versioned(tmp_path: Path):
