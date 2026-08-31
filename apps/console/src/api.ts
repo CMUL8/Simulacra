@@ -361,6 +361,7 @@ export type MissionFileItem = {
   run_id?: string | null;
   producer_id: string | null;
   producer: { id: string; display_name?: string } | null;
+  contributors?: Array<{ id: string; display_name?: string }>;
   verifier: { id: string; display_name?: string } | null;
   source_ids: string[];
   introduced_by_message_id: string | null;

@@ -44,6 +44,10 @@ function displayName(actor: MissionFileItem["producer"]): string {
   return actor?.display_name?.trim() || "Mission agent";
 }
 
+function contributorNames(file: MissionFileItem): string[] {
+  return (file.contributors || []).map((actor) => actor.display_name?.trim() || "Mission agent");
+}
+
 function parentOutputId(file: MissionFileItem): string | null {
   const value = (file as MissionFileItem & { parent_output_id?: unknown }).parent_output_id;
   return typeof value === "string" && value ? value : null;
@@ -274,7 +278,7 @@ export function MissionFiles({ missionId, previewEnabled = true, onOpenMessage, 
           <span className="file-type" aria-hidden="true">{file.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}</span>
           <span className="file-row-copy"><strong>{file.name}</strong><small>{file.media_type} · {humanSize(file.size)}{file.kind !== "source" ? ` · Version ${file.version}` : ""}</small></span>
           <span className={`file-status is-${file.state}`}>{publicState(file)}</span>
-          <span className="file-provenance">{file.kind === "output" ? `Produced by ${displayName(file.producer)}` : file.kind === "evidence" ? "Review evidence" : "Mission source"}</span>
+          <span className="file-provenance">{file.kind === "output" && contributorNames(file).length > 1 ? `Crew: ${contributorNames(file).join(" → ")}` : file.kind === "output" ? `Produced by ${displayName(file.producer)}` : file.kind === "evidence" ? "Review evidence" : "Mission source"}</span>
           {file.state.toLowerCase() === "verified" ? <span className="file-verified">Verified by {file.verifier?.display_name?.trim() || "a human"}</span> : null}
         </button>
         <div className="file-row-actions">
@@ -290,7 +294,7 @@ export function MissionFiles({ missionId, previewEnabled = true, onOpenMessage, 
       <button className="file-detail-scrim" type="button" aria-label="Close file details backdrop" onClick={closeDetails} />
       <aside className="file-detail" role="dialog" aria-modal="true" aria-label="File details" onKeyDown={(event) => trapDialogFocus(event, closeDetails)}>
       <header><div><p className="workplace-eyebrow">{publicState(selected.item)}</p><h3>{selected.item.name}</h3></div><button ref={detailClose} type="button" aria-label="Close file details" onClick={closeDetails}>Close</button></header>
-      <dl><div><dt>Version</dt><dd>{selected.item.version}</dd></div><div><dt>Type</dt><dd>{selected.item.media_type}</dd></div><div><dt>Size</dt><dd>{humanSize(selected.item.size)}</dd></div>{selected.item.producer ? <div><dt>Produced by</dt><dd>{displayName(selected.item.producer)}</dd></div> : null}</dl>
+      <dl><div><dt>Version</dt><dd>{selected.item.version}</dd></div><div><dt>Type</dt><dd>{selected.item.media_type}</dd></div><div><dt>Size</dt><dd>{humanSize(selected.item.size)}</dd></div>{selected.item.producer ? <div><dt>Produced by</dt><dd>{displayName(selected.item.producer)}</dd></div> : null}{contributorNames(selected.item).length > 1 ? <div><dt>Crew contributors</dt><dd>{contributorNames(selected.item).join(" → ")}</dd></div> : null}</dl>
       {selected.item.kind === "output" ? <>
         <section className="file-sources-section"><h4>Sources</h4>{selected.item.source_ids.length ? <ul>{selected.item.source_ids.map((sourceId) => {
           const source = sources.get(sourceId);

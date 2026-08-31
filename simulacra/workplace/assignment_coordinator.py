@@ -971,8 +971,15 @@ class AssignmentCoordinator:
             # Provider prose is execution evidence, not public product copy.
             # Task titles and artifact filenames may also contain agent-chosen
             # text, so the shared room gets fixed product copy plus opaque links.
+            next_agent = None
+            if run.assigned_agent_ids and agent_id in run.assigned_agent_ids:
+                position = run.assigned_agent_ids.index(agent_id)
+                if position + 1 < len(run.assigned_agent_ids):
+                    next_agent = agents.get(run.assigned_agent_ids[position + 1])
             response = (
-                "Work completed. An output is ready for human verification."
+                f"Handoff completed. {next_agent.name} can continue."
+                if next_agent is not None
+                else "Work completed. An output is ready for human verification."
                 if linked_outputs else "Work completed. Review the result in Work."
             )
             message = conversation.project_agent_completion(

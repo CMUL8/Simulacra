@@ -178,6 +178,24 @@ def _string_values(value: Any) -> tuple[str, ...]:
     return tuple(item for item in value if isinstance(item, str))
 
 
+def _run_contributor_ids(tenant_id: str, project_id: str, run_id: str | None) -> list[str]:
+    """Return the durable crew contribution order without exposing execution internals."""
+    if run_id is None:
+        return []
+    try:
+        runs = JsonMissionRepository(_mission_root).list_collection(tenant_id, project_id, "runs")
+    except Exception:
+        return []
+    raw = runs.get(run_id)
+    if not isinstance(raw, Mapping):
+        return []
+    assigned = [item for item in _string_values(raw.get("assigned_agent_ids")) if _safe_id(item)]
+    completed = {item for item in _string_values(raw.get("completed_agent_ids")) if _safe_id(item)}
+    if len(assigned) > 32 or len(assigned) != len(set(assigned)):
+        return []
+    return [agent_id for agent_id in assigned if agent_id in completed]
+
+
 def _open_directory(parent_fd: int | None, name: str | Path) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
@@ -377,6 +395,7 @@ def _resolve_file(tenant_id: str, project_id: str, file_id: str) -> dict[str, An
             "updated_at": raw.get("updated_at"),
             "verified_by": raw.get("verified_by"),
             "run_id": run_id,
+            "contributor_ids": _run_contributor_ids(tenant_id, project_id, run_id),
             "source_ids": source_ids,
             "introduced_by_message_id": _introduced_message_id(tenant_id, project_id, str(deliverable_id)),
             "parent_output_id": None,
@@ -403,7 +422,8 @@ def _resolve_file(tenant_id: str, project_id: str, file_id: str) -> dict[str, An
                 "artifact_ref": artifact_ref, "source_id": str(deliverable_id), "state": "recorded",
                 "type": "evidence", "version": raw.get("version", 1), "producer_id": raw.get("producer_id"),
                 "created_at": raw.get("created_at"), "updated_at": raw.get("updated_at"),
-                "verified_by": raw.get("verified_by"), "run_id": run_id, "source_ids": source_ids,
+                "verified_by": raw.get("verified_by"), "run_id": run_id,
+                "contributor_ids": _run_contributor_ids(tenant_id, project_id, run_id), "source_ids": source_ids,
                 "introduced_by_message_id": _introduced_message_id(tenant_id, project_id, str(deliverable_id)),
                 "parent_output_id": output_file_id(str(deliverable_id), tenant_id=tenant_id, project_id=project_id),
             }
@@ -428,6 +448,7 @@ def _resolve_file(tenant_id: str, project_id: str, file_id: str) -> dict[str, An
                 "updated_at": None,
                 "verified_by": None,
                 "run_id": None,
+                "contributor_ids": [],
                 "source_ids": [],
                 "introduced_by_message_id": None,
                 "parent_output_id": None,
@@ -489,7 +510,13 @@ def _public_metadata(
     agent_names, human_names = _attribution(tenant_id, project_id, locked_room=locked_room)
     if visible_humans is not None:
         human_names = dict(visible_humans)
-    producer_name = agent_names.get(producer_id or "") or human_names.get(producer_id or "")
+    public_producer_id = producer_id if producer_id in agent_names or producer_id in human_names else None
+    producer_name = agent_names.get(public_producer_id or "") or human_names.get(public_producer_id or "")
+    contributor_ids = []
+    for value_id in _string_values(value.get("contributor_ids")):
+        safe_value_id = _safe_id(value_id)
+        if safe_value_id is not None and safe_value_id in agent_names and safe_value_id not in contributor_ids:
+            contributor_ids.append(safe_value_id)
     public_verifier_id = verifier_id if verifier_id in human_names else None
     verifier_name = human_names.get(public_verifier_id or "")
     kind = value.get("kind") if value.get("kind") in {"source", "output", "evidence"} else "output"
@@ -507,8 +534,12 @@ def _public_metadata(
         "sha256": _safe_hash(value.get("sha256")),
         "state": state,
         "version": _safe_version(value.get("version")),
-        "producer_id": producer_id,
-        "producer": ({"id": producer_id, **({"display_name": producer_name} if producer_name else {})} if producer_id else None),
+        "producer_id": public_producer_id,
+        "producer": ({"id": public_producer_id, "display_name": producer_name} if public_producer_id and producer_name else None),
+        "contributors": [
+            {"id": contributor_id, "display_name": agent_names[contributor_id]}
+            for contributor_id in contributor_ids
+        ],
         "verifier": ({"id": public_verifier_id, **({"display_name": verifier_name} if verifier_name else {})} if public_verifier_id else None),
         "run_id": _safe_id(value.get("run_id")),
         "parent_output_id": value.get("parent_output_id") if isinstance(value.get("parent_output_id"), str) and re.fullmatch(r"file_[0-9a-f]{40}", value["parent_output_id"]) else None,

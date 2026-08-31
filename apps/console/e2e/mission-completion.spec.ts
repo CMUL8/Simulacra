@@ -34,7 +34,9 @@ function message(
   };
 }
 
-async function installMissionFixture(page: Page) {
+async function installMissionFixture(page: Page, options: { multiAgent?: boolean } = {}) {
+  const multiAgent = Boolean(options.multiAgent);
+  const assignedAgentIds = multiAgent ? ["agent_rhea", "agent_fin"] : ["agent_fin"];
   let phase: Phase = "ready";
   let assignmentCount = 0;
   let verificationCount = 0;
@@ -43,7 +45,9 @@ async function installMissionFixture(page: Page) {
     "message_assignment",
     "assignment_created",
     { id: "human_ada", kind: "human", display_name: "Ada" },
-    "@Fin reconcile invoice 42 and prepare a reviewable report",
+    multiAgent
+      ? "@Rhea @Fin reconcile invoice 42 and prepare a reviewable report"
+      : "@Fin reconcile invoice 42 and prepare a reviewable report",
     { work_item_id: "task_completion", run_id: "run_completion", output_id: null },
   );
   const completion = message(
@@ -63,6 +67,30 @@ async function installMissionFixture(page: Page) {
     ),
     created_at: "2026-08-29T09:01:00Z",
   };
+  const researcherStarted = {
+    ...message(
+      "message_researcher_started",
+      "agent_started",
+      { id: "agent_rhea", kind: "agent", display_name: "Rhea" },
+      "Working on the assignment. Progress and questions will return here.",
+      { work_item_id: "task_completion", run_id: "run_completion", output_id: null },
+    ),
+    created_at: "2026-08-29T09:01:00Z",
+  };
+  const researcherCompleted = {
+    ...message(
+      "message_researcher_completed",
+      "agent_completed",
+      { id: "agent_rhea", kind: "agent", display_name: "Rhea" },
+      "Handoff completed. Fin can continue.",
+      { work_item_id: "task_completion", run_id: "run_completion", output_id: null },
+    ),
+    created_at: "2026-08-29T09:02:00Z",
+  };
+  const reviewerStarted = { ...started, created_at: "2026-08-29T09:03:00Z" };
+  const conversationItems = multiAgent
+    ? [assignment, researcherStarted, researcherCompleted, reviewerStarted, completion]
+    : [assignment, started, completion];
 
   await page.addInitScript(() => {
     localStorage.setItem("simulacra_token", "mission-completion-session");
@@ -101,7 +129,7 @@ async function installMissionFixture(page: Page) {
           public_state: phase === "verified" ? "completed" : "active",
           updated_at: "2026-08-29T09:04:00Z",
           human_count: 1,
-          agent_count: 1,
+          agent_count: multiAgent ? 2 : 1,
           active_work_count: phase === "verified" ? 0 : 1,
           needs_human_count: phase === "completed" ? 1 : 0,
           verified_output_count: phase === "verified" ? 1 : 0,
@@ -133,13 +161,16 @@ async function installMissionFixture(page: Page) {
           title: "Reconcile invoice 42",
           objective: "Resolve the exception and return a report with evidence.",
         },
-        agents: [{ id: "agent_fin", name: "Fin", role: "Reconciliation analyst" }],
-        runs: phase === "ready" ? [] : [{ id: "run_completion", status: "succeeded", assigned_agent_ids: ["agent_fin"] }],
+        agents: [
+          ...(multiAgent ? [{ id: "agent_rhea", name: "Rhea", role: "Researcher" }] : []),
+          { id: "agent_fin", name: "Fin", role: "Reconciliation analyst" },
+        ],
+        runs: phase === "ready" ? [] : [{ id: "run_completion", status: "succeeded", assigned_agent_ids: assignedAgentIds }],
         triggers: [],
         deliverables: phase === "ready" ? [] : [{ id: outputId, name: "invoice-42-report.md", state: phase === "verified" ? "verified" : "awaiting_verification" }],
         events: [],
         approvals: [],
-        readiness: { graph: { status: "approved", revision: 1 }, crew_count: 1 },
+        readiness: { graph: { status: "approved", revision: 1 }, crew_count: multiAgent ? 2 : 1 },
       };
     } else if (path === `/projects/${missionId}/cmul8/room`) {
       payload = {
@@ -155,12 +186,12 @@ async function installMissionFixture(page: Page) {
         presence: [],
       };
     } else if (path === `/projects/${missionId}/conversation` && method === "GET") {
-      payload = { items: phase === "ready" ? [] : [assignment, started, completion], next_before: null };
+      payload = { items: phase === "ready" ? [] : conversationItems, next_before: null };
     } else if (path === `/projects/${missionId}/conversation/messages` && method === "POST") {
       const body = JSON.parse(request.postData() || "{}") as Record<string, unknown>;
       expect(body).toMatchObject({
         mode: "assignment",
-        assignee_agent_ids: ["agent_fin"],
+        assignee_agent_ids: assignedAgentIds,
         reviewer_human_ids: [],
       });
       expect(String(body.client_request_id || "")).not.toBe("");
@@ -172,7 +203,7 @@ async function installMissionFixture(page: Page) {
           id: "task_completion",
           title: "Reconcile invoice 42",
           state: "queued",
-          assignee_agent_ids: ["agent_fin"],
+          assignee_agent_ids: assignedAgentIds,
           reviewer_human_ids: [],
           allowed_actions: ["open"],
         },
@@ -185,7 +216,7 @@ async function installMissionFixture(page: Page) {
           mission_id: missionId,
           revision: phase === "verified" ? 2 : 1,
           title: "Review invoice 42 report",
-          summary: phase === "verified" ? "The exact report was verified by Ada." : "Fin returned a report with evidence for human verification.",
+          summary: phase === "verified" ? "The exact report was verified by Ada." : multiAgent ? "Rhea handed the exception to Fin, who returned the final report for human verification." : "Fin returned a report with evidence for human verification.",
           state: phase === "verified" ? "done" : "ready_for_review",
           assignee: { id: "agent_fin", display_name: "Fin", kind: "agent", avatar_url: null },
           created_at: "2026-08-29T09:04:00Z",
@@ -225,6 +256,10 @@ async function installMissionFixture(page: Page) {
         id: outputFileId, mission_id: missionId, kind: "output", name: "invoice-42-report.md",
         media_type: "text/markdown", size: 640, sha256: "b".repeat(64), state: phase === "verified" ? "verified" : "awaiting_verification", version: 1,
         parent_output_id: null, producer_id: "agent_fin", producer: { id: "agent_fin", display_name: "Fin" },
+        contributors: multiAgent ? [
+          { id: "agent_rhea", display_name: "Rhea" },
+          { id: "agent_fin", display_name: "Fin" },
+        ] : [{ id: "agent_fin", display_name: "Fin" }],
         verifier: phase === "verified" ? { id: "human_ada", display_name: "Ada" } : null,
         source_ids: [source.id], introduced_by_message_id: "message_completion", created_at: "2026-08-29T09:04:00Z", updated_at: "2026-08-29T09:04:00Z",
         previewable: true, downloadable: true,
@@ -379,6 +414,48 @@ test("human_assigns_real_work_returns_and_verifies_the_exact_agent_output", asyn
   await page.screenshot({ path: `${artifactRoot}/mission-completion-verified.png`, fullPage: true });
 
   await expectNoPrivateTerms(page);
+});
+
+test("two_agents_handoff_in_mention_order_and_return_one_crew_output", async ({ page }) => {
+  test.setTimeout(60_000);
+  await mkdir(artifactRoot, { recursive: true });
+  const fixture = await installMissionFixture(page, { multiAgent: true });
+
+  await page.goto(`/missions/${missionId}/conversation`);
+  const composer = page.getByRole("textbox", { name: "Message the Mission" });
+  await composer.fill("@");
+  await page.getByRole("option", { name: /Rhea/ }).click();
+  await composer.fill("@Rhea @");
+  await page.getByRole("option", { name: /Fin/ }).click();
+  await expect(page.locator(".composer-routing-preview")).toContainText("Rhea → Fin");
+  await composer.fill("@Rhea @Fin reconcile invoice 42 and prepare a reviewable report");
+  await page.getByRole("button", { name: "Assign work", exact: true }).click();
+  expect(fixture.assignmentCount()).toBe(1);
+
+  await page.goto("/missions?state=active");
+  await page.goto(`/missions/${missionId}/conversation`);
+  const milestones = page.locator(".conversation-message");
+  await expect(milestones).toHaveCount(5);
+  expect(await milestones.locator("header strong").allTextContents()).toEqual(["Ada", "Rhea", "Rhea", "Fin", "Fin"]);
+  await expect(page.getByText("Handoff completed. Fin can continue.")).toBeVisible();
+  await expect(page.getByText("Work completed. An output is ready for human verification.")).toBeVisible();
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-multi-agent-conversation.png`, fullPage: true });
+
+  await page.getByRole("navigation", { name: "Mission views" }).getByRole("button", { name: "Files" }).click();
+  await page.getByRole("tab", { name: /Outputs/ }).click();
+  const outputRow = page.getByRole("button", { name: "Open invoice-42-report.md details" });
+  await expect(outputRow).toContainText("Crew: Rhea → Fin");
+  await outputRow.click();
+  const details = page.getByRole("dialog", { name: "File details" });
+  await expect(details.getByText("Crew contributors")).toBeVisible();
+  await expect(details.getByText("Rhea → Fin")).toBeVisible();
+  await expect(details.getByText("Fin", { exact: true })).toBeVisible();
+  await details.getByRole("button", { name: "Verify this output" }).click();
+  await expect(details.getByText("Verified by Ada.")).toBeVisible();
+  expect(fixture.verificationCount()).toBe(1);
+  await expectNoPrivateTerms(page);
+  await expectNoSeriousAccessibilityViolations(page);
+  await page.screenshot({ path: `${artifactRoot}/mission-completion-multi-agent.png`, fullPage: true });
 });
 
 test("mission_progress_and_crew_stay_compact_on_mobile", async ({ page }) => {

@@ -48,6 +48,47 @@ class _DeterministicLocalCodexTransport:
         return None
 
 
+class _TwoAgentLocalCodexTransport:
+    """Deterministic two-agent boundary with one durable handoff and one final output."""
+
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    async def create_thread(self, *, request: Any, thread_id: str | None = None) -> str:
+        return thread_id or f"thread_two_agent_{len(self.requests) + 1}"
+
+    async def run(self, *, request: Any, thread_id: str) -> Mapping[str, Any]:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return {
+                "status": TerminalStatus.SUCCEEDED,
+                "response": "Invoice 42 has a purchase-order mismatch requiring review.",
+                "structured_output": {"handoff": "Check row 42 against the purchase order."},
+                "changed_files": [],
+                "events": [{"action": "research_completed", "result": "handoff_ready"}],
+                "steps": 1,
+            }
+        output = request.write_paths[0] / "invoice-42-final-report.md"
+        output.write_text(
+            "# Invoice 42 final report\n\nRhea found a purchase-order mismatch. Fin confirmed the exception.\n",
+            encoding="utf-8",
+        )
+        return {
+            "status": TerminalStatus.SUCCEEDED,
+            "response": "Final review pack completed.",
+            "structured_output": {"summary": "Invoice 42 is ready for human verification."},
+            "changed_files": [output],
+            "events": [{"action": "report_written", "result": "completed"}],
+            "steps": 1,
+        }
+
+    async def cancel(self, *, thread_id: str) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 def _approved_revision(workspace: Path) -> str:
     store = OperationGraphStore(workspace, tenant_id="tenant_1", project_id="project_1")
     graph = load_operation_graph(Path(__file__).parents[1] / "schemas/operation-graph.v0.yaml")
@@ -227,6 +268,99 @@ def test_real_mission_worker_assignment_reaches_awaiting_verification(tmp_path: 
     coordinator.project_agent_results("tenant_1", "project_1")
     replayed = collaboration.conversation_roots("tenant_1", "project_1")
     assert [message.id for message in replayed] == [message.id for message in messages]
+
+
+def test_two_agent_assignment_hands_off_in_order_and_returns_one_crew_output(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    collaboration_repository = JsonCollaborationRepository(tmp_path / "collaboration")
+    collaboration = CollaborationService(collaboration_repository)
+    collaboration.create_room(
+        tenant_id="tenant_1", project_id="project_1", creator_id="owner", creator_role="owner",
+    )
+    mission = MissionService(JsonMissionRepository(tmp_path / "missions"))
+    mission.bootstrap(
+        "tenant_1", "project_1", "owner",
+        {"title": "Reconcile invoices", "objective": "Find and verify invoice exceptions"},
+    )
+    researcher = mission.add_agent("tenant_1", "project_1", {
+        "name": "Rhea", "role": "Researcher", "mandate": "Find source-grounded exceptions",
+        "autonomy": "assist", "tools": ["artifact.write"],
+    })
+    reviewer = mission.add_agent("tenant_1", "project_1", {
+        "name": "Fin", "role": "Reviewer", "mandate": "Turn the handoff into reviewable evidence",
+        "autonomy": "execute_safely", "tools": ["artifact.write"],
+    })
+    revision = _approved_revision(workspace)
+    coordinator = AssignmentCoordinator(
+        collaboration_repository, mission, workspace,
+        runs_root=tmp_path / "runs", clock=lambda: "2026-01-02T09:00:00Z",
+    )
+    assignment = coordinator.assign(
+        tenant_id="tenant_1", project_id="project_1", authenticated_human_actor_id="owner",
+        client_request_id="assign_two_agent_close_report",
+        body="@Rhea @Fin reconcile invoice 42 and prepare a final report",
+        title="Reconcile invoice 42", objective="Return one reviewable exception report",
+        acceptance_criteria=["Both agents contribute in order and the final report is ready for human verification"],
+        assigned_agent_ids=[researcher.id, reviewer.id], graph_revision=revision,
+    )
+    transport = _TwoAgentLocalCodexTransport()
+    worker = MissionWorker(
+        mission, workspace, "worker_integration",
+        lambda _config, **adapters: CodexHarness(
+            transport=transport, session_repository=adapters.get("session_repository"),
+        ),
+        coordinator=coordinator,
+    )
+
+    after_research = worker.run_once("tenant_1", "project_1")
+    assert after_research is not None and after_research.status == "queued", (
+        after_research.error if after_research is not None else None,
+        mission.events("tenant_1", "project_1"),
+        [request.prompt for request in transport.requests],
+    )
+    assert after_research.completed_agent_ids == [researcher.id]
+    completed = worker.run_once("tenant_1", "project_1")
+    assert completed is not None and completed.status == "succeeded"
+    assert completed.completed_agent_ids == [researcher.id, reviewer.id]
+    assert "Agent: Rhea (Researcher)" in transport.requests[0].prompt
+    assert "Agent: Fin (Reviewer)" in transport.requests[1].prompt
+    assert "No previous crew output" in transport.requests[0].prompt
+    assert "Rhea" in transport.requests[1].prompt
+    assert "purchase-order mismatch" in transport.requests[1].prompt
+
+    messages = collaboration.conversation_roots("tenant_1", "project_1")
+    milestones = [message for message in messages if message.kind in {"agent_started", "agent_completed"}]
+    assert [(message.author["id"], message.kind) for message in milestones] == [
+        (researcher.id, "agent_started"),
+        (researcher.id, "agent_completed"),
+        (reviewer.id, "agent_started"),
+        (reviewer.id, "agent_completed"),
+    ]
+    assert milestones[1].body == "Handoff completed. Fin can continue."
+    assert milestones[3].body == "Work completed. An output is ready for human verification."
+
+    outputs = mission.deliverables("tenant_1", "project_1")
+    assert len(outputs) == 1
+    final_output = outputs[0]
+    assert final_output.producer_id == reviewer.id and final_output.state == "awaiting_verification"
+    monkeypatch.setattr(file_routes, "_mission_root", tmp_path / "missions")
+    monkeypatch.setattr(file_routes, "_collaboration_root", tmp_path / "collaboration")
+    monkeypatch.setattr(file_routes, "project_dir", lambda _project_id: workspace)
+    file_id = file_routes.output_file_id(final_output.id, tenant_id="tenant_1", project_id="project_1")
+    metadata = file_routes.file_metadata(
+        "project_1", file_id,
+        ctx=AuthContext(User("owner", "owner@example.test", "Ada", "unused"), "tenant_1", "owner", "test"),
+    )["file"]
+    assert metadata["contributors"] == [
+        {"id": researcher.id, "display_name": "Rhea"},
+        {"id": reviewer.id, "display_name": "Fin"},
+    ]
+    verified = mission.verify_deliverable(
+        "tenant_1", "project_1", final_output.id, "owner",
+        final_output.content_hash, final_output.revision,
+    )
+    assert verified.state == "verified"
 
 
 def test_agent_execution_waits_until_start_progress_is_visible(tmp_path: Path, monkeypatch):

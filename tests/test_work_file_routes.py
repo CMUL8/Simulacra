@@ -462,6 +462,134 @@ def test_file_items_resolve_public_producer_and_verifier_attribution(monkeypatch
     assert item["verifier"] == {"id": "owner", "display_name": "Ada"}
 
 
+def test_file_items_hide_missing_public_producer_identity(monkeypatch, tmp_path: Path):
+    _collaboration, missions, workspace = _mission(tmp_path, monkeypatch)
+    (workspace / "outputs").mkdir()
+    content = b"Report with a retired producer"
+    (workspace / "outputs" / "report.md").write_bytes(content)
+    deliverable = missions.create_deliverable(
+        "tenant_1", "mission_1",
+        {"type": "report", "name": "report.md", "source_ref": "mission/agent", "artifact_ref": "outputs/report.md"},
+        producer_id="agent_retired", artifact_bytes=content,
+    )
+
+    item = file_routes.file_metadata(
+        "mission_1",
+        file_routes.output_file_id(deliverable.id, tenant_id="tenant_1", project_id="mission_1"),
+        ctx=_ctx("owner", "owner"),
+    )["file"]
+
+    assert item["producer_id"] is None
+    assert item["producer"] is None
+    assert "agent_retired" not in str(item)
+
+
+def test_final_output_exposes_ordered_public_crew_contributors(monkeypatch, tmp_path: Path):
+    _collaboration, missions, workspace = _mission(tmp_path, monkeypatch)
+    researcher = missions.add_agent("tenant_1", "mission_1", {
+        "name": "Rhea", "role": "Researcher", "mandate": "Find the exception", "autonomy": "assist",
+    })
+    reviewer = missions.add_agent("tenant_1", "mission_1", {
+        "name": "Fin", "role": "Reviewer", "mandate": "Prepare the final report", "autonomy": "assist",
+    })
+    run = missions.create_run(
+        "tenant_1", "mission_1", {"type": "manual"},
+        assigned_agent_ids=[researcher.id, reviewer.id],
+    )
+    missions.repository.mutate(
+        "tenant_1", "mission_1",
+        lambda state: state["runs"][run.id].update({
+            "completed_agent_ids": [researcher.id, reviewer.id],
+            "status": "succeeded",
+        }),
+    )
+    (workspace / "outputs").mkdir()
+    content = b"Final crew report"
+    (workspace / "outputs" / "report.md").write_bytes(content)
+    deliverable = missions.create_deliverable(
+        "tenant_1", "mission_1", {
+            "type": "report", "name": "report.md", "source_ref": f"mission/run/{run.id}",
+            "artifact_ref": "outputs/report.md", "validation_evidence": [{"run_id": run.id}],
+        }, producer_id=reviewer.id, artifact_bytes=content,
+    )
+
+    item = file_routes.file_metadata(
+        "mission_1",
+        file_routes.output_file_id(deliverable.id, tenant_id="tenant_1", project_id="mission_1"),
+        ctx=_ctx("owner", "owner"),
+    )["file"]
+
+    assert item["producer"] == {"id": reviewer.id, "display_name": "Fin"}
+    assert item["contributors"] == [
+        {"id": researcher.id, "display_name": "Rhea"},
+        {"id": reviewer.id, "display_name": "Fin"},
+    ]
+
+
+def test_final_output_excludes_invalid_or_unproven_crew_contributors(monkeypatch, tmp_path: Path):
+    _collaboration, missions, workspace = _mission(tmp_path, monkeypatch)
+    researcher = missions.add_agent("tenant_1", "mission_1", {
+        "name": "Rhea", "role": "Researcher", "mandate": "Find the exception", "autonomy": "assist",
+    })
+    reviewer = missions.add_agent("tenant_1", "mission_1", {
+        "name": "Fin", "role": "Reviewer", "mandate": "Prepare the final report", "autonomy": "assist",
+    })
+    observer = missions.add_agent("tenant_1", "mission_1", {
+        "name": "Mira", "role": "Observer", "mandate": "Observe only", "autonomy": "assist",
+    })
+    retired = missions.add_agent("tenant_1", "mission_1", {
+        "name": "Sol", "role": "Retired specialist", "mandate": "Supply a prior finding", "autonomy": "assist",
+    })
+    run = missions.create_run(
+        "tenant_1", "mission_1", {"type": "manual"},
+        assigned_agent_ids=[researcher.id, reviewer.id, retired.id],
+    )
+    missions.repository.mutate(
+        "tenant_1", "mission_1",
+        lambda state: (
+            state["runs"][run.id].update({
+                "completed_agent_ids": [researcher.id, observer.id, retired.id],
+                "status": "succeeded",
+            }),
+            state["agents"].pop(retired.id),
+        ),
+    )
+    (workspace / "outputs").mkdir()
+    content = b"Partial crew report"
+    (workspace / "outputs" / "report.md").write_bytes(content)
+    deliverable = missions.create_deliverable(
+        "tenant_1", "mission_1", {
+            "type": "report", "name": "report.md", "source_ref": f"mission/run/{run.id}",
+            "artifact_ref": "outputs/report.md", "validation_evidence": [{"run_id": run.id}],
+        }, producer_id=researcher.id, artifact_bytes=content,
+    )
+
+    item = file_routes.file_metadata(
+        "mission_1",
+        file_routes.output_file_id(deliverable.id, tenant_id="tenant_1", project_id="mission_1"),
+        ctx=_ctx("owner", "owner"),
+    )["file"]
+
+    assert item["contributors"] == [{"id": researcher.id, "display_name": "Rhea"}]
+    assert reviewer.id not in str(item["contributors"])
+    assert observer.id not in str(item["contributors"])
+    assert retired.id not in str(item["contributors"])
+
+    missions.repository.mutate(
+        "tenant_1", "mission_1",
+        lambda state: state["runs"][run.id].update({
+            "assigned_agent_ids": [researcher.id, researcher.id],
+            "completed_agent_ids": [researcher.id, researcher.id],
+        }),
+    )
+    corrupt_item = file_routes.file_metadata(
+        "mission_1",
+        file_routes.output_file_id(deliverable.id, tenant_id="tenant_1", project_id="mission_1"),
+        ctx=_ctx("owner", "owner"),
+    )["file"]
+    assert corrupt_item["contributors"] == []
+
+
 def test_file_metadata_screens_paths_internal_vocabulary_and_malformed_values(monkeypatch, tmp_path: Path):
     _collaboration, missions, workspace = _mission(tmp_path, monkeypatch)
     (workspace / "outputs").mkdir()

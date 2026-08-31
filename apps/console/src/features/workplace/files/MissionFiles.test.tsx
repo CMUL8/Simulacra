@@ -80,6 +80,30 @@ test("mission_files_keeps_sources_outputs_and_evidence_clear_without_private_ref
   expect(document.body.textContent).not.toContain("agent_private");
 });
 
+test("final_output_shows_the_ordered_crew_contributor_chain", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [{
+    id: "file_crew_output", mission_id: "mission_private", kind: "output", name: "Final report.md",
+    media_type: "text/markdown", size: 4200, sha256: "b".repeat(64), state: "awaiting_verification", version: 1,
+    parent_output_id: null, run_id: "run_crew", producer_id: "agent_fin",
+    producer: { id: "agent_fin", display_name: "Fin" },
+    contributors: [
+      { id: "agent_rhea", display_name: "Rhea" },
+      { id: "agent_fin", display_name: "Fin" },
+    ],
+    verifier: null, source_ids: [], introduced_by_message_id: null, created_at: null, updated_at: null,
+    previewable: true, downloadable: true, allowed_actions: [], action_targets: {},
+  }] }));
+
+  render(<MissionFiles missionId="mission_private" />);
+  fireEvent.click(await screen.findByRole("tab", { name: /Outputs/ }));
+  const row = screen.getByRole("button", { name: "Open Final report.md details" });
+  expect(within(row).getByText("Crew: Rhea → Fin")).toBeInTheDocument();
+  fireEvent.click(row);
+  const details = screen.getByRole("dialog", { name: "File details" });
+  expect(within(details).getByText("Rhea → Fin")).toBeInTheDocument();
+  expect(within(details).getByText("Fin", { exact: true })).toBeInTheDocument();
+});
+
 test("work_and_file_drawers_escape_trap_restore_focus_and_mobile_back_closes_preview", async () => {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).includes("/content")

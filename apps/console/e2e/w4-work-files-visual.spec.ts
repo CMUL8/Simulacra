@@ -136,7 +136,7 @@ test("w4_work_files_provenance_responsive_screenshot_matrix", async ({ page }) =
     await expect(page.getByText("invoice-ledger.csv", { exact: true })).toBeVisible();
     await page.screenshot({ path: `${artifactRoot}/w4-files-${name}.png`, fullPage: true });
 
-    await page.getByRole("button", { name: "Close file details" }).click();
+    await page.getByRole("button", { name: "Close file details", exact: true }).click();
     const fileMain = page.getByRole("button", { name: "Open August close pack.pdf details" });
     const download = page.getByRole("button", { name: "Download" });
     const [fileMainBox, downloadBox] = await Promise.all([fileMain.boundingBox(), download.boundingBox()]);
