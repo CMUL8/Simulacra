@@ -438,6 +438,7 @@ def test_image_defines_the_process_entrypoint():
 	assert "worker-health" in dockerfile
 	assert "@openai/codex@0.148.0" in dockerfile
 	assert "gosu" in dockerfile
+	assert "ENV CMUL8_MISSION_ISOLATION_LAUNCHER=/opt/cmul8/bin/cmul8-mission-sandbox" in dockerfile
 	assert "lost+found" in entrypoint
 	assert 'exec gosu 65532:65532 "$0" "$@"' in entrypoint
 	assert "doctor" in dockerfile

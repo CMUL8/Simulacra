@@ -47,6 +47,7 @@ RUN pip install --no-cache-dir -e ".[demo]" \
 ENV SIMULACRA_AUTH_REQUIRED=1
 ENV CMUL8_MODEL_PROVIDER=openai
 ENV CMUL8_CODEX_BIN=/opt/codex/bin/codex
+ENV CMUL8_MISSION_ISOLATION_LAUNCHER=/opt/cmul8/bin/cmul8-mission-sandbox
 ENV CODEX_HOME=/app/data/codex
 ENV CMUL8_MISSION_RUNTIME_ROOT=/app/data/mission-runtime
 ENV SIMULACRA_SANDBOX=worktree
